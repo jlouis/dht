@@ -197,7 +197,7 @@ required(Key) ->
     fun(Config) ->
 	    case proplists:get_value(Key, Config) of
 		    undefined ->
-			case application:get_env(etorrent, Key) of
+			case application:get_env(etorrent_core, Key) of
 			    {ok, Value} -> {Key, Value};
 			    undefined -> {Key, undefined}
 			end;
@@ -210,7 +210,7 @@ optional(Key, Default) ->
     fun(Config) ->
 	    case proplists:get_value(Key, Config) of
 		    undefined ->
-			case application:get_env(etorrent, Key) of
+			case application:get_env(etorrent_core, Key) of
 			    {ok, Value} ->
 				{Key, Value};
 			    undefined when is_function(Default) ->
