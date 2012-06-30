@@ -220,7 +220,7 @@ ifaddrs() ->
 search_ipv6_address([]) -> not_found;
 search_ipv6_address([{"lo0", _} | Next]) ->
     search_ipv6_address(Next);
-search_ipv6_address([{X,Addrs} | Next]) ->
+search_ipv6_address([{_X,Addrs} | Next]) ->
     case proplists:lookup_all(addr, Addrs) of
         [] ->
             search_ipv6_address(Next);
@@ -231,8 +231,12 @@ search_ipv6_address([{X,Addrs} | Next]) ->
 search_bind([], NextIf) -> search_ipv6_address(NextIf);
 search_bind([{addr, {_, _, _, _}} | Next], NextIf) -> search_bind(Next, NextIf);
 search_bind([{addr, {65152,_,_,_,_,_,_,_}} | Next], NextIf) -> search_bind(Next, NextIf);
-search_bind([{addr, Addr} | _], _NextIf) ->
-    {ok, Addr}.
+search_bind([{addr, Addr} | _], _NextIf) -> {ok, Addr}.
+
+format_ipv6_address(Tuple) ->
+    lists:flatten(
+      io_lib:format(
+        string:join(["~4.16.0B" || _ <- lists:seq(1, 8)], ":"), tuple_to_list(Tuple))).
 
 contact_tracker_udp(Url, IP, Port, Event,
                     #state { torrent_id = Id,
@@ -248,13 +252,21 @@ contact_tracker_udp(Url, IP, Port, Event,
                 {down, Downloaded},
                 {left, Left},
                 {port, Port},
+                case ifaddrs() of
+                    {ok, Addr} ->
+                        {ipv6, format_ipv6_address(Addr)};
+                    not_found ->
+                        remove
+                end,
                 %% @todo: Actually process the key correctly for
                 %% private tracking
                 {key, 0},
                 {event, Event}],
     lager:debug("Announcing via UDP"),
     case etorrent_udp_tracker_mgr:announce(
-           {IP, Port}, PropList, timer:seconds(60)) of
+           {IP, Port},
+           [X || {_, _} = X <- PropList],
+           timer:seconds(60)) of
         {ok, {announce, Peers, Status}} ->
             lager:debug("UDP reply handled"),
             {I, MI} = handle_udp_response(Url, Id, Peers, Status),
@@ -307,9 +319,11 @@ report_warning(Id, Warn) ->
 
 handle_tracker_bcoding(Url, BC, S) ->
     %% Add new peers
-    etorrent_peer_mgr:add_peers(Url,
-                                S#state.torrent_id,
-                                response_ips(BC)),
+    lager:debug("Tracker Response: ~p", [BC]),
+    etorrent_peer_mgr:add_peers(
+      Url,
+      S#state.torrent_id,
+      response_ips(BC) ++ response_ips_v6(BC)),
     %% Update the state of the torrent
     ok = etorrent_torrent:statechange(
            S#state.torrent_id,
@@ -392,10 +406,16 @@ build_tracker_url(Url, Event,
 %%% Tracker response lookup functions
 response_ips(BC) ->
     case etorrent_bcoding:get_value("peers", BC, none) of
-        none -> [];
-        IPs  -> etorrent_utils:decode_ips(IPs)
+         none -> [];
+         IPs  -> etorrent_utils:decode_ips(IPs)
     end.
 
+response_ips_v6(BC) ->
+    case etorrent_bcoding:get_value("peers6", BC, none) of
+        none -> [];
+        IPs -> etorrent_utils:decode_ips_v6(IPs)
+    end.
+             
 
 %%% BEP 12 stuff
 %%% ----------------------------------------------------------------------

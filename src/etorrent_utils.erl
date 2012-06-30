@@ -24,7 +24,7 @@
 -export([now_subtract_seconds/2]).
 
 %% "bittorrent-like" functions
--export([decode_ips/1]).
+-export([decode_ips/1, decode_ips_v6/1]).
 
 %% "registry-like" functions
 -export([register/1,
@@ -99,6 +99,12 @@ decode_ips(<<B1:8, B2:8, B3:8, B4:8, Port:16/big, Rest/binary>>, Accum) ->
     decode_ips(Rest, [{{B1, B2, B3, B4}, Port} | Accum]);
 decode_ips(_Odd, Accum) ->
     Accum. % This case is to handle wrong tracker returns. Ignore spurious bytes.
+
+decode_ips_v6(<<>>) -> [];
+decode_ips_v6(<<B1:16/big, B2:16/big, B3:16/big,
+                B4:16/big, B5:16/big, B6:16/big, B7:16/big, B8:16/big,
+                Port:16/big, Rest/binary>>) ->
+    [{{B1, B2, B3, B4, B5, B6, B7, B8}, Port} | decode_ips_v6(Rest)].
 
 %% @doc Group a sorted list
 %%  if the input is a sorted list L, the output is [{E, C}] where E is an element
