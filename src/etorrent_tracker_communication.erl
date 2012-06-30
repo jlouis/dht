@@ -23,6 +23,8 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
+-export([ifaddrs/0]).
+
 -type tier() :: etorrent_types:tier().
 -record(state, {queued_message = none :: none | started,
                 %% The hard timer is the time we *must* wait on the tracker.
@@ -210,6 +212,27 @@ disconnect_tracker(Url) ->
         end,
     etorrent_table:foreach_peer_of_tracker(Url, F),
     ok.
+
+ifaddrs() ->
+    {ok, Addresses} = inet:getifaddrs(),
+    search_ipv6_address(Addresses).
+
+search_ipv6_address([]) -> not_found;
+search_ipv6_address([{"lo0", _} | Next]) ->
+    search_ipv6_address(Next);
+search_ipv6_address([{X,Addrs} | Next]) ->
+    case proplists:lookup_all(addr, Addrs) of
+        [] ->
+            search_ipv6_address(Next);
+        L when is_list(L) ->
+            search_bind(L, Next)
+    end.
+
+search_bind([], NextIf) -> search_ipv6_address(NextIf);
+search_bind([{addr, {_, _, _, _}} | Next], NextIf) -> search_bind(Next, NextIf);
+search_bind([{addr, {65152,_,_,_,_,_,_,_}} | Next], NextIf) -> search_bind(Next, NextIf);
+search_bind([{addr, Addr} | _], _NextIf) ->
+    {ok, Addr}.
 
 contact_tracker_udp(Url, IP, Port, Event,
                     #state { torrent_id = Id,
