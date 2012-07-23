@@ -16,6 +16,7 @@
 -export([start/2, stop/1, prep_stop/1, profile_output/0]).
 
 -define(RANDOM_MAX_SIZE, 999999999999).
+-define(APP, etorrent_core).
 
 start() ->
     start([]).
@@ -23,18 +24,18 @@ start() ->
 start(Config) ->
     load_config(Config),
     % Load app file.
-    application:load(etorrent),
-    {ok, Deps} = application:get_key(etorrent, applications),
+    application:load(?APP),
+    {ok, Deps} = application:get_key(?APP, applications),
     true = lists:all(fun ensure_started/1, Deps),
-    application:start(etorrent).
+    application:start(?APP).
 
 stop() ->
-    application:stop(etorrent).
+    application:stop(?APP).
 
 load_config([]) ->
     ok;
 load_config([{Key, Val} | Next]) ->
-    application:set_env(etorrent, Key, Val),
+    application:set_env(?APP, Key, Val),
     load_config(Next).
 
 %% @private
@@ -87,6 +88,8 @@ stop(_State) ->
     ok.
 
 start_webui() ->
+    cascadae:start(),
+
     Dispatch = [ {'_', [{'_', etorrent_cowboy_handler, []}]} ],
     {ok, _Pid} =
         cowboy:start_listener(http, 10,
