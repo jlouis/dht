@@ -1,4 +1,4 @@
-% @author Uvarov Michail <cytozoon@gmail.com>
+% @author Uvarov Michail <arcusfelis@gmail.com>
 
 -module(etorrent_info).
 -behaviour(gen_server).
