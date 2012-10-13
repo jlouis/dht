@@ -29,18 +29,18 @@
     etorrent_upnp_net,
     etorrent_upnp_sup
    ]},
-  {applications, [kernel,
-                  stdlib,
-                  compiler, syntax_tools, lager,
-                  cowboy,
-                  crypto,
-                  public_key,
-                  sasl,
-                  gproc,
-                  rlimit,
-                  ssl,
-                  lhttpc]},
-  {mod, {etorrent_app, []}},
+  {applications, [
+		kernel,
+		stdlib,
+		syntax_tools, compiler, lager,
+		cowboy,
+		crypto, public_key, ssl,
+		sasl,
+		gproc,
+		rlimit,
+		lhttpc,
+		cascadae]},
+ {mod, {etorrent_app, []}},
   {env, []}
  ]
 }.
