@@ -39,6 +39,7 @@
 		gproc,
 		rlimit,
 		lhttpc,
+		mimetypes,
 		cascadae]},
  {mod, {etorrent_app, []}},
   {env, []}
