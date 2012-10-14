@@ -52,7 +52,7 @@
 -type bcode() :: etorrent_types:bcode().
 -type torrent_id() :: etorrent_types:torrent_id().
 -type file_id() :: etorrent_types:file_id().
--type pieceset() :: etorrent_pieceset:pieceset().
+-type pieceset() :: etorrent_pieceset:t().
 -type pieceindex() :: etorrent_types:piece_index().
 
 %% If wish is [file_id()], for example, [1,2,3], then create

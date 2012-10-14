@@ -131,7 +131,7 @@ send_msg(Socket, Msg) ->
 %% @doc Decode a binary bitfield into a pieceset
 %% @end
 -spec decode_bitfield(integer(), binary()) ->
-    {ok, etorrent_pieceset:pieceset()}.
+    {ok, etorrent_pieceset:t()}.
 decode_bitfield(Size, Bin) ->
     PieceSet = etorrent_pieceset:from_binary(Bin, Size),
     {ok, PieceSet}.
@@ -141,7 +141,7 @@ decode_bitfield(Size, Bin) ->
 % how much and when to pad
 % </p>
 % @end
--spec encode_bitfield(integer(), etorrent_pieceset:pieceset()) -> binary().
+-spec encode_bitfield(integer(), etorrent_pieceset:t()) -> binary().
 encode_bitfield(_Size, Pieceset) ->
     etorrent_pieceset:to_binary(Pieceset).
 

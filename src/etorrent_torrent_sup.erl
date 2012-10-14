@@ -56,8 +56,8 @@ start_child_tracker(Pid, UrlTiers, InfoHash, Local_Peer_Id, TorrentId) ->
 
 -spec start_progress(pid(), etorrent_types:torrent_id(),
                             etorrent_types:bcode(),
-                            etorrent_pieceset:pieceset(),
-                            [etorrent_pieceset:pieceset()]) ->
+                            etorrent_pieceset:t(),
+                            [etorrent_pieceset:t()]) ->
                             {ok, pid()} | {ok, pid(), term()} | {error, term()}.
 start_progress(Pid, TorrentID, Torrent, ValidPieces, Wishes) ->
     Spec = progress_spec(TorrentID, Torrent, ValidPieces, Wishes),

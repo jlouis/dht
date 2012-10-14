@@ -37,27 +37,27 @@
     csize :: non_neg_integer() | none,
     elements :: binary()}).
 
--opaque pieceset() :: #pieceset{}.
--export_type([pieceset/0]).
+-opaque t() :: #pieceset{}.
+-export_type([t/0]).
 
 %% @doc
 %% Create an empty set of piece indexes. The set of pieces
 %% is limited to contain pieces indexes from 0 to Size-1.
 %% @end
--spec new(non_neg_integer()) -> pieceset().
+-spec new(non_neg_integer()) -> t().
 new(Size) ->
     Elements = <<0:Size>>,
     #pieceset{size=Size, elements=Elements}.
 
 %% @doc Alias for etorrent_pieceset:new/1
 %% @end
--spec empty(non_neg_integer()) -> pieceset().
+-spec empty(non_neg_integer()) -> t().
 empty(Size) ->
     new(Size).
 
 %% @doc
 %% @end
--spec full(non_neg_integer()) -> pieceset().
+-spec full(non_neg_integer()) -> t().
 full(Size) ->
     Elements = full_(Size, <<>>),
     #pieceset{size=Size, elements=Elements}.
@@ -77,7 +77,7 @@ full_(N, Set) ->
 %% Size pieces, as a set returned from new/1 is.
 %% The bitfield is expected to not be padded with more than 7 bits.
 %% @end
--spec from_binary(binary(), non_neg_integer()) -> pieceset().
+-spec from_binary(binary(), non_neg_integer()) -> t().
 from_binary(Bin, Size) when is_binary(Bin) ->
     PadLen = paddinglen(Size),
     <<Elements:Size/bitstring, PadValue:PadLen>> = Bin,
@@ -97,7 +97,7 @@ from_bitstring(Bin) ->
 %% Convert a piece set to a bitfield, the bitfield will
 %% be padded with at most 7 bits set to zero.
 %% @end
--spec to_binary(pieceset()) -> binary().
+-spec to_binary(t()) -> binary().
 to_binary(Pieceset) ->
     #pieceset{size=Size, elements=Elements} = Pieceset,
     PadLen = paddinglen(Size),
@@ -106,7 +106,7 @@ to_binary(Pieceset) ->
 %% @doc
 %% Convert an ordered list of piece indexes to a piece set.
 %% @end
--spec from_list(list(non_neg_integer()), non_neg_integer()) -> pieceset().
+-spec from_list(list(non_neg_integer()), non_neg_integer()) -> t().
 from_list(List, Size) ->
     Pieceset = new(Size),
     from_list_(List, Pieceset).
@@ -121,7 +121,7 @@ from_list_([H|T], Pieceset) ->
 %% Convert a piece set to an ordered list of the piece indexes
 %% that are members of this set.
 %% @end
--spec to_list(pieceset()) -> list(non_neg_integer()).
+-spec to_list(t()) -> list(non_neg_integer()).
 to_list(Pieceset) ->
     #pieceset{elements=Elements} = Pieceset,
     to_list(Elements, 0).
@@ -135,7 +135,7 @@ to_list(<<>>, _) ->
 
 %% @doc Convert a piece set of a readable format
 %% @end
--spec to_string(pieceset()) -> string().
+-spec to_string(t()) -> string().
 to_string(Pieceset) ->
     #pieceset{size=Size} = Pieceset,
     Header = io_lib:format("<pieceset(~.10B) ", [Size]),
@@ -163,7 +163,7 @@ to_string_(Index) -> integer_to_list(Index).
 %% false if not. If the piece index is negative or is larger
 %% than the size of this piece set, the function exits with badarg.
 %% @end
--spec is_member(non_neg_integer(), pieceset()) -> boolean().
+-spec is_member(non_neg_integer(), t()) -> boolean().
 is_member(PieceIndex, _) when PieceIndex < 0 ->
     erlang:error(badarg);
 is_member(PieceIndex, Pieceset) ->
@@ -179,7 +179,7 @@ is_member(PieceIndex, Pieceset) ->
 %% @doc
 %% Returns true if there are any members in the piece set.
 %% @end
--spec is_empty(pieceset()) -> boolean().
+-spec is_empty(t()) -> boolean().
 is_empty(Pieceset) ->
     #pieceset{size=Size, elements=Elements} = Pieceset,
     <<Memberbits:Size>> = Elements,
@@ -188,7 +188,7 @@ is_empty(Pieceset) ->
 
 %% @doc Returns true if there are no members missing from the set
 %% @end
--spec is_full(pieceset()) -> boolean().
+-spec is_full(t()) -> boolean().
 is_full(Pieceset) ->
     #pieceset{elements=Elements} = Pieceset,
     is_bitstring(Elements) orelse error(badarg),
@@ -212,7 +212,7 @@ is_full_(_) ->
 %% negative or larger than the size of this piece set, this
 %% function exists with the reason badarg.
 %% @end
--spec insert(non_neg_integer(), pieceset()) -> pieceset().
+-spec insert(non_neg_integer(), t()) -> t().
 insert(PieceIndex, _) when PieceIndex < 0 ->
     erlang:error(badarg);
 insert(PieceIndex, Pieceset) ->
@@ -231,7 +231,7 @@ insert(PieceIndex, Pieceset) ->
 %% or larger than the size of the piece set, this function
 %% exits with reason badarg.
 %% @end
--spec delete(non_neg_integer(), pieceset()) -> pieceset().
+-spec delete(non_neg_integer(), t()) -> t().
 delete(PieceIndex, _) when PieceIndex < 0 ->
     erlang:error(badarg);
 delete(PieceIndex, Pieceset) ->
@@ -249,7 +249,7 @@ delete(PieceIndex, Pieceset) ->
 %% Return a piece set where each member is a member of both sets.
 %% If both sets are not of the same size this function exits with badarg.
 %% @end
--spec intersection(pieceset(), pieceset()) -> pieceset().
+-spec intersection(t(), t()) -> t().
 intersection(Set0, Set1) ->
     #pieceset{size=Size0, elements=Elements0} = Set0,
     #pieceset{size=Size1, elements=Elements1} = Set1,
@@ -264,7 +264,7 @@ intersection(Set0, Set1) ->
             #pieceset{size=Size0, elements=Intersection}
     end.
 
--spec union(pieceset(), pieceset()) -> pieceset().
+-spec union(t(), t()) -> t().
 union(Set0, Set1) ->
     #pieceset{size=Size, elements = Elements0} = Set0,
     #pieceset{size=Size, elements = Elements1} = Set1,
@@ -307,7 +307,7 @@ difference(Set0, Set1) ->
 %% @doc
 %% Return the number of pieces that are members of the set.
 %% @end
--spec size(pieceset()) -> non_neg_integer().
+-spec size(t()) -> non_neg_integer().
 size(Pieceset) ->
     #pieceset{elements=Elements} = Pieceset,
     size(Elements, 0).
@@ -321,14 +321,14 @@ size(<<>>, Acc) ->
 
 %% @doc Return the number of pieces that can be members of the set
 %% @end
--spec capacity(pieceset()) -> non_neg_integer().
+-spec capacity(t()) -> non_neg_integer().
 capacity(Pieceset) ->
     #pieceset{size=Size} = Pieceset,
     Size.
 
 
 %% @doc Return float from 0 to 1.
--spec progress(pieceset()) -> float().
+-spec progress(t()) -> float().
 progress(Pieceset) ->
     etorrent_pieceset:size(Pieceset) / capacity(Pieceset).
 
@@ -338,7 +338,7 @@ progress(Pieceset) ->
 %% with reason badarg. This function assumes that all pieces in the lists
 %% are valid.
 %% @end
--spec first([non_neg_integer()], pieceset()) -> non_neg_integer().
+-spec first([non_neg_integer()], t()) -> non_neg_integer().
 first(Pieces, Pieceset) ->
     #pieceset{elements=Elements} = Pieceset,
     first_(Pieces, Elements).
@@ -372,7 +372,7 @@ foldl_(_, Acc, <<>>, _) ->
 %% Return the lowest piece index that is a member of this set.
 %% If the piece set is empty, exit with reason badarg
 %% @end
--spec min(pieceset()) -> non_neg_integer().
+-spec min(t()) -> non_neg_integer().
 min(Pieceset) ->
     #pieceset{elements=Elements} = Pieceset,
     min_(Elements, 0).

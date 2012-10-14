@@ -41,7 +41,7 @@
 
 -type torrentid() :: etorrent_types:torrent_id().
 -type pieceindex() :: etorrent_types:piece_index().
--type pieceset() :: etorrent_pieceset:pieceset().
+-type pieceset() :: etorrent_pieceset:t().
 -type peerstate() :: etorrent_peerstate:peerstate().
 -type peerconf() :: etorrent_peerconf:peerconf().
 -type tservices() :: etorrent_download:tservices().

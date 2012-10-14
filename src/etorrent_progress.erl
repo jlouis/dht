@@ -93,7 +93,7 @@
 -export([stored_chunks/1]).
 
 
--type pieceset()   :: etorrent_pieceset:pieceset().
+-type pieceset()   :: etorrent_pieceset:t().
 -type torrent_id() :: etorrent_types:torrent_id().
 -type chunk_len() :: etorrent_types:chunk_len().
 -type piece_index() :: etorrent_types:piece_index().

@@ -41,7 +41,7 @@
 -type bcode() :: etorrent_types:bcode().
 -type torrent_id() :: etorrent_types:torrent_id().
 -type file_id() :: etorrent_types:file_id().
--type pieceset() :: etorrent_pieceset:pieceset().
+-type pieceset() :: etorrent_pieceset:t().
 
 -record(state, {
     torrent :: torrent_id(),
@@ -66,7 +66,7 @@
     size      = 0 :: non_neg_integer(),
     % byte offset from 0
     position  = 0 :: non_neg_integer(),
-    pieces :: etorrent_pieceset:pieceset()
+    pieces :: etorrent_pieceset:t()
 }).
 
 %% @doc Start the File I/O Server

@@ -25,7 +25,7 @@
          haspieces/1]).
 
 
--type pieceset() :: etorrent_pieceset:pieceset().
+-type pieceset() :: etorrent_pieceset:t().
 -type pieceindex() :: etorrent_types:piece_index().
 -type rqueue() :: etorrent_rqueue:rqueue().
 -record(peerstate, {

@@ -20,7 +20,7 @@
          update/2]).
 
 -type torrent_id()  :: etorrent_types:torrent_id().
--type pieceset()    :: etorrent_pieceset:pieceset().
+-type pieceset()    :: etorrent_pieceset:t().
 -type pieceindex()  :: etorrent_types:piece_index().
 -type chunk_offset() :: etorrent_types:chunk_offset().
 -type chunk_length() :: etorrent_types:chunk_len().
