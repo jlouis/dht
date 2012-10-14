@@ -194,13 +194,6 @@ delete([], Chunkset) ->
 delete([{Offset, Length}|T], Chunkset) ->
     delete(T, delete(Offset, Length, Chunkset)).
 
-
-insert([], Chunkset) ->
-    Chunkset;
-insert([{Offset, Length}|T], Chunkset) ->
-    insert(T, insert(Offset, Length, Chunkset)).
-
-
 %% @doc
 %% 
 %% @end
