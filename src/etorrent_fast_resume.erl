@@ -107,6 +107,9 @@ init([]) ->
         case dets:open_file(Statefile, []) of
             {ok, Table} ->
                 {ok, Table};
+            %% There is no such file at all
+            {error, {file_error, _, enoent}} ->
+              dets:open_file(Statefile, []);
             %% An old spoolfile may have been created using ets:tab2file.
             %% Removing it and reopening the dets table works in this case.
             {error,{not_a_dets_file, _}} ->
