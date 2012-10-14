@@ -48,10 +48,6 @@ start(_Type, _Args) ->
             ok = etorrent_memory_logger:add_handler(),
             ok = etorrent_file_logger:add_handler(),
             ok = etorrent_callback_handler:add_handler(),
-            case etorrent_config:webui() of
-                true -> start_webui();
-                false -> ignore
-            end,
             {ok, Pid};
         {error, Err} ->
             {error, Err}
@@ -86,16 +82,6 @@ prep_stop(_S) ->
 %% @private
 stop(_State) ->
     ok.
-
-start_webui() ->
-    cascadae:start(),
-
-    Dispatch = [ {'_', [{'_', etorrent_cowboy_handler, []}]} ],
-    {ok, _Pid} =
-        cowboy:start_listener(http, 10,
-                              cowboy_tcp_transport, [{port, 8080}],
-                              cowboy_http_protocol, [{dispatch, Dispatch}]
-                             ).
 
 %% @doc Generate a random peer id for use
 %% @end
