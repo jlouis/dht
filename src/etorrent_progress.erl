@@ -484,7 +484,7 @@ handle_call({chunk, {request, Numchunks, Peerset, PeerPid}}, _, State) ->
                 false ->
                     {reply, {ok, assigned}, State};
                 true ->
-                    CtlPid = etorrent_torrent_sup:lookup_server(TorrentID),
+                    CtlPid = etorrent_torrent_ctl:lookup_server(TorrentID),
                     etorrent_torrent_ctl:switch_mode(CtlPid, endgame),
                     NewState = State#state{active=false},
                     {reply, {ok, assigned}, NewState}
