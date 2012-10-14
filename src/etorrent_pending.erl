@@ -143,7 +143,7 @@ handle_info({chunk, {stored, Piece, Offset, Length, Peerpid}}, State) ->
 handle_info({chunk, {dropped, Piece, Offset, Length, Peerpid}}, State) ->
     %% The peer is expected to send a dropped notification to the
     %% assigning process before notifying this process.
-    #state{receiver=Receiver, table=Table} = State,
+    #state{table=Table} = State,
     delete_request(Table, Piece, Offset, Length, Peerpid),
     {noreply, State};
 

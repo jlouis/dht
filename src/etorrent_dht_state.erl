@@ -42,8 +42,6 @@
 %% @end
 -module(etorrent_dht_state).
 -behaviour(gen_server).
--import(ordsets, [add_element/2, del_element/2, subtract/2]).
--import(error_logger, [info_msg/2, error_msg/2]).
 -define(K, 8).
 -define(in_range(IDExpr, MinExpr, MaxExpr),
     ((IDExpr >= MinExpr) and (IDExpr < MaxExpr))).
@@ -453,8 +451,8 @@ handle_call({insert_node, InputID, IP, Port}, _From, State) ->
             AllPrevRanges = b_ranges(PrevBuckets),
             AllNewRanges  = b_ranges(NewBuckets),
 
-            DelRanges  = subtract(AllPrevRanges, AllNewRanges),
-            NewRanges  = subtract(AllNewRanges, AllPrevRanges),
+            DelRanges  = ordsets:subtract(AllPrevRanges, AllNewRanges),
+            NewRanges  = ordsets:subtract(AllNewRanges, AllPrevRanges),
 
             DelBTimers = lists:foldl(fun(Range, Acc) ->
                 del_timer(Range, Acc)
@@ -594,7 +592,7 @@ handle_info({inactive_node, InputID, IP, Port}, State) ->
         {true, false} ->
             State;
         {true, true} ->
-            info_msg("Node at ~w:~w timed out", [IP, Port]),
+            lager:debug("Node at ~w:~w timed out", [IP, Port]),
             spawn_keepalive(ensure_bin_id(ID), IP, Port),
             {LActive,_} = get_timer(Node, PrevNTimers),
             TmpNTimers  = del_timer(Node, PrevNTimers),
@@ -625,7 +623,7 @@ handle_info({inactive_bucket, Range}, State) ->
         {true, false} ->
             State;
         {true, true} ->
-            info_msg("Bucket timed out", []),
+            lager:debug("Bucket timed out"),
             BMembers   = b_members(Range, Buckets),
             _ = spawn_refresh(Range,
                     inactive_nodes(BMembers, NTimeout, NTimers),
@@ -702,7 +700,7 @@ b_insert_(Self, ID, IP, Port, [{Min, Max, Members}|T])
 when ?in_range(ID, Min, Max), ?in_range(Self, Min, Max) ->
     NumMembers = length(Members),
     if  NumMembers < ?K ->
-            NewMembers = add_element({ID, IP, Port}, Members),
+            NewMembers = ordsets:add_element({ID, IP, Port}, Members),
             [{Min, Max, NewMembers}|T];
 
         NumMembers == ?K, (Max - Min) > 2 ->
@@ -721,7 +719,7 @@ b_insert_(_, ID, IP, Port, [{Min, Max, Members}|T])
 when ?in_range(ID, Min, Max) ->
     NumMembers = length(Members),
     if  NumMembers < ?K ->
-            NewMembers = add_element({ID, IP, Port}, Members),
+            NewMembers = ordsets:add_element({ID, IP, Port}, Members),
             [{Min, Max, NewMembers}|T];
         NumMembers == ?K ->
             [{Min, Max, Members}|T]
@@ -745,7 +743,7 @@ b_delete(_, _, _, []) ->
     [];
 b_delete(ID, IP, Port, [{Min, Max, Members}|T])
 when ?in_range(ID, Min, Max) ->
-    NewMembers = del_element({ID, IP, Port}, Members),
+    NewMembers = ordsets:del_element({ID, IP, Port}, Members),
     [{Min, Max, NewMembers}|T];
 b_delete(ID, IP, Port, [H|T]) ->
     [H|b_delete(ID, IP, Port, T)].

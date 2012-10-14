@@ -56,7 +56,6 @@
 -opaque timeserver() :: native | pid().
 -export_type([timeserver/0]).
 -compile({no_auto_import, [error/1]}).
--import(erlang, [error/1]).
 
 -record(timer, {
     type :: message | timeout,
@@ -108,7 +107,7 @@ cancel(Server, Timer) ->
 -spec step(timeserver()) -> pos_integer().
 step(Server) ->
     case Server of
-        native -> error(badarg);
+        native -> exit(badarg);
         Server -> gen_server:call(Server, step)
     end.
 
@@ -120,7 +119,7 @@ fire(Server) ->
     %% not happen if fire is called immidiately after step.
     step(Server),
     case Server of
-        native -> error(badarg);
+        native -> exit(badarg);
         Server -> gen_server:call(Server, fire)
     end.
 

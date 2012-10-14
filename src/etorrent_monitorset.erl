@@ -8,7 +8,6 @@
          is_member/2]).
 
 -compile({no_auto_import,[monitor/2, demonitor/1]}).
--import(erlang, [monitor/2, demonitor/1]).
 
 -type monitorset() :: gb_tree().
 -export_type([monitorset/0]).
@@ -32,7 +31,7 @@ size(Monitorset) ->
 %% @end
 -spec insert(pid(), term(), monitorset()) -> monitorset().
 insert(Pid, Value, Monitorset) ->
-    MRef = monitor(process, Pid),
+    MRef = erlang:monitor(process, Pid),
     gb_trees:insert(Pid, {MRef, Value}, Monitorset).
 
 %% @doc
