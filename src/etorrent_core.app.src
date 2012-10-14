@@ -1,7 +1,7 @@
 {application, etorrent_core,
  [
   {description, "BitTorrent client in Erlang"},
-  {vsn, "1.2.1"},
+  {vsn, "1.2.2"},
   {registered,
    [etorrent_choker,
     etorrent_config,
