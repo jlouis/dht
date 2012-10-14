@@ -22,6 +22,7 @@
 %% Behaviour API
 -export([init/1,
          handle_cast/2,
+         handle_call/3,
          handle_info/2,
          terminate/2,
          code_change/3]).
@@ -92,6 +93,9 @@ init([]) ->
     E = ets:new(?TABLE,[]),
     {ok, #state{table=E}}.
 
+handle_call(Msg, _From, State) ->
+    lager:warning("Spurious handle_call: ~p", [Msg]),
+    {reply, error, State}.
 
 handle_cast({reg, Pid, Props}, State=#state{table=E}) ->
     etorrent_event:added_task(Props),
