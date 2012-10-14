@@ -63,8 +63,8 @@
 -type wish_list() :: [wish()].
 
 
--type file_wish()  :: [non_neg_integer()].
--type piece_wish() :: [non_neg_integer()].
+-type file_wish()  :: [integer()] | integer().
+-type piece_wish() :: [integer()].
 
 -record(wish, {
     type :: file | piece,
@@ -75,7 +75,7 @@
     %% * __hidden__ for fast_resume module
     %% * always on top of the set of wishes.
     is_transient = false :: boolean(),
-    subscribed = [] :: [pid()],
+    subscribed = [] :: [{pid(), reference()}],
     pieceset :: pieceset()
 }).
 
@@ -181,9 +181,12 @@ get_permanent_wishes(TorrentID) ->
 
 %% @doc Add a file at top of wishlist.
 %%      Added file will have highest priority inside this torrent.
--spec wish_file(torrent_id(), wish()) -> {ok, wish_list()}.
-
-wish_file(TorrentID, [FileID]) when is_integer(FileID) ->
+-spec wish_file(TorrentId, Wish) -> {ok, wish_list()}
+    when
+      TorrentId :: torrent_id(),
+      Wish :: wish().
+    
+wish_file(TorrentID, [FileID]) when is_integer(FileID), FileID >= 0 ->
     wish_file(TorrentID, FileID);
 
 wish_file(TorrentID, FileID) ->

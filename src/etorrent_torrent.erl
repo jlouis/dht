@@ -115,6 +115,8 @@ all() ->
 %% @end
 -type alteration() :: unknown
                     | endgame
+                    | paused
+                    | continue
                     | {add_downloaded, integer()}
                     | {add_upload, integer()}
                     | {subtract_left, integer()}
