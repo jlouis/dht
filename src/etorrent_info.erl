@@ -232,7 +232,7 @@ long_file_name(TorrentID, FileID) when is_list(FileID), is_integer(TorrentID) ->
 
 
 full_file_name(TorrentID, FileID) when is_integer(FileID), is_integer(TorrentID) ->
-    RelName = etorrent_io:file_name(TorrentID, FileID),
+    RelName = file_name(TorrentID, FileID),
     FileServer = etorrent_io:lookup_file_server(TorrentID, RelName),
     {ok, Name} = etorrent_io_file:full_path(FileServer),
     Name.
