@@ -29,10 +29,13 @@
         ]).
 
 
--export([init/1,
-         handle_call/3,
-         terminate/2,
-         code_change/3]).
+-export([
+	init/1,
+	handle_cast/2,
+	handle_call/3,
+	handle_info/2,
+	terminate/2,
+	code_change/3]).
 
 
 -type block_len() :: etorrent_types:block_len().
@@ -372,7 +375,16 @@ handle_call({tree_children, FileID}, _, State) ->
             {reply, {ok, Children}, State}
     end.
 
+%% @private
+handle_cast(Msg, State) ->
+    lager:warning("Spurious handle cast: ~p", [Msg]),
+    {noreply, State}.
+    
 
+%% @private
+handle_info(Msg, State) ->
+    lager:warning("Spurious handle info: ~p", [Msg]),
+    {noreply, State}.
 
 %% @private
 terminate(_, _) ->
