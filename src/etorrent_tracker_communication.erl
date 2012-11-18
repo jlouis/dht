@@ -420,7 +420,7 @@ response_ips_v6(BC) ->
         none -> [];
         IPs -> etorrent_utils:decode_ips_v6(IPs)
     end.
-             
+
 
 %%% BEP 12 stuff
 %%% ----------------------------------------------------------------------

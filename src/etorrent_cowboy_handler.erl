@@ -13,7 +13,7 @@ html_type() ->
     MT.
 
 handle(Req, State) ->
-    {Path, PathReq} = cowboy_http_req:path(Req),
+    {Path, PathReq} = cowboy_req:path(Req),
     case Path of
         [<<"ajax">>, <<"etorrent_webui">>, <<"log">>] ->
             Entries = etorrent_query:log_list(),
@@ -23,13 +23,13 @@ handle(Req, State) ->
                                                   >= proplists:get_value(time, Y)
                                       end,
                                       Entries)],
-            {ok, RepReq} = cowboy_http_req:reply(200, [{'Content-Type', html_type()}],
+            {ok, RepReq} = cowboy_req:reply(200, [{'Content-Type', html_type()}],
                                                  Rep, PathReq),
             {ok, RepReq, State};
         [<<"ajax">>, <<"etorrent_webui">>, <<"log_json">>] ->
             Entries = etorrent_query:log_list(),
             Rep = dwrap(Entries),
-            {ok, RepReq} = cowboy_http_req:reply(200, [{'Content-Type', html_type()}],
+            {ok, RepReq} = cowboy_req:reply(200, [{'Content-Type', html_type()}],
                                                  Rep, PathReq),
             {ok, RepReq, State};
         [<<"ajax">>, <<"etorrent_webui">>, <<"list">>] ->
@@ -39,7 +39,7 @@ handle(Req, State) ->
                      Table,
                      table_footer(),
                      Rates],
-            {ok, RepReq} = cowboy_http_req:reply(200, [{'Content-Type', html_type()}],
+            {ok, RepReq} = cowboy_req:reply(200, [{'Content-Type', html_type()}],
                                                  Reply, PathReq),
             {ok, RepReq, State};
         [] ->
@@ -57,10 +57,10 @@ handle_static_file(Req, State, Path) ->
                            unknown -> <<"text/plain">>;
                            [Otherwise]  -> Otherwise
                        end,
-            {ok, RepReq} = cowboy_http_req:reply(200, [{'Content-Type', MimeType }], B, Req),
+            {ok, RepReq} = cowboy_req:reply(200, [{'Content-Type', MimeType }], B, Req),
             {ok, RepReq, State};
         {error, enoent} ->
-            {ok, RepReq} = cowboy_http_req:reply(404, [{'Content-Type', <<"text/plain">>}], <<"Not found">>, Req),
+            {ok, RepReq} = cowboy_req:reply(404, [{'Content-Type', <<"text/plain">>}], <<"Not found">>, Req),
             {ok, RepReq, State}
     end.
 
@@ -74,7 +74,7 @@ format_log_entry(PL) ->
         [proplists:get_value(time, PL),
          proplists:get_value(event, PL)]).
 
-%% @doc Wrap a JSON term into a 'd' dictionary. 
+%% @doc Wrap a JSON term into a 'd' dictionary.
 %%  This avoids a certain type of cross browser attacks by disallowing
 %%  the outer element to be a list. The problem is that an array can
 %%  be reprototyped in JS, which then opens you up to nasty attacks.

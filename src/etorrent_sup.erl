@@ -74,7 +74,7 @@ init([PeerId]) ->
     UPNPSup = case etorrent_config:use_upnp() of
         false -> [];
         true ->
-            [{upnp_sup,
+            [{etorrent_upnp_sup,
                 {etorrent_upnp_sup, start_link, []},
                 permanent, infinity, supervisor, [etorrent_upnp_sup]}]
     end,
