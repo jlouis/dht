@@ -284,7 +284,7 @@ contact_tracker_udp(Url, IP, Port, Event,
 contact_tracker_http(Url, Event, S) ->
     RequestUrl = build_tracker_url(Url, Event, S),
     case etorrent_http:request(RequestUrl) of
-        {ok, {{200, _}, _, Body}} ->
+        {ok, {200, _, Body}} ->
             case etorrent_bcoding:decode(Body) of
                 {ok, BC} -> {ok, handle_tracker_response(Url, BC, S)};
                 {error, _} ->
@@ -420,7 +420,7 @@ response_ips_v6(BC) ->
         none -> [];
         IPs -> etorrent_utils:decode_ips_v6(IPs)
     end.
-             
+
 
 %%% BEP 12 stuff
 %%% ----------------------------------------------------------------------

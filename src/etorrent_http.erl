@@ -26,19 +26,25 @@
 -type http_response() :: {{integer(), string()}, term(), iolist()}.
 -spec request(string()) -> {error, term()} | {ok, http_response()}.
 request(URL) ->
-    case lhttpc:request(URL, get, [{"User-Agent", binary_to_list(?AGENT_TRACKER_STRING)},
-                                   {"Host", decode_host(URL)},
-                                   {"Accept", "*/*"},
-                                   {"Accept-Encoding", "gzip, identity"}],
-                        15000) of
-        {ok, {{StatusCode, ReasonPhrase}, Headers, Body}} ->
-            case decode_content_encoding(Headers) of
-                identity ->
-                    {ok, {{StatusCode, ReasonPhrase}, Headers, Body}};
-                gzip ->
-                    DecompressedBody = binary_to_list(zlib:gunzip(Body)),
-                    {ok, {{StatusCode, ReasonPhrase}, Headers,
-                     DecompressedBody}}
+    case hackney:request(URL, get, [{<<"User-Agent">>, binary_to_list(?AGENT_TRACKER_STRING)},
+                                    {<<"Host">>, decode_host(URL)},
+                                    {<<"Accept">>, "*/*"},
+                                    {<<"Accept-Encoding">>, "gzip, identity"}],
+                         <<>>,
+                         [{pool, default}, {recv_timeout, 15000}]) of
+        {ok, Status, RespHeaders, Client} ->
+            case hackney:body(Client) of
+                {ok, RespBody, _} ->
+                    case decode_content_encoding(RespHeaders) of
+                        identity ->
+                            {ok, {Status, RespHeaders, RespBody}};
+                        gzip ->
+                            DecompressedBody = binary_to_list(zlib:gunzip(RespBody)),
+                            {ok, {Status, RespHeaders,
+                                  DecompressedBody}}
+                    end;
+                E ->
+                    E
             end;
         E ->
             E
@@ -76,16 +82,13 @@ header_conv(Str) when is_list(Str) -> Str.
 
 % Variant that decodes the content headers, handling compression.
 decode_content_encoding(Headers) ->
-    LowerCaseHeaderKeys =
-        [{string:to_lower(K), V} || {K, V} <- Headers],
-    case lists:keysearch("content-encoding", 1, LowerCaseHeaderKeys) of
-        {value, {_, "gzip"}} ->
+    HeadersDict = hackney_headers:new(Headers),
+    case hackney_headers:get_value(<<"content-encoding">>, HeadersDict) of
+        <<"gzip">> ->
             gzip;
-        {value, {_, "deflate"}} ->
+        <<"deflate">> ->
             deflate;
-        {value, {_, "identity"}} ->
-            identity;
-        false ->
+        _ ->
             identity
     end.
 
