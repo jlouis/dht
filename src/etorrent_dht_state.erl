@@ -109,6 +109,9 @@ srv_name() ->
 start_link(StateFile) ->
     gen_server:start_link({local, srv_name()}, ?MODULE, [StateFile], []).
 
+
+%% @doc Return a this node id as an integer.
+%% Node ids are generated in a random manner.
 -spec node_id() -> nodeid().
 node_id() ->
     gen_server:call(srv_name(), {node_id}).

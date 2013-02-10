@@ -193,10 +193,4 @@ code_change(_, State, _) ->
     {ok, State}.
 
 cut_list(N, List) ->
-    case length(List) < N of
-        true ->
-            List;
-        false ->
-            {Keep, _} = lists:split(N, List),
-            Keep
-    end.
+    lists:sublist(List, N).

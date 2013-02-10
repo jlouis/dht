@@ -2,3 +2,4 @@
 deps/
 ebin/*.app
 log/*
+.eunit

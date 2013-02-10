@@ -764,7 +764,7 @@ minimize_masks([], _Union, Acc) ->
 -define(pending, etorrent_pending).
 -define(chunkstate, etorrent_chunkstate).
 -define(piecestate, etorrent_piecestate).
-
+-define(endgame, etorrent_endgame).
 
 chunk_server_test_() ->
     {setup, local,

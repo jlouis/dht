@@ -22,6 +22,7 @@
          complete_handshake/3,
          receive_handshake/1,
          extended_msg_contents/0,
+         extended_msg_contents/1,
          initiate_handshake/3]).
 
 -define(DEFAULT_HANDSHAKE_TIMEOUT, 120000).
@@ -256,8 +257,14 @@ initiate_handshake(Socket, LocalPeerId, InfoHash) ->
 %% @end
 -spec extended_msg_contents() -> binary().
 extended_msg_contents() ->
+    extended_msg_contents({}).
+
+
+-spec extended_msg_contents(list()) -> binary().
+extended_msg_contents(M) ->
     Port = etorrent_config:listen_port(),
-    extended_msg_contents(Port, ?AGENT_TRACKER_STRING, 250).
+    extended_msg_contents(Port, ?AGENT_TRACKER_STRING, 250, M).
+
 
 %% =======================================================================
 
@@ -373,22 +380,22 @@ encode_fastset([Idx | Rest]) ->
     R = encode_fastset(Rest),
     <<R/binary, Idx:32>>.
 
--spec extended_msg_contents(etorrent_types:portnum(), binary(), integer())
-                           -> binary().
-extended_msg_contents(Port, ClientVersion, ReqQ) ->
+
+-spec extended_msg_contents(etorrent_types:portnum(), binary(), integer(), 
+                            list()) -> binary().
+extended_msg_contents(Port, ClientVersion, ReqQ, M) ->
     iolist_to_binary(
       etorrent_bcoding:encode(
         [{<<"p">>, Port},
          {<<"v">>, ClientVersion},
          {<<"reqq">>, ReqQ},
-         {<<"m">>, {}}])).
-
+         {<<"m">>, M}])).
 
 -ifdef(EUNIT).
 
 ext_msg_contents_test() ->
     Expected = <<"d1:mde1:pi1729e4:reqqi100e1:v20:Etorrent v-test-casee">>,
-    Computed = extended_msg_contents(1729, <<"Etorrent v-test-case">>, 100),
+    Computed = extended_msg_contents(1729, <<"Etorrent v-test-case">>, 100, {}),
     ?assertEqual(Expected, Computed).
 
 -endif.
