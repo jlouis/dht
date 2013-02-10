@@ -38,7 +38,6 @@
         sasl,
         gproc,
         rlimit,
-        lhttpc,
         mimetypes]},
     {mod, {etorrent_app, []}},
     {env, []}
