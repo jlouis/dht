@@ -35,6 +35,7 @@
          not_interested/1,
          interested/1,
          extended_msg/1,
+         extended_msg/3,
          bitfield/2]).
 
 %% gproc registry entries
@@ -167,6 +168,11 @@ bitfield(Pid, BitField) ->
 -spec extended_msg(pid()) -> ok.
 extended_msg(Pid) ->
     forward_message(Pid, {extended, 0, etorrent_proto_wire:extended_msg_contents()}).
+
+-spec extended_msg(pid(), list(), list()) -> ok.
+extended_msg(Pid, Exts, Extra) ->
+    forward_message(Pid, {extended, 0, etorrent_proto_wire:
+                          extended_msg_contents(Exts, Extra)}).
 
 
 %% @private Send a message to the encoder process.

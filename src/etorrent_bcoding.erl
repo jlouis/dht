@@ -31,6 +31,7 @@
          get_binary_value/2, get_binary_value/3,
          get_string_value/2, get_string_value/3]).
 
+%% Decoded.
 -type bcode() :: etorrent_types:bcode().
 
 %%====================================================================

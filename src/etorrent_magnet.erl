@@ -1,11 +1,13 @@
+%% Metadata downloader.
 -module(etorrent_magnet).
 -export([download_meta_info/2]).
 -define(DEFAULT_CONNECT_TIMEOUT, 5000).
 -define(DEFAULT_RECEIVE_TIMEOUT, 5000).
+-define(DEFAULT_AWAIT_TIMEOUT, 25000).
 -define(METADATA_BLOCK_BYTE_SIZE, 16384). %% 16KiB (16384 Bytes)
 
-%% The extension message IDs are the IDs used to send the extension messages 
-%% to the peer sending this handshake. 
+%% The extension message IDs are the IDs used to send the extension messages
+%% to the peer sending this handshake.
 %% i.e. The IDs are local to this particular peer.
 
 
@@ -18,33 +20,53 @@
 -type peerid() :: <<_:160>>.
 -type infohash_bin() :: <<_:160>>.
 -type infohash_int() :: integer().
--type ipaddr() :: etorrent_types:ipaddr().  
+-type ipaddr() :: etorrent_types:ipaddr().
 -type portnum() :: etorrent_types:portnum().
--type bcode() :: etorrent_types:bcode(). 
+-type bcode() :: etorrent_types:bcode().
 
 
 download_meta_info(LocalPeerId, InfoHashNum) ->
     InfoHashBin = info_hash_to_binary(InfoHashNum),
     Nodes = fetch_nodes(InfoHashNum),
-    traverse_nodes(LocalPeerId, InfoHashBin, Nodes).
+    TagRef = make_ref(),
+    Workers = traverse_nodes(LocalPeerId, InfoHashBin, TagRef, Nodes, []),
+    await_respond(Workers, TagRef).
 
 
-traverse_nodes(LocalPeerId, InfoHashBin, [{_NodeIdNum, IP, Port}|Nodes]) ->
+traverse_nodes(LocalPeerId, InfoHashBin, TagRef,
+               [{_NodeIdNum, IP, Port}|Nodes], Workers) ->
     Self = self(),
-    spawn_link(fun() ->
-        Mess = 
+    Worker = spawn_link(fun() ->
+        Mess =
             try
-                connect_to_node(LocalPeerId, IP, Port, InfoHashBin),
-                connected
+                {ok, Metadata} =
+                connect_and_download_metainfo(LocalPeerId, IP, Port, InfoHashBin),
+                {ok, Metadata}
             catch error:Reason ->
-                {Reason, erlang:get_stacktrace()}
+                {error, {Reason, erlang:get_stacktrace()}}
             end,
-        Self ! Mess
+            Self ! {TagRef, self(), Mess}
         end),
-    traverse_nodes(LocalPeerId, InfoHashBin, Nodes);
-traverse_nodes(_LocalPeerId, _InfoHashBin, []) ->
-    ok.
-             
+    traverse_nodes(LocalPeerId, InfoHashBin, TagRef, Nodes, [Worker|Workers]);
+traverse_nodes(_LocalPeerId, _InfoHashBin, _TagRef, [], Workers) ->
+    Workers.
+
+await_respond([], _TagRef) ->
+    {error, all_workers_exited};
+await_respond([_|_]=Workers, TagRef) ->
+    receive
+        {TagRef, Pid, {ok, Metadata}} ->
+            [exit(Worker, normal) || Worker <- Workers -- [Pid]],
+            {ok, Metadata};
+        {TagRef, Pid, {error, _reason}} ->
+            await_respond(Workers -- [Pid], TagRef)
+       ;Unmatched ->
+            io:format(user, "Unmatched message: ~p~n", [Unmatched]),
+            await_respond(Workers, TagRef)
+        after ?DEFAULT_AWAIT_TIMEOUT ->
+            [exit(Worker, normal) || Worker <- Workers],
+            {error, await_timeout}
+    end.
 
 
 fetch_nodes(InfoHashNum) ->
@@ -54,13 +76,13 @@ fetch_nodes(InfoHashNum) ->
 
 
 
--spec connect_to_node(LocalPeerId, IP, Port, InfoHashBin) -> term() when
+-spec connect_and_download_metainfo(LocalPeerId, IP, Port, InfoHashBin) -> term() when
     InfoHashBin :: infohash_bin(),
     LocalPeerId :: peerid(),
     IP ::  ipaddr(),
     Port :: portnum().
 
-connect_to_node(LocalPeerId, IP, Port, InfoHashBin) ->
+connect_and_download_metainfo(LocalPeerId, IP, Port, InfoHashBin) ->
     {ok, Socket} = gen_tcp:connect(IP, Port, [binary, {active, false}],
                                    ?DEFAULT_CONNECT_TIMEOUT),
     try
@@ -76,7 +98,7 @@ connect_to_node(LocalPeerId, IP, Port, InfoHashBin) ->
         assert_valid_metadata_size(MetadataSize),
         {ok, Metadata} = download_metadata(Socket, MetadataExtId, MetadataSize),
         assert_valid_metadata(Metadata, MetadataSize, InfoHashBin),
-        io:format(user, "Dowloaded metadata: ~n~p~n", [Metadata]),
+%       io:format(user, "Dowloaded metadata: ~n~p~n", [Metadata]),
         {ok, Metadata}
     after
         gen_tcp:close(Socket)
@@ -93,7 +115,7 @@ info_hash_to_binary(InfoHashNum) when is_integer(InfoHashNum) ->
 
 %% Returns an extension header hand-shake message.
 extended_messaging_handshake(Socket) ->
-    {ok, _Size} = 
+    {ok, _Size} =
         etorrent_proto_wire:send_msg(Socket, {extended, 0, encoded_handshake_payload()}),
     {ok, {extended, 0, HeaderMsgBin}} = receive_msg(Socket),
     {ok, _HeaderMsg} = etorrent_bcoding:decode(HeaderMsgBin).
@@ -123,14 +145,14 @@ download_metadata(Socket, MetadataExtId, LeftSize, PieceNum, Data) ->
 receive_ext_msg(Socket, MetadataExtId) ->
     case receive_msg(Socket) of
         {ok, {extended, MetadataExtId, MsgBin}} ->
-            io:format(user, "Ext message was recieved: ~n~p~n", [MsgBin]),
+%           io:format(user, "Ext message was received: ~n~p~n", [MsgBin]),
             {ok, MsgBin};
         {ok, OtherMess} ->
-            io:format(user, "Unexpected message was recieved:~n~p~n",
+            io:format(user, "Unexpected message was received:~n~p~n",
                       [OtherMess]),
             receive_ext_msg(Socket, MetadataExtId)
     end.
-    
+
 decode_metadata_respond(RespondMsg) ->
     V = fun(X) -> etorrent_bcoding:get_value(X, RespondMsg) end,
     case V(<<"msg_type">>) of
@@ -176,7 +198,7 @@ assert_metadata_extension_support(Size) when Size > 0, is_integer(Size) ->
 
 assert_valid_metadata_size(Size) when Size > 0, is_integer(Size) ->
     ok.
-    
+
 
 %% Extension header
 %% Example extension handshake message:
@@ -193,7 +215,7 @@ header_example() ->
          {<<"v">>,<<"Deluge 1.3.3">>},
          {<<"yourip">>,<<127,0,0,1>>}].
 
-    
+
 
 %-include_lib("eunit/include/eunit.hrl").
 
@@ -210,7 +232,11 @@ assert_total_size(LeftSize, LeftSize) ->
 
 assert_valid_metadata(Metadata, MetadataSize, InfoHashBin) when
     byte_size(Metadata) =:= MetadataSize ->
-    ok.
+    case crypto:sha(Metadata) of
+        InfoHashBin -> ok;
+        OtherHash ->
+            error({bad_hash, [{expected, InfoHashBin}, {generated, OtherHash}]})
+    end.
 
 
 

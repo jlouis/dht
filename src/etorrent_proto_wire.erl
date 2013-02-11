@@ -23,6 +23,7 @@
          receive_handshake/1,
          extended_msg_contents/0,
          extended_msg_contents/1,
+         extended_msg_contents/2,
          initiate_handshake/3]).
 
 -define(DEFAULT_HANDSHAKE_TIMEOUT, 120000).
@@ -55,6 +56,16 @@
 
 %% Extended messaging
 -define(EXTENDED, 20:8).
+
+%% The extension message IDs are the IDs used to send the extension messages
+%% to the peer sending this handshake.
+%% i.e. The IDs are local to this particular peer.
+
+
+%% It is metadata extension id for this node.
+%% It will be passed during handshake.
+%% It can be any from 1..255.
+-define(UT_METADATA_EXT_ID, 15).
 
 %% =======================================================================
 
@@ -263,7 +274,12 @@ extended_msg_contents() ->
 -spec extended_msg_contents(list()) -> binary().
 extended_msg_contents(M) ->
     Port = etorrent_config:listen_port(),
-    extended_msg_contents(Port, ?AGENT_TRACKER_STRING, 250, M).
+    extended_msg_contents(Port, ?AGENT_TRACKER_STRING, 250, M, []).
+
+-spec extended_msg_contents(Mods::list(), Extra::list()) -> binary().
+extended_msg_contents(M, Extra) ->
+    Port = etorrent_config:listen_port(),
+    extended_msg_contents(Port, ?AGENT_TRACKER_STRING, 250, M, Extra).
 
 
 %% =======================================================================
@@ -382,20 +398,21 @@ encode_fastset([Idx | Rest]) ->
 
 
 -spec extended_msg_contents(etorrent_types:portnum(), binary(), integer(), 
-                            list()) -> binary().
-extended_msg_contents(Port, ClientVersion, ReqQ, M) ->
+                            list(), list()) -> binary().
+extended_msg_contents(Port, ClientVersion, ReqQ, M, Extra) ->
     iolist_to_binary(
       etorrent_bcoding:encode(
         [{<<"p">>, Port},
          {<<"v">>, ClientVersion},
          {<<"reqq">>, ReqQ},
-         {<<"m">>, M}])).
+         {<<"m">>, M}] ++ Extra)).
 
 -ifdef(EUNIT).
 
 ext_msg_contents_test() ->
     Expected = <<"d1:mde1:pi1729e4:reqqi100e1:v20:Etorrent v-test-casee">>,
-    Computed = extended_msg_contents(1729, <<"Etorrent v-test-case">>, 100, {}),
+    Computed = extended_msg_contents(1729, <<"Etorrent v-test-case">>,
+                                     100, {}, []),
     ?assertEqual(Expected, Computed).
 
 -endif.
