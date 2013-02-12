@@ -7,6 +7,8 @@
 %% error will terminate the peer totally. This is deliberate: we have
 %% other peers we could try, so if there is an error with this peer,
 %% it shouldn't really try to keep it around. We'll just try another.</p>
+%% <p>Exit of any child with any reason (even `normal') will cause the death
+%% of this supervisor with reason `reached_max_restart_intensity'.</p>
 %% @end
 -module(etorrent_peer_sup).
 -behaviour(supervisor).

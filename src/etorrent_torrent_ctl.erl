@@ -425,6 +425,7 @@ started(check_torrent, State) ->
 
 started(completed, #state{id=Id, tracker_pid=TrackerPid} = S) ->
     etorrent_event:completed_torrent(Id),
+    error_logger:info_msg("Completed torrent #~p.", [Id]),
     etorrent_tracker_communication:completed(TrackerPid),
     {next_state, started, S};
 

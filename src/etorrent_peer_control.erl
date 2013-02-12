@@ -380,6 +380,8 @@ handle_cast(interested, State) ->
     self() ! {interested, true},
     {noreply, State};
 
+%% TODO: this cause death of `etorrent_peer_sup' with reason 
+%%       `reached_max_restart_intensity'.
 handle_cast(stop, S) ->
     {stop, normal, S};
 
@@ -784,8 +786,8 @@ complete_connection_setup(Socket, TorrentID, Extended, Valid, Exts) ->
     SendPid = etorrent_peer_send:await_server(Socket),
     Bitfield = etorrent_pieceset:to_binary(Valid),
     Extra = add_metadata_size(Exts, TorrentID),
-    Extended andalso etorrent_peer_send:
-        extended_msg(SendPid, etorrent_ext:extension_list(Exts), Extra),
+%   Extended andalso etorrent_peer_send:
+%       extended_msg(SendPid, etorrent_ext:extension_list(Exts), Extra),
     etorrent_peer_send:bitfield(SendPid, Bitfield),
     SendPid.
 
