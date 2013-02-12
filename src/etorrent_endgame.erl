@@ -179,15 +179,16 @@ handle_info({chunk, {stored, Index, Offset, Length, Pid}}, State) ->
         fetched=Fetched,
         stored=Stored} = State,
     Chunk = {Index, Offset, Length},
-    case has_fetched(Chunk, Pid, Fetched) of
-        false ->
-            {noreply, State};
-        true ->
-            NewState = State#state{
-                fetched=del_fetched(Chunk, Pid, Fetched),
-                stored=add_stored(Chunk, Stored)},
-            {noreply, NewState}
-    end.
+    Isstored   = is_stored(Chunk, Stored),
+    HasFetched = has_fetched(Chunk, Pid, Fetched),
+    Stored2 = if 
+        Isstored   -> Stored;
+        true       -> add_stored(Chunk, Stored) end,
+    Fetched2 = if
+        HasFetched -> del_fetched(Chunk, Pid, Fetched);
+        true       -> Fetched end,
+    NewState = State#state{fetched=Fetched2, stored=Stored2},
+    {noreply, NewState}.
 
 terminate(_, State) ->
     {ok, State}.
