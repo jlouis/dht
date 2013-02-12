@@ -399,7 +399,8 @@ encode_fastset([Idx | Rest]) ->
 
 -spec extended_msg_contents(etorrent_types:portnum(), binary(), integer(), 
                             list(), list()) -> binary().
-extended_msg_contents(Port, ClientVersion, ReqQ, M, Extra) ->
+extended_msg_contents(Port, ClientVersion, ReqQ, M, Extra)
+    when is_list(Extra) ->
     iolist_to_binary(
       etorrent_bcoding:encode(
         [{<<"p">>, Port},

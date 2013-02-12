@@ -255,7 +255,7 @@ init([TorrentID, Torrent]) ->
     true = register_server(TorrentID),
 
     %% Really? First decode, now encode...
-    TorrentBin = etorrent_bcode:encode(Torrent),
+    TorrentBin = iolist_to_binary(etorrent_bcoding:encode(Torrent)),
     MetadataSize = byte_size(TorrentBin),
 
     InitState = #state{

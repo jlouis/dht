@@ -465,6 +465,16 @@ handle_event({switch_mode, NewMode}, SN, S=#state{mode=OldMode}) ->
     #state{mode=OldMode, parent_pid=Sup, id=TorrentID,
         valid=ValidPieceSet} = S,
 
+    Peers = etorrent_peer_control:lookup_peers(TorrentID),
+    [etorrent_download:wait_for_update(Peer) || Peer <- Peers],
+    %% `Peers' are waiting.
+    %% Stop it, new peers will await for a new assignor,
+    %% calling `etorrent_download:await_servers/1'.
+    %%
+    %% There can be a tiny rice condition, if a new peer will be started,
+    %% before gproc will know, that the old assignor process is dead.
+    %%
+    %% Let it crash in this case.
     etorrent_torrent_sup:stop_assignor(Sup),
 
     {ok, Assignor} = 
@@ -488,8 +498,6 @@ handle_event({switch_mode, NewMode}, SN, S=#state{mode=OldMode}) ->
               TorrentID)
         end,
         
-    
-    Peers = etorrent_peer_control:lookup_peers(TorrentID),
     [etorrent_download:switch_assignor(Peer, Assignor) || Peer <- Peers],
 
     {next_state, SN, S#state{mode=NewMode}};

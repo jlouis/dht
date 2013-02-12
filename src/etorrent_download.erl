@@ -17,7 +17,8 @@
 
 %% update functions
 -export([switch_assignor/2,
-         update/2]).
+         update/2,
+         wait_for_update/1]).
 
 -type torrent_id()  :: etorrent_types:torrent_id().
 -type pieceset()    :: etorrent_pieceset:t().
@@ -80,6 +81,14 @@ await_servers(TorrentID) ->
 -spec switch_assignor(pid(), pid()) -> ok.
 switch_assignor(PeerPid, Assignor) ->
     PeerPid ! {download, {assignor, Assignor}},
+    ok.
+
+%% @doc Call this function, before `switch_assignor/2', to avoid race condition.
+%% After calling this, `switch_assignor/2' must be called for next few second.
+%% If the calling process crashes, then `PeerPid' will be unlocked automatically.
+-spec wait_for_update(pid()) -> ok.
+wait_for_update(PeerPid) ->
+    gen_server:call(PeerPid, wait_for_update),
     ok.
 
 

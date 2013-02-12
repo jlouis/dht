@@ -462,6 +462,8 @@ handle_info({peer, {check, seeder}}, State) ->
     {noreply, State};
 
 
+%% Handle a message from `etorrent_download:update/2'.
+%% `wait_for_update' can be called before this function.
 handle_info({download, Update}, State) ->
     #state{download=Download} = State,
     NewDownload = etorrent_download:update(Update, Download),
@@ -481,6 +483,22 @@ terminate(_Reason, _S) ->
     ok.
 
 %% @private
+%% Wait for new assignor.
+%% Ignore any other messages.
+%% It is send from `etorrent_download:wait_for_update/1'.
+handle_call(wait_for_update, {FromPid, _}=From, State) ->
+    Ref = monitor(process, FromPid),
+    gen_server:reply(From, ok),
+    lager:info("Locked from: ~p", [FromPid]),
+    try
+        receive
+            {download, _}=M -> demonitor(Ref, [flush]), handle_info(M, State);
+            {'DOWN', Ref, process, FromPid, _Reason} -> {noreply, State}
+        end
+    after
+        lager:info("Unlocked from: ~p", [FromPid])
+    end;
+
 handle_call(Request, _From, State) ->
     lager:error("Unknown handle_call: ~p", [Request]),
     {noreply, State}.

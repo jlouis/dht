@@ -41,7 +41,7 @@ new(LocallySupportedNames) ->
           bnames=SortedBNames,
           mod_names=ModNames,
           local_id2mod_name=list_to_tuple(Bnames),
-          m = lists:foldl(fun(X,Y) -> {{X,Y}, Y+1} end, 1, Bnames)
+          m = enumerate(Bnames, 1)
          }.
 
 -spec handle_handshake_respond(RespondMsg::bcode(), Exts::ext_list()) -> ext_list().
@@ -67,7 +67,7 @@ extension_list(#exts{m=M}) ->
 
 is_locally_supported(ExtName, #exts{bnames=SortedBNames}) when is_atom(ExtName) ->
     ExtNameBin = atom_to_binary(ExtName, utf8),
-    orddict:is_element(ExtNameBin, SortedBNames).
+    ordsets:is_element(ExtNameBin, SortedBNames).
 
 
 decode_msg(LocalExtId, Msg, #exts{local_id2mod_name = Id2Mod})
@@ -179,3 +179,9 @@ update_ord_dict_test_() ->
 
 gen_mod_list(Bnames) ->
     [<<"etorrent_ext_", Bname/binary>> || Bname <- Bnames].
+
+
+enumerate([H|T], N) ->
+    [{H,N}|enumerate(T, N+1)];
+enumerate([], _N) ->
+    [].
