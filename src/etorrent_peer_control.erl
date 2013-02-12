@@ -786,8 +786,8 @@ complete_connection_setup(Socket, TorrentID, Extended, Valid, Exts) ->
     SendPid = etorrent_peer_send:await_server(Socket),
     Bitfield = etorrent_pieceset:to_binary(Valid),
     Extra = add_metadata_size(Exts, TorrentID),
-%   Extended andalso etorrent_peer_send:
-%       extended_msg(SendPid, etorrent_ext:extension_list(Exts), Extra),
+    Extended andalso etorrent_peer_send:
+        extended_msg(SendPid, etorrent_ext:extension_list(Exts), Extra),
     etorrent_peer_send:bitfield(SendPid, Bitfield),
     SendPid.
 

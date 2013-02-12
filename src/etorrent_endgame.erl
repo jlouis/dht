@@ -327,8 +327,6 @@ endgame_test_() ->
         fun setup/0,
         fun teardown/1, [
     ?_test(test_registers()),
-    ?_test(test_starts_inactive()),
-    ?_test(test_activated()),
     ?_test(test_active_one_assigned()),
     ?_test(test_active_one_dropped()),
     ?_test(test_active_one_fetched()),
@@ -340,15 +338,8 @@ test_registers() ->
     ?assert(is_pid(?endgame:lookup_server(testid()))),
     ?assert(is_pid(?endgame:await_server(testid()))).
 
-test_starts_inactive() ->
-    ?assertNot(?endgame:is_active(testpid())).
-
-test_activated() ->
-    ?assertEqual(ok, ?endgame:activate(testpid())),
-    ?assert(?endgame:is_active(testpid())).
 
 test_active_one_assigned() ->
-    ok = ?endgame:activate(testpid()),
     Pid = spawn_link(fun() ->
         ?pending:register(pending()),
         ?chunkstate:assigned(0, 0, 1, self(), testpid()),
@@ -361,7 +352,6 @@ test_active_one_assigned() ->
     Pid ! die, etorrent_utils:wait(Pid).
 
 test_active_one_dropped() ->
-    ok = ?endgame:activate(testpid()),
     Pid = spawn_link(fun() ->
         ?pending:register(pending()),
         ?chunkstate:assigned(0, 0, 1, self(), testpid()),
@@ -374,7 +364,6 @@ test_active_one_dropped() ->
     Pid ! die, etorrent_utils:wait(Pid).
 
 test_active_one_fetched() ->
-    ok = ?endgame:activate(testpid()),
     %% Spawn a separate process to introduce the chunk into endgame
     Orig = spawn_link(fun() ->
         ?pending:register(pending()),
@@ -408,7 +397,6 @@ test_active_one_fetched() ->
     Orig ! die, etorrent_utils:wait(Orig).
 
 test_active_one_stored() ->
-    ok = ?endgame:activate(testpid()),
     %% Spawn a separate process to introduce the chunk into endgame
     Orig = spawn_link(fun() ->
         ?pending:register(pending()),
@@ -434,7 +422,6 @@ test_active_one_stored() ->
     Orig ! die, etorrent_utils:wait(Orig).
 
 test_request_list() ->
-    ok = ?endgame:activate(testpid()),
     Pid = spawn_link(fun() ->
         ?pending:register(pending()),
         ?chunkstate:assigned(0, 0, 1, self(), testpid()),
