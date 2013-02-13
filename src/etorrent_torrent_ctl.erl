@@ -92,8 +92,7 @@
     pending     :: pid(),
     wishes = [] :: [#wish{}],
     interval    :: timer:interval(),
-    mode = progress 
-                :: 'progress' | 'endgame' | atom()
+    mode = progress :: 'progress' | 'endgame' | atom()
     }).
 
 
@@ -466,40 +465,28 @@ handle_event({switch_mode, NewMode}, SN, S=#state{mode=OldMode}) ->
     #state{mode=OldMode, parent_pid=Sup, id=TorrentID,
         valid=ValidPieceSet} = S,
 
-    Peers = etorrent_peer_control:lookup_peers(TorrentID),
-    [etorrent_download:wait_for_update(Peer) || Peer <- Peers],
-    %% `Peers' are waiting.
-    %% Stop it, new peers will await for a new assignor,
-    %% calling `etorrent_download:await_servers/1'.
-    %%
-    %% There can be a tiny rice condition, if a new peer will be started,
-    %% before gproc will know, that the old assignor process is dead.
-    %%
-    %% Let it crash in this case.
-    etorrent_torrent_sup:stop_assignor(Sup),
+    case NewMode of
+    'progress' ->
+        #state{torrent=Torrent, 
+                wishes=Wishes} = S,
+        Masks = wishes_to_masks(Wishes),
+%           etorrent_torrent_sup:stop_endgame(Sup),
 
-    {ok, Assignor} = 
-        case NewMode of
-        'progress' ->
-            #state{torrent=Torrent, 
-                    wishes=Wishes} = S,
-            Masks = wishes_to_masks(Wishes),
+        %% Start the progress manager
+        etorrent_torrent_sup:start_progress(
+          Sup,
+          TorrentID,
+          Torrent,
+          ValidPieceSet,
+          Masks);
 
-            %% Start the progress manager
-            etorrent_torrent_sup:start_progress(
-              Sup,
-              TorrentID,
-              Torrent,
-              ValidPieceSet,
-              Masks);
-
-        'endgame' ->
-            etorrent_torrent_sup:start_endgame(
-              Sup,
-              TorrentID)
-        end,
+    'endgame' ->
+        etorrent_torrent_sup:start_endgame(
+          Sup,
+          TorrentID)
+    end,
         
-    [etorrent_download:switch_assignor(Peer, Assignor) || Peer <- Peers],
+    etorrent_download:switch_mode(TorrentID, OldMode, NewMode),
 
     {next_state, SN, S#state{mode=NewMode}};
 

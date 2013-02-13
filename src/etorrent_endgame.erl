@@ -67,7 +67,6 @@ init([TorrentID]) ->
                "Endgame active ~w", [TorrentID]),
 
     true = register_server(TorrentID),
-    true = etorrent_download:register_server(TorrentID),
     Pending = etorrent_pending:await_server(TorrentID),
     ok = etorrent_pending:receiver(self(), Pending),
     InitState = #state{

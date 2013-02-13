@@ -422,6 +422,7 @@ do_state_change([{subtract_left, Amount} | Rem], T) ->
                 rate_sparkline = [0.0] };
 
         N when N =< T#torrent.total ->
+%          io:format(user, "Torrent#~p: ~p bytes left.~n", [T#torrent.id, N]),
            T#torrent { left = N }
         end,
 

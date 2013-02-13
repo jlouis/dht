@@ -74,7 +74,7 @@ register(Srvpid) ->
     gen_server:call(Srvpid, {register, self()}).
 
 
-%% @doc
+%% @doc Update receiver process.
 %% @end
 -spec receiver(pid(), pid()) -> ok.
 receiver(Recvpid, Srvpid) ->
