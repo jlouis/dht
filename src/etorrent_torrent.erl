@@ -31,6 +31,7 @@
 -type(torrent_state() :: 'leeching' | 'seeding' | 'endgame' | 'paused' | 'unknown').
 
 %% A single torrent is represented as the 'torrent' record
+%% TODO: How many seeders/leechers are we connected to?
 -record(torrent,
 	{ %% Unique identifier of torrent, monotonically increasing
           id :: non_neg_integer(),

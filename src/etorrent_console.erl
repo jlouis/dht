@@ -40,8 +40,9 @@
     'uploaded'   :: integer(),
     'state'      :: atom(),
 
-    'speed_in'  = 0 :: integer(),
-    'speed_out' = 0 :: integer()
+    %% Byte per second
+    'speed_in'  = 0.0 :: float(),
+    'speed_out' = 0.0 :: float()
 }).
 
 -record(state, {
@@ -85,7 +86,7 @@ handle_info(update, SD=#state{torrents=OldTorrents, tick=Timeout}) ->
     UnsortedNewTorrents = lists:map(fun to_record/1, PLs),
     NewTorrents = sort_records(UnsortedNewTorrents),
     NewTorrents2 = calc_speed_records(OldTorrents, NewTorrents, Timeout),
-    map_records2(fun print_torent_info/2, OldTorrents, NewTorrents),
+    map_records2(fun print_torent_info/2, OldTorrents, NewTorrents2),
     {noreply, SD#state{torrents=NewTorrents2}}.
 
 terminate(_Reason, _SD) ->
@@ -129,19 +130,19 @@ sort_records(List) ->
 
 
 calc_speed_records(Olds, News, Tick) ->
-    FU = fun(#torrent{uploaded=X, speed_out=0}, 
-             #torrent{uploaded=X, speed_out=0}=New) -> New;
+    FU = fun(#torrent{uploaded=X, speed_out=0.0}, 
+             #torrent{uploaded=X, speed_out=0.0}=New) -> New;
             (#torrent{uploaded=X}, 
-             #torrent{uploaded=X}=New) -> New#torrent{speed_out=0};
+             #torrent{uploaded=X}=New) -> New#torrent{speed_out=0.0};
             (#torrent{uploaded=O}, 
              #torrent{uploaded=N}=New) -> 
                 New#torrent{speed_out=calc_speed(O, N, Tick)}
         end,
 
-    FD = fun(#torrent{downloaded=X, speed_in=0}, 
-             #torrent{downloaded=X, speed_in=0}=New) -> New;
+    FD = fun(#torrent{downloaded=X, speed_in=0.0}, 
+             #torrent{downloaded=X, speed_in=0.0}=New) -> New;
             (#torrent{downloaded=X}, 
-             #torrent{downloaded=X}=New) -> New#torrent{speed_in=0};
+             #torrent{downloaded=X}=New) -> New#torrent{speed_in=0.0};
             (#torrent{downloaded=O}, 
              #torrent{downloaded=N}=New) -> 
                 New#torrent{speed_in=calc_speed(O, N, Tick)}
@@ -201,10 +202,12 @@ print_torent_info(undefined, #torrent{id=Id}) ->
     log("STARTED torrent #~p.", [Id]);
 print_torent_info(#torrent{id=Id}, undefined) -> 
     log("STOPPED torrent #~p.", [Id]);
-print_torent_info(_Old, #torrent{state=Status, id=Id, left=Left, total=Total}) -> 
+print_torent_info(_Old, #torrent{state=Status, id=Id, left=Left, total=Total,
+                                 speed_in=SpeedIn, speed_out=SpeedOut}) -> 
     DownloadedPercent = (Total-Left)/Total * 100,
-    log("~.10s #~p: ~6.2f%", [string:to_upper(atom_to_list(Status)),
-                              Id, DownloadedPercent]).
+    log("~.10s #~p: ~6.2f% ~s in, ~s out", 
+        [string:to_upper(atom_to_list(Status)), Id, DownloadedPercent, 
+         pretty_speed(SpeedIn), pretty_speed(SpeedOut)]).
     
 %   'leechers'   :: integer(),
 %   'seeders'    :: integer(),
@@ -214,6 +217,15 @@ print_torent_info(_Old, #torrent{state=Status, id=Id, left=Left, total=Total}) -
 log(Pattern, Args) ->
     io:format(user, Pattern ++ "~n", Args),
     ok.
+
+pretty_speed(BPS) when BPS < 1024 ->
+    io_lib:format("~7.2f B/s ", [BPS]);
+pretty_speed(BPS) when BPS < 1024*1024 ->
+    io_lib:format("~7.2f KiB/s", [BPS / 1024]);
+pretty_speed(BPS) ->
+    io_lib:format("~7.2f MiB/s", [BPS / (1024*1024)]).
+
+
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
