@@ -25,6 +25,7 @@
 -type bcode() :: etorrent_types:bcode().
 
 
+-spec download_meta_info(LocalPeerId::peerid(), InfoHashNum::infohash_int()) -> list().
 download_meta_info(LocalPeerId, InfoHashNum) ->
     InfoHashBin = info_hash_to_binary(InfoHashNum),
     Nodes = fetch_nodes(InfoHashNum),

@@ -21,6 +21,7 @@
 %% Metainfo
 -export([get_piece_length/1, get_length/1, get_pieces/1, get_url/1,
          get_infohash/1,
+         literal_infohash/1,
 	     file_paths/1,
 	     file_path_len/1,
          get_files/1, get_name/1,
@@ -90,6 +91,7 @@ get_dht_urls(Torrent)  -> get_with_prefix(Torrent, "dht://").
 get_infohash(Torrent) ->
     Info = get_info(Torrent),
     crypto:sha(iolist_to_binary(etorrent_bcoding:encode(Info))).
+    
 
 %% @doc Get a file list from the torrent
 %% @end
@@ -217,3 +219,10 @@ valid_path(Path) when is_list(Path) ->
         {match, _} -> true;
         nomatch    -> false
     end.
+
+
+
+
+-spec literal_infohash(infohash()) -> string().
+literal_infohash(InfohashInt) when is_integer(InfohashInt) ->
+    integer_to_list(InfohashInt, 16).

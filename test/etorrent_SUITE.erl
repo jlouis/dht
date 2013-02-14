@@ -9,7 +9,8 @@
 
 -export([seed_leech/0, seed_leech/1,
 	 seed_transmission/0, seed_transmission/1,
-	 leech_transmission/0, leech_transmission/1]).
+	 leech_transmission/0, leech_transmission/1,
+     bep9/0, bep9/1]).
 
 -define(TESTFILE30M, "test_file_30M.random").
 -define(ET_WORK_DIR, "work-et").
@@ -39,7 +40,11 @@ init_per_suite(Config) ->
     Fn = filename:join([Directory, TestFn]),
     ensure_random_file(Fn),
     file:set_cwd(Directory),
-    ensure_torrent_file(TestFn),
+    TorrentFn = ensure_torrent_file(TestFn),
+    {ok, Torrent} = etorrent_bcoding:parse_file(TorrentFn),
+    TorrentIH = etorrent_metainfo:literal_infohash(
+            etorrent_metainfo:get_infohash(Torrent)),
+    io:format(user, "Infohash is ~p.~n", [TorrentIH]),
     Pid = start_opentracker(Directory),
     {ok, SeedNode} = test_server:start_node('seeder', slave, []),
     {ok, LeechNode} = test_server:start_node('leecher', slave, []),
@@ -51,7 +56,8 @@ init_per_suite(Config) ->
 %   ok = rpc:call(LeechNode, application, start, [sasl]),
 %   ok = rpc:call(SeedNode,  lager, start, []),
 %   ok = rpc:call(LeechNode, lager, start, []),
-    [{tracker_port, Pid},
+    [{info_hash, TorrentIH},
+     {tracker_port, Pid},
      {leech_node, LeechNode},
      {seed_node, SeedNode} | Config].
 
@@ -202,7 +208,8 @@ leech_configuration(Config, CConf, PrivDir, DownloadSuffix) ->
 %% Tests
 %% ----------------------------------------------------------------------
 groups() ->
-    [{main_group, [shuffle], [seed_transmission, seed_leech, leech_transmission]}].
+%   [{main_group, [shuffle], [seed_transmission, seed_leech, leech_transmission]}].
+    [{main_group, [], [bep9]}].
 
 all() ->
     [{group, main_group}].
@@ -257,6 +264,26 @@ seed_leech(Config) ->
     end,
     sha1_file(?config(et_leech_file, Config))
 	=:= sha1_file(?config(seed_file, Config)).
+
+
+bep9() ->
+    [{require, common_conf, etorrent_common_config}].
+
+bep9(Config) ->
+    io:format(user, "~n======START SEED AND LEECHING BEP-9 TEST CASE======~n", []),
+%   {Ref, Pid} = {make_ref(), self()},
+%   ok = rpc:call(?config(leech_node, Config),
+%   	  etorrent, start,
+%   	  [?config(seed_torrent, Config), {Ref, Pid}]),
+    receive
+	{Ref, done} -> ok
+    after
+	120*1000 -> exit(timeout_error)
+    end,
+    sha1_file(?config(et_leech_file, Config))
+	=:= sha1_file(?config(seed_file, Config)).
+
+
 
 %% Helpers
 %% ----------------------------------------------------------------------
@@ -355,13 +382,15 @@ stop_opentracker(Pid) ->
     Pid ! close.
 
 ensure_torrent_file(Fn) ->
-    case filelib:is_regular(Fn ++ ".torrent") of
+    TorrentFn = Fn ++ ".torrent",
+    case filelib:is_regular(TorrentFn) of
 	true ->
 	    ok;
 	false ->
 	    etorrent_mktorrent:create(
-	      Fn, "http://localhost:6969/announce", Fn ++ ".torrent")
-    end.
+	      Fn, "http://localhost:6969/announce", TorrentFn)
+    end,
+    TorrentFn.
 
 ensure_random_file(Fn) ->
     case filelib:is_regular(Fn) of
