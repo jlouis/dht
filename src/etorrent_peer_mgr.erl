@@ -87,6 +87,7 @@ handle_call(_Request, _From, State) ->
     {reply, Reply, State}.
 
 handle_cast({add_peers, TrackerUrl, IPList}, S) ->
+    lager:debug("Add peers ~p.", [IPList]),
     NS = start_new_peers(TrackerUrl, IPList, S),
     {noreply, NS};
 handle_cast({enter_bad_peer, IP, Port, PeerId}, S) ->

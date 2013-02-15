@@ -41,24 +41,28 @@ init_per_suite(Config) ->
     ensure_random_file(Fn),
     file:set_cwd(Directory),
     TorrentFn = ensure_torrent_file(TestFn),
-    {ok, Torrent} = etorrent_bcoding:parse_file(TorrentFn),
-    TorrentIH = etorrent_metainfo:literal_infohash(
-            etorrent_metainfo:get_infohash(Torrent)),
+    %% Literal infohash.
+    {ok, TorrentIH} = etorrent_dotdir:info_hash(TorrentFn),
     io:format(user, "Infohash is ~p.~n", [TorrentIH]),
     Pid = start_opentracker(Directory),
     {ok, SeedNode} = test_server:start_node('seeder', slave, []),
     {ok, LeechNode} = test_server:start_node('leecher', slave, []),
+    {ok, MiddlemanNode} = test_server:start_node('middleman', slave, []),
     rpc:call(SeedNode,  code, set_path, [code:get_path()]),
     rpc:call(LeechNode, code, set_path, [code:get_path()]),
+    rpc:call(MiddlemanNode, code, set_path, [code:get_path()]),
     %% Start SASL before lager, because SASL will set its error_handler
     %% otherwise.
 %   ok = rpc:call(SeedNode,  application, start, [sasl]),
 %   ok = rpc:call(LeechNode, application, start, [sasl]),
-%   ok = rpc:call(SeedNode,  lager, start, []),
-%   ok = rpc:call(LeechNode, lager, start, []),
+    ok = rpc:call(SeedNode,  lager, start, []),
+    ok = rpc:call(LeechNode, lager, start, []),
+    ok = rpc:call(LeechNode, lager, set_loglevel, [lager_console_backend, debug]),
+    ok = rpc:call(SeedNode,  lager, set_loglevel, [lager_console_backend, debug]),
     [{info_hash, TorrentIH},
      {tracker_port, Pid},
      {leech_node, LeechNode},
+     {middleman_node, MiddlemanNode},
      {seed_node, SeedNode} | Config].
 
 end_per_suite(Config) ->
@@ -102,6 +106,8 @@ init_locations(Config) ->
     LeechFile    = filename:join([PrivDir, ?TESTFILE30M]),
     LeechFastResume = filename:join([PrivDir, "leech_fast_resume"]),
 
+    InterFastResume = filename:join([PrivDir, "middleman_fast_resume"]),
+
     %% Setup Etorrent location
     EtorrentWorkDir          = filename:join([PrivDir, ?ET_WORK_DIR]),
     EtorrentLeechFile        = filename:join([PrivDir, ?ET_WORK_DIR, ?TESTFILE30M]),
@@ -117,6 +123,7 @@ init_locations(Config) ->
      {seed_fast_resume, SeedFastResume},
      {leech_file,    LeechFile},
      {leech_fast_resume, LeechFastResume},
+     {middleman_fast_resume, InterFastResume},
      {et_work_dir, EtorrentWorkDir},
      {et_leech_file, EtorrentLeechFile},
      {tr_work_dir, TransMissionWorkDir},
@@ -137,6 +144,14 @@ spawn_seeder(Config) ->
 				    ?config(priv_dir, Config),
 				    ?config(data_dir, Config)),
     ok = rpc:call(?config(seed_node, Config), etorrent, start_app, [SeedConfig]).
+
+spawn_middleman(Config) ->
+    CommonConf = ct:get_config(common_conf),
+    InterConfig = middleman_configuration(Config,
+				    CommonConf,
+				    ?config(priv_dir, Config),
+				    ?config(data_dir, Config)),
+    ok = rpc:call(?config(middleman_node, Config), etorrent, start_app, [InterConfig]).
 
 init_per_testcase(leech_transmission, Config) ->
     %% Feed transmission the file to work with
@@ -159,6 +174,11 @@ init_per_testcase(seed_leech, Config) ->
     spawn_seeder(Config),
     spawn_leecher(Config),
     Config;
+init_per_testcase(bep9, Config) ->
+    spawn_seeder(Config),
+    spawn_leecher(Config),
+    spawn_middleman(Config),
+    Config;
 init_per_testcase(_Case, Config) ->
     Config.
 
@@ -177,14 +197,22 @@ end_per_testcase(seed_leech, Config) ->
     stop_seeder(Config),
     stop_leecher(Config),
     ?line ok = file:delete(?config(et_leech_file, Config));
+end_per_testcase(bep9, Config) ->
+    stop_seeder(Config),
+    stop_leecher(Config),
+    stop_middleman(Config),
+%   ?line ok = file:delete(?config(et_leech_file, Config)),
+    ok;
 end_per_testcase(_Case, _Config) ->
     ok.
 
 %% Configuration
 %% ----------------------------------------------------------------------
 seed_configuration(Config, CConf, PrivDir, DataDir) ->
-    [{port, 1739 },
-     {udp_port, 1740 },
+    [{listen_ip, {127,0,0,2}},
+     {port, 1741 },
+     {udp_port, 1742 },
+     {dht_port, 1743 },
      {dht_state, filename:join([PrivDir, "seeder_state.persistent"])},
      {dir, DataDir},
      {download_dir, DataDir},
@@ -196,8 +224,10 @@ leech_configuration(Config, CConf, PrivDir) ->
     leech_configuration(CConf, PrivDir, ?ET_WORK_DIR).
 
 leech_configuration(Config, CConf, PrivDir, DownloadSuffix) ->
-    [{port, 1769 },
-     {udp_port, 1760 },
+    [{listen_ip, {127,0,0,3}},
+     {port, 1751 },
+     {udp_port, 1752 },
+     {dht_port, 1753 },
      {dht_state, filename:join([PrivDir, "leecher_state.persistent"])},
      {dir, filename:join([PrivDir, DownloadSuffix])},
      {download_dir, filename:join([PrivDir, DownloadSuffix])},
@@ -205,11 +235,26 @@ leech_configuration(Config, CConf, PrivDir, DownloadSuffix) ->
      {logger_fname, "leech_etorrent.log"},
      {fast_resume_file, ?config(leech_fast_resume, Config)} | CConf].
 
+middleman_configuration(Config, CConf, PrivDir) ->
+    middleman_configuration(CConf, PrivDir, ?ET_WORK_DIR).
+
+middleman_configuration(Config, CConf, PrivDir, DownloadSuffix) ->
+    [{listen_ip, {127,0,0,4}},
+     {port, 1761 },
+     {udp_port, 1762 },
+     {dht_port, 1763 },
+     {dht_state, filename:join([PrivDir, "middleman_state.persistent"])},
+     {dir, filename:join([PrivDir, DownloadSuffix])},
+     {download_dir, filename:join([PrivDir, DownloadSuffix])},
+     {logger_dir, PrivDir},
+     {logger_fname, "middleman_etorrent.log"},
+     {fast_resume_file, ?config(middleman_fast_resume, Config)} | CConf].
+
 %% Tests
 %% ----------------------------------------------------------------------
 groups() ->
-%   [{main_group, [shuffle], [seed_transmission, seed_leech, leech_transmission]}].
-    [{main_group, [], [bep9]}].
+    [{main_group, [shuffle], [seed_transmission, seed_leech, leech_transmission]}].
+%   [{main_group, [], [bep9]}].
 
 all() ->
     [{group, main_group}].
@@ -271,10 +316,42 @@ bep9() ->
 
 bep9(Config) ->
     io:format(user, "~n======START SEED AND LEECHING BEP-9 TEST CASE======~n", []),
+    IntegerIH = literal_infohash_to_integer(?config(info_hash, Config)),
 %   {Ref, Pid} = {make_ref(), self()},
-%   ok = rpc:call(?config(leech_node, Config),
-%   	  etorrent, start,
-%   	  [?config(seed_torrent, Config), {Ref, Pid}]),
+    %
+    LeechNode     = ?config(leech_node, Config),
+    SeedNode      = ?config(seed_node, Config),
+    MiddlemanNode = ?config(middleman_node, Config),
+
+    %% Connect DHT nodes
+    SeedTcpPort   = rpc:call(SeedNode,  etorrent_config, dht_port, []),
+    LeechTcpPort  = rpc:call(LeechNode, etorrent_config, dht_port, []),
+    true = rpc:call(MiddlemanNode,
+    	  etorrent_dht_state, safe_insert_node,
+    	  [{127,0,0,1}, LeechTcpPort]),
+    true = rpc:call(MiddlemanNode,
+    	  etorrent_dht_state, safe_insert_node,
+    	  [{127,0,0,1}, SeedTcpPort]),
+
+
+    LeechPeerId = rpc:call(LeechNode, etorrent_ctl, local_peer_id, []),
+
+    %% Connect to our one-node DHT network.
+    %% etorrent_dht_state:safe_insert_node({127,0,0,1}, 6881).
+    true = rpc:call(LeechNode,
+    	  etorrent_dht_state, safe_insert_node,
+    	  [{127,0,0,1}, SeedTcpPort]),
+   
+    %% Wait for announce.
+    timer:sleep(2000),
+
+    %% Example:
+    %% etorrent_magnet:download_meta_info(<<"-ETd011-698280551289">>, 
+    %%      135913333321098763031843201180023309283666486509),
+    Res = rpc:call(LeechNode,
+    	  etorrent_magnet, download_meta_info,
+    	  [LeechPeerId, IntegerIH]),
+    io:format(user, "Meta: ~p~n", [Res]),
     receive
 	{Ref, done} -> ok
     after
@@ -349,6 +426,12 @@ stop_seeder(Config) ->
     ok = file:delete(filename:join([?config(priv_dir, Config),
 				    "seed_etorrent.log"])),
     ok = file:delete(?config(seed_fast_resume, Config)).
+
+stop_middleman(Config) ->
+    ok = rpc:call(?config(middleman_node, Config), etorrent, stop_app, []),
+    ok = file:delete(filename:join([?config(priv_dir, Config),
+				    "middleman_etorrent.log"])),
+    ok = file:delete(?config(middleman_fast_resume, Config)).
 
 transmission_complete_criterion() ->
 %   "Seeding, uploading to".
@@ -438,3 +521,7 @@ del_dir(DirName) ->
         ok ->
             ok
     end.
+
+
+literal_infohash_to_integer(X) ->
+    list_to_integer(X, 16).

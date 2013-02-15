@@ -529,6 +529,7 @@ handle_query('get_peers', Params, IP, Port, MsgID, Self, Tokens) ->
 
 handle_query('announce', Params, IP, Port, MsgID, Self, Tokens) ->
     InfoHash = etorrent_dht:integer_id(etorrent_bcoding:get_value(<<"info_hash">>, Params)),
+    lager:info("Announce ~s from ~p:~p~n", [integer_hash_to_literal(InfoHash), IP, Port]),
     BTPort = etorrent_bcoding:get_value(<<"port">>,   Params),
     Token = get_string(<<"token">>, Params),
     case is_valid_token(Token, IP, Port, Tokens) of
@@ -898,3 +899,7 @@ qc(Gen) ->
 
 -endif. %% EQC
 -endif.
+
+
+integer_hash_to_literal(InfoHashInt) when is_integer(InfoHashInt) ->
+    io:format("~40.16.0B", [InfoHashInt]).

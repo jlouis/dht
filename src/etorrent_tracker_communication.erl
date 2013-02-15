@@ -381,6 +381,7 @@ build_tracker_url(Url, Event,
     Downloaded = proplists:get_value(downloaded, PL),
     Left       = proplists:get_value(left, PL),
     Port = etorrent_config:listen_port(),
+    Ip   = etorrent_config:listen_ip(),
     Request = [{"info_hash",
                 etorrent_http:build_encoded_form_rfc1738(InfoHash)},
                {"peer_id",
@@ -389,7 +390,8 @@ build_tracker_url(Url, Event,
                {"downloaded", Downloaded},
                {"left", Left},
                {"port", Port},
-               {"compact", 1}],
+               {"compact", 1}]
+              ++ case Ip of all -> []; _ -> [{"ip", stringify_ip(Ip)}] end,
     EReq = case Event of
                none -> Request;
                started -> [{"event", "started"} | Request];
@@ -516,3 +518,8 @@ eqc_test() ->
 
 -endif.
 -endif.
+
+
+
+stringify_ip({A,B,C,D}) ->
+    binary_to_list(iolist_to_binary(io_lib:format("~B.~B.~B.~B", [A,B,C,D]))).

@@ -28,8 +28,9 @@ start_child() ->
 
 init([PeerId]) when is_binary(PeerId) ->
     Port = etorrent_config:listen_port(),
-    ListenOpts = [binary, inet, {active, false},
-		 {reuseaddr, true}],
+    Ip   = etorrent_config:listen_ip(),
+    ListenOpts = [binary, inet, {active, false}, {reuseaddr, true}]
+                 ++ case Ip of all -> []; _ -> [{ip, Ip}] end,
     case gen_tcp:listen(Port, ListenOpts) of
 	{ok, LSock} ->
 	    AcceptChild =

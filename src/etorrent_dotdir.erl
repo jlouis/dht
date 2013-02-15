@@ -107,7 +107,7 @@ base_path(Infohash) ->
     filename:join([etorrent_config:dotdir(), Infohash]).
 
 
-%% @doc Get the info hash of a torrent file.
+%% @doc Get the literal info hash of a torrent file.
 %% @end
 -spec info_hash(Torrentfile::string()) -> {ok, [byte()]} | {error, _}.
 info_hash(Torrentfile) ->

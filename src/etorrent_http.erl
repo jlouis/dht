@@ -30,7 +30,9 @@ request(URL) ->
               {<<"Host">>, decode_host(URL)},
               {<<"Accept">>, "*/*"},
               {<<"Accept-Encoding">>, "gzip, identity"}],
-    Options = [{pool, default}, {recv_timeout, 15000}],
+    Ip = etorrent_config:listen_ip(),
+    Options = [{pool, default}, {recv_timeout, 15000},
+               {connect_options, case Ip of all -> []; _ -> [{ip, Ip}] end}],
     case hackney:request(get, URL, Headers, <<>>, Options) of
         {ok, Status, RespHeaders, Client} ->
             case hackney:body(Client) of

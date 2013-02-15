@@ -16,6 +16,7 @@
 	 download_dir/0,
 	 fast_resume_file/0,
 	 listen_port/0,
+	 listen_ip/0,
 	 logger_dir/0,
 	 logger_file/0,
 	 log_settings/0,
@@ -63,6 +64,7 @@ configuration_specification() ->
      required(port),
      required(logger_dir),
      required(logger_fname),
+     optional(listen_ip, all),
      optional(dht_port, 6882),
      optional(dht_state, "etorrent_dht_state"),
      optional(log_settings, [])].
@@ -141,6 +143,9 @@ max_download_rate() -> call(max_download_rate).
 
 -spec listen_port() -> pos_integer().
 listen_port() -> call(port).
+
+-spec listen_ip() -> inet:ip_address().
+listen_ip() -> call(listen_ip).
 
 -spec logger_dir() -> file_path().
 logger_dir() -> call(logger_dir).
