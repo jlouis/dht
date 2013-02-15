@@ -365,10 +365,10 @@ handle_call({return, IP, Port, ID, Values}, _From, State) ->
         ok ->
             ok;
         {error, einval} ->
-            error_logger:error_msg("Error (einval) when returning to ~w:~w", [IP, Port]),
+            lager:error("Error (einval) when returning to ~w:~w", [IP, Port]),
             ok;
         {error, eagain} ->
-            error_logger:error_msg("Error (eagain) when returning to ~w:~w", [IP, Port]),
+            lager:error("Error (eagain) when returning to ~w:~w", [IP, Port]),
             ok
     end,
     {reply, ok, State};
@@ -394,16 +394,16 @@ do_send_query(Method, Args, IP, Port, From, State) ->
     case gen_udp:send(Socket, IP, Port, Query) of
         ok ->
             TRef = timeout_reference(IP, Port, MsgID),
-            error_logger:info_msg("Sent ~w to ~w:~w", [Method, IP, Port]),
+            lager:info("Sent ~w to ~w:~w", [Method, IP, Port]),
 
             NewSent = store_sent_query(IP, Port, MsgID, From, TRef, Sent),
             NewState = State#state{sent=NewSent},
             {noreply, NewState};
         {error, einval} ->
-            error_logger:error_msg("Error (einval) when sending ~w to ~w:~w", [Method, IP, Port]),
+            lager:error("Error (einval) when sending ~w to ~w:~w", [Method, IP, Port]),
             {reply, timeout, State};
         {error, eagain} ->
-            error_logger:error_msg("Error (eagain) when sending ~w to ~w:~w", [Method, IP, Port]),
+            lager:error("Error (eagain) when sending ~w to ~w:~w", [Method, IP, Port]),
             {reply, timeout, State}
     end.
 
@@ -437,11 +437,11 @@ handle_info({udp, _Socket, IP, Port, Packet}, State) ->
     Self = etorrent_dht_state:node_id(),
     NewState = case (catch decode_msg(Packet)) of
         {'EXIT', _} ->
-            error_logger:error_msg("Invalid packet from ~w:~w: ~w", [IP, Port, Packet]),
+            lager:error("Invalid packet from ~w:~w: ~w", [IP, Port, Packet]),
             State;
 
         {error, ID, Code, ErrorMsg} ->
-            error_logger:error_msg("Received error from ~w:~w (~w) ~w", [IP, Port, Code, ErrorMsg]),
+            lager:error("Received error from ~w:~w (~w) ~w", [IP, Port, Code, ErrorMsg]),
             case find_sent_query(IP, Port, ID, Sent) of
                 error ->
                     State;
@@ -463,12 +463,12 @@ handle_info({udp, _Socket, IP, Port, Packet}, State) ->
                     State#state{sent=NewSent}
             end;
         {Method, ID, Params} ->
-            error_logger:info_msg("Received ~w from ~w:~w", [Method, IP, Port]),
+            lager:info("Received ~w from ~w:~w", [Method, IP, Port]),
             case find_sent_query(IP, Port, ID, Sent) of
                 {ok, {Client, Timeout}} ->
                     _ = cancel_timeout(Timeout),
                     _ = gen_server:reply(Client, timeout),
-                    error_logger:error_msg("Bad node, don't send queries to yourself!"),
+                    lager:error("Bad node, don't send queries to yourself!"),
                     NewSent = clear_sent_query(IP, Port, ID, Sent),
                     State#state{sent=NewSent};
                 error ->
@@ -537,7 +537,7 @@ handle_query('announce', Params, IP, Port, MsgID, Self, Tokens) ->
             etorrent_dht_tracker:announce(InfoHash, IP, BTPort);
         false ->
             FmtArgs = [IP, Port, Token],
-            error_logger:error_msg("Invalid token from ~w:~w ~w", FmtArgs)
+            lager:error("Invalid token from ~w:~w ~w", FmtArgs)
     end,
     return(IP, Port, MsgID, common_values(Self)).
 
@@ -902,4 +902,4 @@ qc(Gen) ->
 
 
 integer_hash_to_literal(InfoHashInt) when is_integer(InfoHashInt) ->
-    io:format("~40.16.0B", [InfoHashInt]).
+    io_lib:format("~40.16.0B", [InfoHashInt]).

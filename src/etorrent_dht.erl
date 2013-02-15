@@ -47,6 +47,8 @@ init(Args) ->
             {etorrent_dht_net, start_link, [Port]},
             permanent, 1000, worker, dynamic}]}}.
 
+
+%% @doc Announce yourself as a peer for this torrent.
 add_torrent(InfoHash, TorrentID) ->
     case etorrent_config:dht() of
         false -> ok;

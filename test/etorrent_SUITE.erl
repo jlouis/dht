@@ -48,22 +48,15 @@ init_per_suite(Config) ->
     {ok, SeedNode} = test_server:start_node('seeder', slave, []),
     {ok, LeechNode} = test_server:start_node('leecher', slave, []),
     {ok, MiddlemanNode} = test_server:start_node('middleman', slave, []),
-    rpc:call(SeedNode,  code, set_path, [code:get_path()]),
-    rpc:call(LeechNode, code, set_path, [code:get_path()]),
-    rpc:call(MiddlemanNode, code, set_path, [code:get_path()]),
-    %% Start SASL before lager, because SASL will set its error_handler
-    %% otherwise.
-%   ok = rpc:call(SeedNode,  application, start, [sasl]),
-%   ok = rpc:call(LeechNode, application, start, [sasl]),
-    ok = rpc:call(SeedNode,  lager, start, []),
-    ok = rpc:call(LeechNode, lager, start, []),
-    ok = rpc:call(LeechNode, lager, set_loglevel, [lager_console_backend, debug]),
-    ok = rpc:call(SeedNode,  lager, set_loglevel, [lager_console_backend, debug]),
+    [prepare_node(Node)
+     || Node <- [SeedNode, LeechNode, MiddlemanNode]],
     [{info_hash, TorrentIH},
      {tracker_port, Pid},
      {leech_node, LeechNode},
      {middleman_node, MiddlemanNode},
      {seed_node, SeedNode} | Config].
+
+
 
 end_per_suite(Config) ->
     Pid = ?config(tracker_port, Config),
@@ -253,8 +246,8 @@ middleman_configuration(Config, CConf, PrivDir, DownloadSuffix) ->
 %% Tests
 %% ----------------------------------------------------------------------
 groups() ->
-    [{main_group, [shuffle], [seed_transmission, seed_leech, leech_transmission]}].
-%   [{main_group, [], [bep9]}].
+%   [{main_group, [shuffle], [seed_transmission, seed_leech, leech_transmission]}].
+    [{main_group, [], [bep9]}].
 
 all() ->
     [{group, main_group}].
@@ -332,6 +325,10 @@ bep9(Config) ->
     true = rpc:call(MiddlemanNode,
     	  etorrent_dht_state, safe_insert_node,
     	  [{127,0,0,1}, SeedTcpPort]),
+    ok = rpc:call(SeedNode,
+    	  etorrent_dht_tracker, trigger_announce,
+    	  []),
+
 
 
     LeechPeerId = rpc:call(LeechNode, etorrent_ctl, local_peer_id, []),
@@ -525,3 +522,22 @@ del_dir(DirName) ->
 
 literal_infohash_to_integer(X) ->
     list_to_integer(X, 16).
+
+
+prepare_node(Node) ->
+    io:format(user, "Prepare node ~p.~n", [Node]),
+    rpc:call(Node, code, set_path, [code:get_path()]),
+    NodeName = rpc:call(Node, erlang, node, []),
+    Handlers = lager_handlers(NodeName),
+    ok = rpc:call(Node, application, load, [lager]),
+    ok = rpc:call(Node, application, set_env, [lager, handlers, Handlers]),
+    ok = rpc:call(Node, application, start, [lager]),
+    ok.
+
+
+lager_handlers(NodeName) ->
+%   [Node|_] = string:tokens(atom_to_list(NodeName), "@"),
+    Node   = [hd(atom_to_list(NodeName))],
+    Format = [Node, "> ", time, " [",severity,"] ", message, "\n"],
+    [{lager_console_backend, [debug, {lager_default_formatter, Format}]}].
+

@@ -5,14 +5,21 @@
 -behaviour(gen_server).
 -define(dht_net, etorrent_dht_net).
 -define(dht_state, etorrent_dht_state).
+
+%% API.
 -export([start_link/0,
          start_link/2,
          announce/1,
          tab_name/0,
          announce/3,
-         get_peers/1]).
+         get_peers/1,
+         update_tracker/1,
+         trigger_announce/0]).
 
--export([trigger_announce/0]).
+%% gproc registry entries
+-export([register_server/1,
+         lookup_server/1,
+         await_server/1]).
 
 
 -type ipaddr() :: etorrent_types:ipaddr().
@@ -20,10 +27,11 @@
 -type infohash() :: etorrent_types:infohash().
 -type portnum() :: etorrent_types:portnum().
 -type nodeinfo() :: etorrent_types:nodeinfo().
+-type torrent_id() :: etorrent_types:torrent_id().
 
 -record(state, {
     infohash  :: infohash(),
-    torrentid :: integer(),
+    torrent_id :: torrent_id(),
     btport=0  :: portnum(),
     interval=10*60*1000 :: integer(),
     timer_ref :: reference(),
@@ -35,6 +43,30 @@
          handle_info/2,
          terminate/2,
          code_change/3]).
+
+
+%% ------------------------------------------------------------------------
+%% Gproc helpers
+
+-spec register_server(torrent_id()) -> true.
+register_server(TorrentID) ->
+    etorrent_utils:register(server_name(TorrentID)).
+
+-spec lookup_server(torrent_id()) -> pid().
+lookup_server(TorrentID) ->
+    etorrent_utils:lookup(server_name(TorrentID)).
+
+-spec await_server(torrent_id()) -> pid().
+await_server(TorrentID) ->
+    etorrent_utils:await(server_name(TorrentID)).
+
+server_name(TorrentID) ->
+    {etorrent, TorrentID, dht_tracker}.
+
+%% Gproc helpers
+%% ------------------------------------------------------------------------
+
+
 
 tab_name() ->
     etorrent_dht_tracker_tab.
@@ -50,7 +82,7 @@ start_link() ->
 
 -spec start_link(infohash(), integer()) -> {'ok', pid()}.
 start_link(InfoHash, TorrentID) ->
-    Args = [{infohash, InfoHash}, {torrentid, TorrentID}],
+    Args = [{infohash, InfoHash}, {torrent_id, TorrentID}],
     gen_server:start_link(?MODULE, Args, []).
 
 -spec announce(pid()) -> 'ok'.
@@ -89,7 +121,14 @@ get_peers(InfoHash) ->
 % now regardless of when the last poll was performed.
 %
 trigger_announce() ->
-    gproc:send(poller_key(), {timeout, now, announce}).
+    gproc:send(poller_key(), {timeout, now, announce}),
+    ok.
+
+%% @doc Announce the torrent, controlled by the server, immediately.
+update_tracker(Pid) when is_pid(Pid) ->
+    Pid ! {timeout, now, announce},
+    ok.
+
 
 poller_key() ->
     {p, l, {etorrent, dht, poller}}.
@@ -101,14 +140,15 @@ random_peer() ->
 
 init(Args) ->
     InfoHash  = proplists:get_value(infohash, Args),
-    TorrentID = proplists:get_value(torrentid, Args),
+    TorrentID = proplists:get_value(torrent_id, Args),
     BTPortNum = etorrent_config:listen_port(),
     true = gproc:reg(poller_key(), TorrentID),
+    register_server(TorrentID),
     _ = gen_server:cast(self(), init_nodes),
     _ = self() ! {timeout, undefined, announce},
     InitState = #state{
         infohash=InfoHash,
-        torrentid=TorrentID,
+        torrent_id=TorrentID,
         btport=BTPortNum},
     {ok, InitState}.
 
@@ -127,7 +167,7 @@ handle_cast(init_timer, State) ->
 % are close to the id of this node.
 %
 handle_cast(init_nodes, State) ->
-    #state{torrentid=TorrentID} = State,
+    #state{torrent_id=TorrentID} = State,
     Nodes = ?dht_net:find_node_search(TorrentID),
     InitNodes = cut_list(16, Nodes),
     NewState = State#state{nodes=InitNodes},
@@ -142,9 +182,10 @@ handle_cast(init_nodes, State) ->
 handle_info({timeout, _, announce}, State) ->
     #state{
         infohash=InfoHash,
-        torrentid=TorrentID,
+        torrent_id=TorrentID,
         btport=BTPort,
         nodes=InitNodes} = State,
+    lager:debug("Handle DHT timeout for ~p.", [TorrentID]),
     % If the list of nodes contains less than 16 nodes, complete the list of
     % nodes to base the get_peers search on with nodes from the routing table.
     Nodes = case length(InitNodes) < 16 of
@@ -158,10 +199,10 @@ handle_info({timeout, _, announce}, State) ->
 
     % Schedule a timer reset later
     _ = gen_server:cast(self(), init_timer),
-    _ = error_logger:info_msg("Sending DHT announce (to ~w nodes)", [length(Nodes)]),
+    _ = lager:info("Sending DHT announce (to ~w nodes)", [length(Nodes)]),
     {Trackers, Peers, AllNodes} = ?dht_net:get_peers_search(InfoHash, Nodes),
-    _ = error_logger:info_msg("Sent DHT announce (found ~w peers)", [length(Peers)]),
-    _ = error_logger:info_msg("Number of DHT nodes with peers: ~w", [length(Trackers)]),
+    _ = lager:info("Sent DHT announce (found ~w peers)", [length(Peers)]),
+    _ = lager:info("Number of DHT nodes with peers: ~w", [length(Trackers)]),
 
 
     % Send an announce to all nodes that were already acting as trackers for this node

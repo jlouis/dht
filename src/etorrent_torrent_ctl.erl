@@ -21,7 +21,8 @@
          continue_torrent/1,
          check_torrent/1,
          valid_pieces/1,
-         switch_mode/2]).
+         switch_mode/2,
+         update_tracker/1]).
 
 %% gproc registry entries
 -export([register_server/1,
@@ -151,6 +152,12 @@ valid_pieces(Pid) ->
 
 switch_mode(Pid, Mode) ->
     gen_fsm:send_all_state_event(Pid, {switch_mode, Mode}).
+
+%% @doc Connect to the tracker immediately.
+%% The call is async.
+-spec update_tracker(Pid::pid()) -> ok.
+update_tracker(Pid) when is_pid(Pid) ->
+    gen_fsm:send_event(Pid, update_tracker).
 
 
 
@@ -424,7 +431,7 @@ started(check_torrent, State) ->
 
 started(completed, #state{id=Id, tracker_pid=TrackerPid} = S) ->
     etorrent_event:completed_torrent(Id),
-    error_logger:info_msg("Completed torrent #~p.", [Id]),
+    lager:info("Completed torrent #~p.", [Id]),
     etorrent_tracker_communication:completed(TrackerPid),
     {next_state, started, S};
 
@@ -442,6 +449,19 @@ started(pause, #state{id=Id, interval=I} = SO) ->
                      interval = undefined },
     {next_state, paused, S};
 
+started(update_tracker, S=#state{id=TorrentID, tracker_pid=TrackerPid}) ->
+    lager:debug("Forced tracker update."),
+    etorrent_tracker_communication:update_tracker(TrackerPid),
+    try
+        etorrent_dht_tracker:lookup_server(TorrentID)
+    of DhtTrackerPid when is_pid(DhtTrackerPid) ->
+        etorrent_dht_tracker:update_tracker(DhtTrackerPid)
+    catch error:_ ->
+        lager:debug("It seems, that DHT is disabled."),
+        dht_disabled
+    end,
+    {next_state, started, S};
+
 started(continue, S) ->
     {next_state, started, S}.
 
@@ -452,7 +472,11 @@ paused(continue, #state{id=Id} = S) ->
     ok = etorrent_torrent:statechange(Id, [continue]),
     Ret;
 paused(pause, S) ->
-    {next_state, paused, S}.
+    {next_state, paused, S};
+
+paused(update_tracker, S) ->
+    %% Ignore the message.
+    {next_state, started, S}.
 
 
 
@@ -625,7 +649,7 @@ do_registration(S=#state{id=Id, torrent=Torrent, hashes=Hashes}) ->
     WishRecordSet = try
         validate_wishes(Id, to_records(Wishes), [], ValidPieces)
         catch error:Reason ->
-        error_logger:error_msg("Wishes from fast_resume "
+        lager:error("Wishes from fast_resume "
             "module are invalidate~n ~w", [Reason]),
         []
     end,
