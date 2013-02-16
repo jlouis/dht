@@ -148,7 +148,7 @@ init(Args) ->
     register_server(TorrentID),
     _ = gen_server:cast(self(), init_nodes),
     _ = self() ! {timeout, undefined, announce},
-    lager:debug("Starting DHT tracker for ~p (~p).", [TorrentID]),
+    lager:debug("Starting DHT tracker for ~p (~p).", [TorrentID, InfoHash]),
     InitState = #state{
         infohash=InfoHash,
         torrent_id=TorrentID,

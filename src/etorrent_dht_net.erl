@@ -221,17 +221,31 @@ dht_iter_search(SearchType, Target, Width, Retry, Retries,
     AddQueried = [{ID, IP, Port} || {_, ID, IP, Port} <- Next],
     NewQueried = gb_sets:union(Queried, gb_sets:from_list(AddQueried)),
 
+    ThisNode = node(),
+    Callback =
+    case SearchType of
+        find_node ->
+            fun({_,_,IP,Port}) ->
+                rpc:async_call(ThisNode, ?MODULE, find_node, [IP, Port, Target])
+                end;
+        get_peers ->
+            fun({_,_,IP,Port}) ->
+                rpc:async_call(ThisNode, ?MODULE, get_peers, [IP, Port, Target])
+                end
+    end,
     % Query all nodes in the queue and generate a list of
     % {Dist, ID, IP, Port, Nodes} elements
-    SearchCalls = [case SearchType of
-        find_node -> {?MODULE, find_node, [IP, Port, Target]};
-        get_peers -> {?MODULE, get_peers, [IP, Port, Target]}
-    end || {_, _, IP, Port} <- Next],
-    ReturnValues = rpc:parallel_eval(SearchCalls),
+    Promises = lists:map(Callback, Next),
+    ReturnValues = lists:map(fun rpc:yield/1, Promises),
     WithArgs = lists:zip(Next, ReturnValues),
 
     FailedCall = make_ref(),
     TmpSuccessful = [case {repack, SearchType, RetVal} of
+        {repack, _, {badrpc, Reason}} ->
+            lager:error("A RPC process crashed while sending a request ~p "
+                        "to ~p:~p with reason ~p.",
+                        [SearchType, IP, Port, Reason]),
+            FailedCall;
         {repack, _, {error, timeout}} ->
             FailedCall;
         {repack, _, {error, response}} ->
@@ -917,3 +931,4 @@ integer_hash_to_literal(InfoHashInt) when is_integer(InfoHashInt) ->
 %% @doc Delete node with `IP' and `Port' from the list.
 filter_node(IP, Port, Nodes) ->
     [X || {_NID, NIP, NPort}=X <- Nodes, NIP =/= IP orelse NPort =/= Port].
+

@@ -318,6 +318,9 @@ bep9(Config) ->
     SeedNode      = ?config(seed_node, Config),
     MiddlemanNode = ?config(middleman_node, Config),
 
+    true = rpc:call(SeedNode,      etorrent_config, dht, []),
+    true = rpc:call(LeechNode,     etorrent_config, dht, []),
+    true = rpc:call(MiddlemanNode, etorrent_config, dht, []),
 
     timer:sleep(2000),
     %% Form DHT network.
