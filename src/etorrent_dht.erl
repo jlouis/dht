@@ -1,5 +1,6 @@
 %% @author Magnus Klaar <magnus.klaar@sgsstudentbostader.se>
-%% @doc TODO
+%% @doc This module provides few helpers and supervise the DHT processes.
+%% Starts two workers: {@link etorrent_dht_state} and {@link etorrent_dht_net}.
 %% @end
 -module(etorrent_dht).
 -behaviour(supervisor).

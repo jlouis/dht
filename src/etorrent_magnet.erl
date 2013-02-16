@@ -27,15 +27,28 @@
 
 -spec download_meta_info(LocalPeerId::peerid(), InfoHashNum::infohash_int()) -> list().
 download_meta_info(LocalPeerId, InfoHashNum) ->
+    lager:debug("Download metainfo for ~s.",
+                [integer_hash_to_literal(InfoHashNum)]),
     InfoHashBin = info_hash_to_binary(InfoHashNum),
     Nodes = fetch_nodes(InfoHashNum),
+    lager:debug("Node list: ~p~n", [Nodes]),
     TagRef = make_ref(),
-    Workers = traverse_nodes(LocalPeerId, InfoHashBin, TagRef, Nodes, []),
+    Peers = [Peer
+            || {_, IP, Port} <- Nodes,
+               Peer <- fetch_peers(IP, Port, InfoHashNum)],
+    Peers1 = lists:usort(Peers),
+    lager:debug("Peers ~p.", [Peers]),
+    Workers = traverse_peers(LocalPeerId, InfoHashBin, TagRef, Peers1, []),
     await_respond(Workers, TagRef).
 
+fetch_peers(IP, Port, InfoHashNum) ->
+    case etorrent_dht_net:get_peers(IP, Port, InfoHashNum) of
+        {_,_,Peers,_} -> Peers;
+        {error, Reason} -> lager:info("Skip error ~p.", [Reason]), []
+    end.
 
-traverse_nodes(LocalPeerId, InfoHashBin, TagRef,
-               [{_NodeIdNum, IP, Port}|Nodes], Workers) ->
+traverse_peers(LocalPeerId, InfoHashBin, TagRef,
+               [{IP, Port}|Peers], Workers) ->
     Self = self(),
     Worker = spawn_link(fun() ->
         Mess =
@@ -48,8 +61,8 @@ traverse_nodes(LocalPeerId, InfoHashBin, TagRef,
             end,
             Self ! {TagRef, self(), Mess}
         end),
-    traverse_nodes(LocalPeerId, InfoHashBin, TagRef, Nodes, [Worker|Workers]);
-traverse_nodes(_LocalPeerId, _InfoHashBin, _TagRef, [], Workers) ->
+    traverse_peers(LocalPeerId, InfoHashBin, TagRef, Peers, [Worker|Workers]);
+traverse_peers(_LocalPeerId, _InfoHashBin, _TagRef, [], Workers) ->
     Workers.
 
 await_respond([], _TagRef) ->
@@ -248,3 +261,6 @@ encoded_handshake_payload() ->
 
 m_block() ->
     [{<<"ut_metadata">>,?UT_METADATA_EXT_ID}].
+
+integer_hash_to_literal(InfoHashInt) when is_integer(InfoHashInt) ->
+    io_lib:format("~40.16.0B", [InfoHashInt]).

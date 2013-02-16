@@ -309,38 +309,42 @@ bep9() ->
 
 bep9(Config) ->
     io:format(user, "~n======START SEED AND LEECHING BEP-9 TEST CASE======~n", []),
-    IntegerIH = literal_infohash_to_integer(?config(info_hash, Config)),
+    IH = ?config(info_hash, Config),
+    error_logger:info_msg("Infohash is ~p.", [IH]),
+    IntegerIH = literal_infohash_to_integer(IH),
 %   {Ref, Pid} = {make_ref(), self()},
     %
     LeechNode     = ?config(leech_node, Config),
     SeedNode      = ?config(seed_node, Config),
     MiddlemanNode = ?config(middleman_node, Config),
 
-    %% Connect DHT nodes
-    SeedTcpPort   = rpc:call(SeedNode,  etorrent_config, dht_port, []),
-    LeechTcpPort  = rpc:call(LeechNode, etorrent_config, dht_port, []),
-    true = rpc:call(MiddlemanNode,
+
+    timer:sleep(2000),
+    %% Form DHT network.
+    %% etorrent_dht_state:safe_insert_node({127,0,0,1}, 6881).
+    SeedDhtPort      = rpc:call(SeedNode,      etorrent_config, dht_port, []),
+    LeechDhtPort     = rpc:call(LeechNode,     etorrent_config, dht_port, []),
+    MiddlemanDhtPort = rpc:call(MiddlemanNode, etorrent_config, dht_port, []),
+    SeedIP           = rpc:call(SeedNode,      etorrent_config, listen_ip, []),
+    LeechIP          = rpc:call(LeechNode,     etorrent_config, listen_ip, []),
+    MiddlemanIP      = rpc:call(MiddlemanNode, etorrent_config, listen_ip, []),
+    true = rpc:call(SeedNode,
     	  etorrent_dht_state, safe_insert_node,
-    	  [{127,0,0,1}, LeechTcpPort]),
-    true = rpc:call(MiddlemanNode,
+    	  [MiddlemanIP, MiddlemanDhtPort]),
+    true = rpc:call(LeechNode,
     	  etorrent_dht_state, safe_insert_node,
-    	  [{127,0,0,1}, SeedTcpPort]),
+    	  [MiddlemanIP, MiddlemanDhtPort]),
+    timer:sleep(1000),
+    io:format(user, "ANNOUNCE FROM SEED~n", []),
     ok = rpc:call(SeedNode,
     	  etorrent_dht_tracker, trigger_announce,
     	  []),
 
-
-
     LeechPeerId = rpc:call(LeechNode, etorrent_ctl, local_peer_id, []),
-
-    %% Connect to our one-node DHT network.
-    %% etorrent_dht_state:safe_insert_node({127,0,0,1}, 6881).
-    true = rpc:call(LeechNode,
-    	  etorrent_dht_state, safe_insert_node,
-    	  [{127,0,0,1}, SeedTcpPort]),
    
     %% Wait for announce.
-    timer:sleep(2000),
+    timer:sleep(3000),
+    io:format(user, "SEARCH FROM LEECH~n", []),
 
     %% Example:
     %% etorrent_magnet:download_meta_info(<<"-ETd011-698280551289">>, 

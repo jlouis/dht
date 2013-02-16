@@ -81,7 +81,7 @@ start_link() ->
     end.
 
 -spec start_link(infohash(), integer()) -> {'ok', pid()}.
-start_link(InfoHash, TorrentID) ->
+start_link(InfoHash, TorrentID) when is_integer(InfoHash) ->
     Args = [{infohash, InfoHash}, {torrent_id, TorrentID}],
     gen_server:start_link(?MODULE, Args, []).
 
@@ -103,13 +103,15 @@ announce(InfoHash, {_,_,_,_}=IP, Port) when is_integer(InfoHash), is_integer(Por
     RandPeer = random_peer(),
     DelSpec  = [{{InfoHash,'$1','$2',RandPeer},[],[true]}],
     _ = ets:select_delete(tab_name(), DelSpec),
+    lager:debug("Register ~p:~p as a peer for ~s.",
+                [IP, Port, integer_hash_to_literal(InfoHash)]),
     ets:insert(tab_name(), {InfoHash, IP, Port, RandPeer}).
 
 %
 % Get the peers that are registered as members of this swarm.
 %
 -spec get_peers(infohash()) -> list(peerinfo()).
-get_peers(InfoHash) ->
+get_peers(InfoHash) when is_integer(InfoHash) ->
     GetSpec = [{{InfoHash,'$1','$2','_'},[],[{{'$1','$2'}}]}],
     case ets:select(tab_name(), GetSpec, max_per_torrent()) of
         {PeerInfos, _} -> PeerInfos;
@@ -146,6 +148,7 @@ init(Args) ->
     register_server(TorrentID),
     _ = gen_server:cast(self(), init_nodes),
     _ = self() ! {timeout, undefined, announce},
+    lager:debug("Starting DHT tracker for ~p (~p).", [TorrentID]),
     InitState = #state{
         infohash=InfoHash,
         torrent_id=TorrentID,
@@ -167,8 +170,9 @@ handle_cast(init_timer, State) ->
 % are close to the id of this node.
 %
 handle_cast(init_nodes, State) ->
-    #state{torrent_id=TorrentID} = State,
-    Nodes = ?dht_net:find_node_search(TorrentID),
+    #state{infohash=InfoHash} = State,
+%   Nodes = ?dht_net:find_node_search(TorrentID),
+    Nodes = ?dht_net:find_node_search(InfoHash),
     InitNodes = cut_list(16, Nodes),
     NewState = State#state{nodes=InitNodes},
     {noreply, NewState}.
@@ -235,3 +239,8 @@ code_change(_, State, _) ->
 
 cut_list(N, List) ->
     lists:sublist(List, N).
+
+
+integer_hash_to_literal(InfoHashInt) when is_integer(InfoHashInt) ->
+    io_lib:format("~40.16.0B", [InfoHashInt]).
+

@@ -100,7 +100,8 @@ search_retries() ->
     4.
 
 socket_options() ->
-    [list, inet, {active, true}].
+    [list, inet, {active, true}]
+    ++ case etorrent_config:listen_ip() of all -> []; IP -> [{ip, IP}] end.
 
 token_lifetime() ->
     5*60*1000.
@@ -164,6 +165,7 @@ get_peers(IP, Port, InfoHash)  ->
 %     - Which nodes has been queried?
 %     - Which nodes has responded?
 %     - Which nodes has not been queried?
+% FIXME: It returns `[{649262719799963483759422800960489108797112648079,{127,0,0,2},1743},{badrpc,{127,0,0,4},1763}]'.
 -spec find_node_search(nodeid()) -> list(nodeinfo()).
 find_node_search(NodeID) ->
     Width = search_width(),
@@ -348,6 +350,8 @@ handle_call({find_node, IP, Port, Target}, From, State) ->
 handle_call({get_peers, IP, Port, InfoHash}, From, State) ->
     LHash = list_to_binary(etorrent_dht:list_id(InfoHash)),
     Args  = [{<<"info_hash">>, LHash}| common_values()],
+    lager:debug("Send get_peers to ~p:~p for ~s.",
+                [IP, Port, integer_hash_to_literal(InfoHash)]),
     do_send_query('get_peers', Args, IP, Port, From, State);
 
 handle_call({announce, IP, Port, InfoHash, Token, BTPort}, From, State) ->
@@ -387,6 +391,7 @@ handle_call({get_num_open}, _From, State) ->
 do_send_query(Method, Args, IP, Port, From, State) ->
     #state{sent=Sent,
            socket=Socket} = State,
+    lager:info("Sending ~w to ~w:~w", [Method, IP, Port]),
 
     MsgID = unique_message_id(IP, Port, Sent),
     Query = encode_query(Method, MsgID, Args),
@@ -508,19 +513,22 @@ handle_query('ping', _, IP, Port, MsgID, Self, _Tokens) ->
 
 handle_query('find_node', Params, IP, Port, MsgID, Self, _Tokens) ->
     Target = etorrent_dht:integer_id(etorrent_bcoding:get_value(<<"target">>, Params)),
-    CloseNodes = etorrent_dht_state:closest_to(Target),
+    CloseNodes = filter_node(IP, Port, etorrent_dht_state:closest_to(Target)),
     BinCompact = node_infos_to_compact(CloseNodes),
     Values = [{<<"nodes">>, BinCompact}],
     return(IP, Port, MsgID, common_values(Self) ++ Values);
 
 handle_query('get_peers', Params, IP, Port, MsgID, Self, Tokens) ->
     InfoHash = etorrent_dht:integer_id(etorrent_bcoding:get_value(<<"info_hash">>, Params)),
+    lager:debug("Take request get_peers from ~p:~p for ~s.",
+                [IP, Port, integer_hash_to_literal(InfoHash)]),
     Values = case etorrent_dht_tracker:get_peers(InfoHash) of
         [] ->
-            Nodes = etorrent_dht_state:closest_to(InfoHash),
+            Nodes = filter_node(IP, Port, etorrent_dht_state:closest_to(InfoHash)),
             BinCompact = node_infos_to_compact(Nodes),
             [{<<"nodes">>, BinCompact}];
         Peers ->
+            lager:debug("Get a list of peers from the local tracker ~p", [Peers]),
             PeerList = [peers_to_compact([P]) || P <- Peers],
             [{<<"values">>, PeerList}]
     end,
@@ -529,7 +537,8 @@ handle_query('get_peers', Params, IP, Port, MsgID, Self, Tokens) ->
 
 handle_query('announce', Params, IP, Port, MsgID, Self, Tokens) ->
     InfoHash = etorrent_dht:integer_id(etorrent_bcoding:get_value(<<"info_hash">>, Params)),
-    lager:info("Announce ~s from ~p:~p~n", [integer_hash_to_literal(InfoHash), IP, Port]),
+    lager:info("Announce from ~p:~p for ~s~n",
+                [IP, Port, integer_hash_to_literal(InfoHash)]),
     BTPort = etorrent_bcoding:get_value(<<"port">>,   Params),
     Token = get_string(<<"token">>, Params),
     case is_valid_token(Token, IP, Port, Tokens) of
@@ -903,3 +912,8 @@ qc(Gen) ->
 
 integer_hash_to_literal(InfoHashInt) when is_integer(InfoHashInt) ->
     io_lib:format("~40.16.0B", [InfoHashInt]).
+
+
+%% @doc Delete node with `IP' and `Port' from the list.
+filter_node(IP, Port, Nodes) ->
+    [X || {_NID, NIP, NPort}=X <- Nodes, NIP =/= IP orelse NPort =/= Port].
