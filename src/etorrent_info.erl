@@ -241,8 +241,8 @@ metadata_size(TorrentID) ->
 %% Piece is indexed from 0.
 get_piece(TorrentID, PieceNum) when is_integer(PieceNum) ->
     DirPid = await_server(TorrentID),
-    {ok, Len} = gen_server:call(DirPid, {get_piece, PieceNum}),
-    Len.
+    {ok, PieceData} = gen_server:call(DirPid, {get_piece, PieceNum}),
+    PieceData.
 
 %% ----------------------------------------------------------------------
 
@@ -384,8 +384,8 @@ handle_call(metadata_size, _, State) ->
     #state{metadata_size=MetadataSize} = State,
     {reply, {ok, MetadataSize}, State};
 handle_call({get_piece, PieceNum}, _, State=#state{metadata_pieces=Pieces})
-        when PieceNum < length(Pieces) ->
-    {reply, {ok, element(PieceNum, Pieces)}, State};
+        when PieceNum < tuple_size(Pieces) ->
+    {reply, {ok, element(PieceNum+1, Pieces)}, State};
 handle_call({get_piece, PieceNum}, _, State=#state{}) ->
     {reply, {ok, {bad_piece, PieceNum}}, State}.
 

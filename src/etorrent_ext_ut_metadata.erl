@@ -19,9 +19,9 @@ encode_msg({metadata_reject, PieceNum}) ->
     Data = [{<<"msg_type">>, 2}, {<<"piece">>, PieceNum}],
     etorrent_bcoding:encode(Data);
 encode_msg({metadata_data, PieceNum, TotalSize, Piece})
-    when is_integer(Piece) ->
+    when is_integer(TotalSize), is_integer(PieceNum), is_binary(Piece) ->
     Data = [{<<"msg_type">>, 1},
             {<<"piece">>, PieceNum},
             {<<"total_size">>, TotalSize}],
-    Header = etorrent_bcoding:encode(Data),
+    Header = iolist_to_binary(etorrent_bcoding:encode(Data)),
     <<Header/binary, Piece/binary>>.

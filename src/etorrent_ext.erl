@@ -40,14 +40,14 @@ new(LocallySupportedNames) ->
     #exts{local_id2name=list_to_tuple(LocallySupportedNames),
           bnames=SortedBNames,
           mod_names=ModNames,
-          local_id2mod_name=list_to_tuple(Bnames),
+          local_id2mod_name=list_to_tuple(ModNames),
           m = enumerate(Bnames, 1)
          }.
 
 -spec handle_handshake_respond(RespondMsg::bcode(), Exts::ext_list()) -> ext_list().
 handle_handshake_respond(RespondMsg, Exts=#exts{
         bnames=Bnames, mod_names=ModNames, all_bname2remote_id = RemExtBin2Id1}) ->
-    case etorrent_bcode:get_value(<<"m">>, RespondMsg) of
+    case etorrent_bcoding:get_value(<<"m">>, RespondMsg) of
         undefined -> Exts;
         {} -> Exts;
         %% Add them.
@@ -55,7 +55,8 @@ handle_handshake_respond(RespondMsg, Exts=#exts{
             RemExtBin2Id3 = lists:keysort(1, RemExtBin2Id2),
             RemExtBin2Id4 = update_ord_dict(RemExtBin2Id3, RemExtBin2Id1),
             Supported = filter_supported(RemExtBin2Id4, Bnames, ModNames),
-            Exts#exts{supported_name2remote_id_and_mod_name = Supported,
+            SupportedDict = dict:from_list(Supported),
+            Exts#exts{supported_name2remote_id_and_mod_name = SupportedDict,
                       all_bname2remote_id = RemExtBin2Id4}
     end.
 
@@ -71,9 +72,15 @@ is_locally_supported(ExtName, #exts{bnames=SortedBNames}) when is_atom(ExtName) 
 
 
 decode_msg(LocalExtId, Msg, #exts{local_id2mod_name = Id2Mod})
-    when is_integer(LocalExtId), is_binary(Msg) ->
-    Mod = element(LocalExtId, Id2Mod),
-    {ok, Mod:decode_msg(Msg)}.
+    when is_integer(LocalExtId), is_binary(Msg), LocalExtId > 0 ->
+    if 
+    LocalExtId > tuple_size(Id2Mod) ->
+        lager:error("Not supported extension with id = ~p.", [LocalExtId]),
+        {error, not_supported_ext};
+    true ->
+        Mod = element(LocalExtId, Id2Mod),
+        {ok, Mod:decode_msg(Msg)}
+    end.
 
 
 encode_msg(ExtName, Msg, #exts{supported_name2remote_id_and_mod_name = Name2IdMod})
@@ -178,7 +185,7 @@ update_ord_dict_test_() ->
 -endif.
 
 gen_mod_list(Bnames) ->
-    [<<"etorrent_ext_", Bname/binary>> || Bname <- Bnames].
+    [binary_to_atom(<<"etorrent_ext_", Bname/binary>>, utf8) || Bname <- Bnames].
 
 
 enumerate([H|T], N) ->

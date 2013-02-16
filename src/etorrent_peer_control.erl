@@ -709,17 +709,35 @@ handle_message({piece, Index, Offset, Data}, State) ->
     {ok, NewState};
 
 %% Extended messaging handshake
-handle_message({extended, 0, _Data}, State) ->
-    #state{config=Config} = State,
+handle_message({extended, 0, Data}, State) ->
+    #state{config=Config, extensions=Exts} = State,
+    lager:debug("Getting a supported extension list from the peer.", []),
     etorrent_peerconf:extended(Config) orelse erlang:error(badarg),
-%   Msg = etorrent_bcoding:decode(Data),
-%   ?INFO([{extended_message, Msg}]),
-    {ok, State};
+    {ok, Msg} = etorrent_bcoding:decode(Data),
+    Exts2 = etorrent_ext:handle_handshake_respond(Msg, Exts),
+    {ok, State#state{extensions=Exts2}};
+
+handle_message({extended, ExtId, Data}, State) ->
+    #state{extensions=Exts} = State,
+    {ok, Msg} = etorrent_ext:decode_msg(ExtId, Data, Exts),
+    handle_ext_message(Msg, State);
 
 handle_message(Unknown, State) ->
     lager:error("Unknown handle_message: ~p", [Unknown]),
     {stop, normal, State}.
 
+
+handle_ext_message({metadata_request, PieceNum}, State) ->
+    #state{torrent_id=TorrentID, extensions=Exts, send_pid=SendPid} = State,
+    %% Get data.
+    PieceData = etorrent_info:get_piece(TorrentID, PieceNum),
+    %% Form an answer.
+    Answer = {metadata_data, PieceNum, byte_size(PieceData), PieceData},
+    {ok, Encoded} = etorrent_ext:encode_msg(ut_metadata, Answer, Exts),
+    etorrent_peer_send:ext_msg(SendPid, Encoded),
+    {ok, State};
+handle_ext_message(_, _State) ->
+    error(unknown_extended_message).
 
 % @doc Initialize the connection, depending on the way the connection is
 connection_initialize(incoming, State) ->
@@ -770,7 +788,7 @@ complete_connection_setup(Socket, TorrentID, Extended, Valid, Exts) ->
     Bitfield = etorrent_pieceset:to_binary(Valid),
     Extra = add_metadata_size(Exts, TorrentID),
     Extended andalso etorrent_peer_send:
-        extended_msg(SendPid, etorrent_ext:extension_list(Exts), Extra),
+        ext_setup(SendPid, etorrent_ext:extension_list(Exts), Extra),
     etorrent_peer_send:bitfield(SendPid, Bitfield),
     SendPid.
 
