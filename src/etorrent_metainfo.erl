@@ -56,8 +56,12 @@ get_pieces(Torrent) ->
 -spec get_url(bcode()) -> [tier()].
 get_url(Torrent) ->
     case etorrent_bcoding:get_value("announce-list", Torrent, none) of
-	none -> U = etorrent_bcoding:get_value("announce", Torrent),
-		[[binary_to_list(U)]];
+	none -> 
+        case etorrent_bcoding:get_value("announce", Torrent) of
+            %% Trackerless torrent.
+            undefined -> [[]];
+            U -> [[binary_to_list(U)]]
+        end;
 	L when is_list(L) ->
 	    [[binary_to_list(X) || X <- Tier] || Tier <- L]
     end.

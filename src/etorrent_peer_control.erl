@@ -734,6 +734,7 @@ handle_ext_message({metadata_request, PieceNum}, State) ->
     %% Form an answer.
     Answer = {metadata_data, PieceNum, byte_size(PieceData), PieceData},
     {ok, Encoded} = etorrent_ext:encode_msg(ut_metadata, Answer, Exts),
+    %% Send the answer.
     etorrent_peer_send:ext_msg(SendPid, Encoded),
     {ok, State};
 handle_ext_message(_, _State) ->

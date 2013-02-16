@@ -112,6 +112,7 @@ init_locations(Config) ->
 			filename:join([TransMissionWorkDir, "settings.json"])),
 
     [{seed_torrent, SeedTorrent},
+     {bep9_torrent, filename:join([PrivDir, "bep9.torrent"])},
      {seed_file,    SeedFile},
      {seed_fast_resume, SeedFastResume},
      {leech_file,    LeechFile},
@@ -312,8 +313,7 @@ bep9(Config) ->
     IH = ?config(info_hash, Config),
     error_logger:info_msg("Infohash is ~p.", [IH]),
     IntegerIH = literal_infohash_to_integer(IH),
-%   {Ref, Pid} = {make_ref(), self()},
-    %
+
     LeechNode     = ?config(leech_node, Config),
     SeedNode      = ?config(seed_node, Config),
     MiddlemanNode = ?config(middleman_node, Config),
@@ -349,10 +349,24 @@ bep9(Config) ->
     %% Example:
     %% etorrent_magnet:download_meta_info(<<"-ETd011-698280551289">>, 
     %%      135913333321098763031843201180023309283666486509),
-    Res = rpc:call(LeechNode,
+    {ok, MetaInfo} = rpc:call(LeechNode,
     	  etorrent_magnet, download_meta_info,
     	  [LeechPeerId, IntegerIH]),
-    io:format(user, "Meta: ~p~n", [Res]),
+    io:format(user, "Metainfo:~n~p~n", [MetaInfo]),
+
+    %% Create a torrent file
+    TorrentFileName = ?config(bep9_torrent, Config),
+    ok = rpc:call(LeechNode,
+    	  etorrent_magnet, save_meta_info,
+    	  [MetaInfo, TorrentFileName]),
+
+
+    %% Try to download using a trackerless torrent file
+    io:format(user, "START DOWNLOADING~n", []),
+    {Ref, Pid} = {make_ref(), self()},
+    ok = rpc:call(LeechNode,
+		  etorrent, start,
+		  [TorrentFileName, {Ref, Pid}]),
     receive
 	{Ref, done} -> ok
     after

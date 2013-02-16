@@ -1,6 +1,7 @@
 %% Metadata downloader.
 -module(etorrent_magnet).
--export([download_meta_info/2]).
+-export([download_meta_info/2,
+         save_meta_info/2]).
 -define(DEFAULT_CONNECT_TIMEOUT, 5000).
 -define(DEFAULT_RECEIVE_TIMEOUT, 5000).
 -define(DEFAULT_AWAIT_TIMEOUT, 25000).
@@ -24,8 +25,16 @@
 -type portnum() :: etorrent_types:portnum().
 -type bcode() :: etorrent_types:bcode().
 
+%% @doc Write a value, returned from {@link download_meta_info/2} into a file.
+-spec save_meta_info(Info::binary(), Out::file:filename()) -> ok.
+save_meta_info(Info, Out) ->
+    {ok, InfoDecoded} = etorrent_bcoding:decode(Info),
+    Data = [{<<"info">>, InfoDecoded}],
+    Encoded = etorrent_bcoding:encode(Data),
+    file:write_file(Out, Encoded).          
 
--spec download_meta_info(LocalPeerId::peerid(), InfoHashNum::infohash_int()) -> list().
+
+-spec download_meta_info(LocalPeerId::peerid(), InfoHashNum::infohash_int()) -> binary().
 download_meta_info(LocalPeerId, InfoHashNum) ->
     lager:debug("Download metainfo for ~s.",
                 [integer_hash_to_literal(InfoHashNum)]),
@@ -100,7 +109,7 @@ connect_and_download_metainfo(LocalPeerId, IP, Port, InfoHashBin) ->
     {ok, Socket} = gen_tcp:connect(IP, Port, [binary, {active, false}],
                                    ?DEFAULT_CONNECT_TIMEOUT),
     try
-        {ok, Capabilities, RemotePeerId} = etorrent_proto_wire:
+        {ok, Capabilities, _RemotePeerId} = etorrent_proto_wire:
             initiate_handshake(Socket, LocalPeerId, InfoHashBin),
         io:format(user, "Capabilities: ~p~n", [Capabilities]),
         assert_extended_messaging_support(Capabilities),
