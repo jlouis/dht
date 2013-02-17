@@ -35,11 +35,15 @@
         stdlib,
         syntax_tools, compiler, lager,
         crypto, public_key, ssl,
-        ranch, cowboy,
+        cowboy,
         sasl,
         gproc,
         rlimit,
-        mimetypes]},
+        mimetypes,
+        bullet,
+        cascadae,
+        upnp
+      ]},
     {mod, {etorrent_app, []}},
     {env, []}
     ]
