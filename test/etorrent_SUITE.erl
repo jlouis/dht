@@ -68,8 +68,7 @@ end_per_suite(Config) ->
     ok.
 
 end_locations(Config) ->
-    io:format(user, "Cleaning private directory~n", []),
-    DataDir = ?config(data_dir, Config),
+    io:format(user, "Cleaning the private directory~n", []),
     PrivDir = ?config(priv_dir, Config),
 
     %% Remove locations
@@ -254,7 +253,7 @@ seed_transmission() ->
 %% Etorrent => Transmission
 seed_transmission(Config) ->
     io:format(user, "~n======START SEED TRANSMISSION TEST CASE======~n", []),
-    {Ref, Pid} = ?config(transmission_port, Config),
+    {Ref, _Pid} = ?config(transmission_port, Config),
     receive
 	{Ref, done} -> ok
     after
@@ -320,11 +319,7 @@ bep9(Config) ->
     timer:sleep(2000),
     %% Form DHT network.
     %% etorrent_dht_state:safe_insert_node({127,0,0,1}, 6881).
-    SeedDhtPort      = rpc:call(SeedNode,      etorrent_config, dht_port, []),
-    LeechDhtPort     = rpc:call(LeechNode,     etorrent_config, dht_port, []),
     MiddlemanDhtPort = rpc:call(MiddlemanNode, etorrent_config, dht_port, []),
-    SeedIP           = rpc:call(SeedNode,      etorrent_config, listen_ip, []),
-    LeechIP          = rpc:call(LeechNode,     etorrent_config, listen_ip, []),
     MiddlemanIP      = rpc:call(MiddlemanNode, etorrent_config, listen_ip, []),
     true = rpc:call(SeedNode,
     	  etorrent_dht_state, safe_insert_node,
