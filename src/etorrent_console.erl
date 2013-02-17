@@ -219,7 +219,7 @@ log(Pattern, Args) ->
     ok.
 
 pretty_speed(BPS) when BPS < 1024 ->
-    io_lib:format("~7.2f B/s ", [BPS]);
+    io_lib:format("~7.2f B/s  ", [BPS]);
 pretty_speed(BPS) when BPS < 1024*1024 ->
     io_lib:format("~7.2f KiB/s", [BPS / 1024]);
 pretty_speed(BPS) ->

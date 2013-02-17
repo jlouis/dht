@@ -226,6 +226,7 @@ handle_info({timeout, _, announce}, State) ->
             _ = ?dht_net:announce(IP, Port, InfoHash, Token, BTPort)
          end || {IP, Port} <- NewTrackers],
 
+    lager:debug("Adding peers ~p.", [Peers]),
     ok = etorrent_peer_mgr:add_peers(TorrentID, Peers),
     NewState = State#state{nodes=NextTrackers},
     {noreply, NewState}.

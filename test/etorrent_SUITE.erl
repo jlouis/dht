@@ -149,8 +149,7 @@ spawn_middleman(Config) ->
 
 init_per_testcase(leech_transmission, Config) ->
     %% Feed transmission the file to work with
-    {ok, _} = file:copy(?config(seed_file, Config),
-			?config(tr_file, Config)),
+    {ok, _} = file:copy(?config(seed_file, Config), ?config(tr_file, Config)),
     {Ref, Pid} = start_transmission(?config(data_dir, Config),
 				    ?config(tr_work_dir, Config),
 				    ?config(seed_torrent, Config)),
@@ -195,6 +194,8 @@ end_per_testcase(bep9, Config) ->
     stop_seeder(Config),
     stop_leecher(Config),
     stop_middleman(Config),
+    file:delete(?config(bep9_torrent, Config)),
+    ?line ok = file:delete(?config(et_leech_file, Config)),
 %   ?line ok = file:delete(?config(et_leech_file, Config)),
     ok;
 end_per_testcase(_Case, _Config) ->
@@ -214,9 +215,6 @@ seed_configuration(Config, CConf, PrivDir, DataDir) ->
      {logger_fname, "seed_etorrent.log"},
      {fast_resume_file, ?config(seed_fast_resume, Config)} | CConf].
 
-leech_configuration(Config, CConf, PrivDir) ->
-    leech_configuration(CConf, PrivDir, ?ET_WORK_DIR).
-
 leech_configuration(Config, CConf, PrivDir, DownloadSuffix) ->
     [{listen_ip, {127,0,0,3}},
      {port, 1751 },
@@ -228,9 +226,6 @@ leech_configuration(Config, CConf, PrivDir, DownloadSuffix) ->
      {logger_dir, PrivDir},
      {logger_fname, "leech_etorrent.log"},
      {fast_resume_file, ?config(leech_fast_resume, Config)} | CConf].
-
-middleman_configuration(Config, CConf, PrivDir) ->
-    middleman_configuration(CConf, PrivDir, ?ET_WORK_DIR).
 
 middleman_configuration(Config, CConf, PrivDir, DownloadSuffix) ->
     [{listen_ip, {127,0,0,4}},
@@ -247,8 +242,8 @@ middleman_configuration(Config, CConf, PrivDir, DownloadSuffix) ->
 %% Tests
 %% ----------------------------------------------------------------------
 groups() ->
-%   [{main_group, [shuffle], [seed_transmission, seed_leech, leech_transmission]}].
-    [{main_group, [], [bep9]}].
+    Tests = [seed_transmission, seed_leech, leech_transmission, bep9],
+    [{main_group, [shuffle], Tests}].
 
 all() ->
     [{group, main_group}].
@@ -386,12 +381,8 @@ start_opentracker(Dir) ->
     ToSpawn = "run_opentracker.sh -i 127.0.0.1 -p 6969",
     Spawn = filename:join([Dir, ToSpawn]),
     Pid = spawn(fun() ->
-			Port = open_port(
-				 {spawn, Spawn}, [binary, stream, eof]),
-			receive
-			    close ->
-				port_close(Port)
-			end
+			Port = open_port({spawn, Spawn}, [binary, stream, eof]),
+            opentracker_loop(Port, <<>>)
 		end),
     Pid.
 
@@ -411,7 +402,7 @@ start_transmission(DataDir, DownDir, Torrent) ->
     Pid = spawn_link(fun() ->
 			Port = open_port(
 				 {spawn, Spawn},
-				 [stream, binary, eof]),
+				 [stream, binary, eof, stderr_to_stdout]),
             transmission_loop(Port, Ref, Self, <<>>, <<>>)
 		     end),
     {Ref, Pid}.
@@ -432,12 +423,10 @@ end_transmission_locations(Config) ->
     ok = del_dir_r(filename:join([PrivDir, ?TR_WORK_DIR, "blocklists"])),
     ok.
 
-
 stop_leecher(Config) ->
     ok = rpc:call(?config(leech_node, Config), etorrent, stop_app, []),
     ok = file:delete(filename:join([?config(priv_dir, Config),
-				    "leech_etorrent.log"])),
-    ok = file:delete(?config(leech_fast_resume, Config)).
+				    "leech_etorrent.log"])).
 
 stop_seeder(Config) ->
     ok = rpc:call(?config(seed_node, Config), etorrent, stop_app, []),
@@ -470,13 +459,30 @@ transmission_loop(Port, Ref, ReturnPid, OldBin, OldLine) ->
 	    end;
 	[L, Rest] ->
         %% Is it a different line? than show it.
-        [io:format(user, "TRANS: ~s.~n", [L]) || L =/= OldLine],
+        [io:format(user, "TRANS: ~s~n", [L]) || L =/= OldLine],
 	    case string:str(binary_to_list(L), transmission_complete_criterion()) of
 		0 -> ok;
 		N when is_integer(N) ->
 		    ReturnPid ! {Ref, done}
 	    end,
 	    transmission_loop(Port, Ref, ReturnPid, Rest, L)
+    end.
+
+opentracker_loop(Port, OldBin) ->
+    case binary:split(OldBin, [<<"\r">>, <<"\n">>]) of
+	[OnePart] ->
+	    receive
+		{Port, {data, Data}} ->
+		    opentracker_loop(Port, <<OnePart/binary, Data/binary>>);
+		close ->
+		    port_close(Port);
+		M ->
+		    error_logger:error_report([received_unknown_msg, M]),
+		    opentracker_loop(Port, OnePart)
+	    end;
+	[L, Rest] ->
+        io:format(user, "TRACKER: ~s~n", [L]),
+	    opentracker_loop(Port, Rest)
     end.
 
 stop_opentracker(Pid) ->
@@ -526,7 +532,7 @@ sha1_round(FD, {ok, Data}, Ctx) ->
 
 del_dir_r(DirName) ->
     {ok, SubFiles} = file:list_dir(DirName),
-    [file:delete(X) || X <- SubFiles],
+    [file:delete(filename:join(DirName, X)) || X <- SubFiles],
     del_dir(DirName).
 
 del_dir(DirName) ->

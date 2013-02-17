@@ -210,7 +210,7 @@ dht_iter_search(SearchType, _, _, Retry, Retry, _,
         get_peers ->
             Trackers = [{ID, IP, Port, Token}
                       ||{ID, IP, Port, Token, _} <- WithPeers],
-            Peers = [Peers || {_, _, _, _, Peers} <- WithPeers],
+            Peers = [Peer || {_, _, _, _, Peers} <- WithPeers, Peer <- Peers],
             {Trackers, Peers, AliveList}
     end;
 
