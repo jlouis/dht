@@ -31,6 +31,7 @@
 -type(torrent_state() :: 'leeching' | 'seeding' | 'endgame' | 'paused' | 'unknown').
 
 %% A single torrent is represented as the 'torrent' record
+%% TODO: How many seeders/leechers are we connected to?
 -record(torrent,
 	{ %% Unique identifier of torrent, monotonically increasing
           id :: non_neg_integer(),
@@ -422,6 +423,7 @@ do_state_change([{subtract_left, Amount} | Rem], T) ->
                 rate_sparkline = [0.0] };
 
         N when N =< T#torrent.total ->
+%          io:format(user, "Torrent#~p: ~p bytes left.~n", [T#torrent.id, N]),
            T#torrent { left = N }
         end,
 

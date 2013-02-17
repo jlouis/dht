@@ -34,7 +34,8 @@
          have/2,
          not_interested/1,
          interested/1,
-         extended_msg/1,
+         ext_msg/2,
+         ext_setup/3,
          bitfield/2]).
 
 %% gproc registry entries
@@ -161,12 +162,20 @@ bitfield(Pid, BitField) ->
     forward_message(Pid, {bitfield, BitField}).
 
 
-%% @doc Send off the default EXT_MSG to the peer
+%% @doc Send off the initial parameters for extended protocol to the peer
 %% <p>This is part of BEP-10</p>
 %% @end
--spec extended_msg(pid()) -> ok.
-extended_msg(Pid) ->
-    forward_message(Pid, {extended, 0, etorrent_proto_wire:extended_msg_contents()}).
+-spec ext_setup(pid(), list(), list()) -> ok.
+ext_setup(Pid, Exts, Extra) ->
+    forward_message(Pid, {extended, 0, etorrent_proto_wire:
+                          extended_msg_contents(Exts, Extra)}).
+
+
+%% @doc Send off an EXT_MSG to the peer
+%% <p>This is part of BEP-10</p>
+%% @end
+ext_msg(Pid, {extended, _Id, _Body}=ExtMsg) ->
+    forward_message(Pid, ExtMsg).
 
 
 %% @private Send a message to the encoder process.

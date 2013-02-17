@@ -359,7 +359,6 @@ init(Serverargs) ->
     Args = orddict:from_list(Serverargs),
     TorrentID = orddict:fetch(torrentid, Args),
     true = register_server(TorrentID),
-    true = etorrent_download:register_server(TorrentID),
     ChunkSize = orddict:fetch(chunksize, Args),
     PiecesValid = orddict:fetch(fetched, Args),
     PieceSizes = orddict:fetch(piecesizes, Args),
@@ -764,7 +763,7 @@ minimize_masks([], _Union, Acc) ->
 -define(pending, etorrent_pending).
 -define(chunkstate, etorrent_chunkstate).
 -define(piecestate, etorrent_piecestate).
-
+-define(endgame, etorrent_endgame).
 
 chunk_server_test_() ->
     {setup, local,

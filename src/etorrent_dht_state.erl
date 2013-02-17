@@ -81,7 +81,7 @@
          code_change/3]).
 
 -record(state, {
-    node_id,
+    node_id :: nodeid(),
     buckets=b_new(), % The actual routing table
     node_timers=timer_tree(), % Node activity times and timeout references
     buck_timers=timer_tree(),% Bucker activity times and timeout references
@@ -100,8 +100,8 @@
 % rest of the program does that, run these functions whenever an ID
 % enters or leaves this process.
 %
-ensure_bin_id(ID) -> ID.
-ensure_int_id(ID) -> ID.
+ensure_bin_id(ID) when is_binary(ID)  -> ID.
+ensure_int_id(ID) when is_integer(ID) -> ID.
 
 srv_name() ->
     etorrent_dht_state_server.
@@ -109,6 +109,9 @@ srv_name() ->
 start_link(StateFile) ->
     gen_server:start_link({local, srv_name()}, ?MODULE, [StateFile], []).
 
+
+%% @doc Return a this node id as an integer.
+%% Node ids are generated in a random manner.
 -spec node_id() -> nodeid().
 node_id() ->
     gen_server:call(srv_name(), {node_id}).
@@ -564,7 +567,7 @@ handle_call({dump_state, StateFile}, _From, State) ->
 
 handle_call({node_id}, _From, State) ->
     #state{node_id=Self} = State,
-    {reply, ensure_bin_id(Self), State}.
+    {reply, ensure_int_id(Self), State}.
 
 %% @private
 handle_cast(_, State) ->
@@ -656,15 +659,15 @@ load_state(Filename) ->
             case (catch load_state_(BinState)) of
                 {'EXIT', Reason}  ->
                     ErrorArgs = [Filename, Reason],
-                    error_logger:error_msg(ErrorFmt, ErrorArgs),
+                    lager:error(ErrorFmt, ErrorArgs),
                     {etorrent_dht:random_id(), []};
                 {_, _}=State ->
-                    error_logger:info_msg("Loaded state from ~s", [Filename]),
+                    lager:info("Loaded state from ~s", [Filename]),
                     State
             end;
         {error, Reason} ->
             ErrorArgs = [Filename, Reason],
-            error_logger:error_msg(ErrorFmt, ErrorArgs),
+            lager:error(ErrorFmt, ErrorArgs),
             {etorrent_dht:random_id(), []}
     end.
 

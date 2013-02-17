@@ -26,12 +26,14 @@
 -type http_response() :: {{integer(), string()}, term(), iolist()}.
 -spec request(string()) -> {error, term()} | {ok, http_response()}.
 request(URL) ->
-    case hackney:request(URL, get, [{<<"User-Agent">>, binary_to_list(?AGENT_TRACKER_STRING)},
-                                    {<<"Host">>, decode_host(URL)},
-                                    {<<"Accept">>, "*/*"},
-                                    {<<"Accept-Encoding">>, "gzip, identity"}],
-                         <<>>,
-                         [{pool, default}, {recv_timeout, 15000}]) of
+    Headers = [{<<"User-Agent">>, binary_to_list(?AGENT_TRACKER_STRING)},
+              {<<"Host">>, decode_host(URL)},
+              {<<"Accept">>, "*/*"},
+              {<<"Accept-Encoding">>, "gzip, identity"}],
+    Ip = etorrent_config:listen_ip(),
+    Options = [{pool, default}, {recv_timeout, 15000},
+               {connect_options, case Ip of all -> []; _ -> [{ip, Ip}] end}],
+    case hackney:request(get, URL, Headers, <<>>, Options) of
         {ok, Status, RespHeaders, Client} ->
             case hackney:body(Client) of
                 {ok, RespBody, _} ->

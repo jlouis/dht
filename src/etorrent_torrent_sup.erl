@@ -78,6 +78,8 @@ pause(Pid) ->
     ok = supervisor:delete_child(Pid, tracker_communication),
     ok = supervisor:terminate_child(Pid, chunk_mgr),
     ok = supervisor:delete_child(Pid, chunk_mgr),
+         supervisor:terminate_child(Pid, endgame),
+         supervisor:delete_child(Pid, endgame),
     ok.
 
 
@@ -119,7 +121,7 @@ progress_spec(TorrentID, Torrent, ValidPieces, Wishes) ->
         transient, 20000, worker, [etorrent_progress]}.
 
 endgame_spec(TorrentID) ->
-    {chunk_mgr,
+    {endgame,
         {etorrent_endgame, start_link, [TorrentID]},
         transient, 5000, worker, [etorrent_endgame]}.
 

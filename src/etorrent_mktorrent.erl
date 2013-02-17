@@ -106,16 +106,3 @@ torrent_file(AnnounceURL, PieceHashes, FileInfo, Comment) ->
      {<<"info">>, InfoDict}] ++ mk_comment(Comment).
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-

@@ -100,7 +100,8 @@ search_retries() ->
     4.
 
 socket_options() ->
-    [list, inet, {active, true}].
+    [list, inet, {active, true}]
+    ++ case etorrent_config:listen_ip() of all -> []; IP -> [{ip, IP}] end.
 
 token_lifetime() ->
     5*60*1000.
@@ -164,6 +165,7 @@ get_peers(IP, Port, InfoHash)  ->
 %     - Which nodes has been queried?
 %     - Which nodes has responded?
 %     - Which nodes has not been queried?
+% FIXME: It returns `[{649262719799963483759422800960489108797112648079,{127,0,0,2},1743},{badrpc,{127,0,0,4},1763}]'.
 -spec find_node_search(nodeid()) -> list(nodeinfo()).
 find_node_search(NodeID) ->
     Width = search_width(),
@@ -208,7 +210,7 @@ dht_iter_search(SearchType, _, _, Retry, Retry, _,
         get_peers ->
             Trackers = [{ID, IP, Port, Token}
                       ||{ID, IP, Port, Token, _} <- WithPeers],
-            Peers = [Peers || {_, _, _, _, Peers} <- WithPeers],
+            Peers = [Peer || {_, _, _, _, Peers} <- WithPeers, Peer <- Peers],
             {Trackers, Peers, AliveList}
     end;
 
@@ -219,17 +221,31 @@ dht_iter_search(SearchType, Target, Width, Retry, Retries,
     AddQueried = [{ID, IP, Port} || {_, ID, IP, Port} <- Next],
     NewQueried = gb_sets:union(Queried, gb_sets:from_list(AddQueried)),
 
+    ThisNode = node(),
+    Callback =
+    case SearchType of
+        find_node ->
+            fun({_,_,IP,Port}) ->
+                rpc:async_call(ThisNode, ?MODULE, find_node, [IP, Port, Target])
+                end;
+        get_peers ->
+            fun({_,_,IP,Port}) ->
+                rpc:async_call(ThisNode, ?MODULE, get_peers, [IP, Port, Target])
+                end
+    end,
     % Query all nodes in the queue and generate a list of
     % {Dist, ID, IP, Port, Nodes} elements
-    SearchCalls = [case SearchType of
-        find_node -> {?MODULE, find_node, [IP, Port, Target]};
-        get_peers -> {?MODULE, get_peers, [IP, Port, Target]}
-    end || {_, _, IP, Port} <- Next],
-    ReturnValues = rpc:parallel_eval(SearchCalls),
+    Promises = lists:map(Callback, Next),
+    ReturnValues = lists:map(fun rpc:yield/1, Promises),
     WithArgs = lists:zip(Next, ReturnValues),
 
     FailedCall = make_ref(),
     TmpSuccessful = [case {repack, SearchType, RetVal} of
+        {repack, _, {badrpc, Reason}} ->
+            lager:error("A RPC process crashed while sending a request ~p "
+                        "to ~p:~p with reason ~p.",
+                        [SearchType, IP, Port, Reason]),
+            FailedCall;
         {repack, _, {error, timeout}} ->
             FailedCall;
         {repack, _, {error, response}} ->
@@ -348,6 +364,8 @@ handle_call({find_node, IP, Port, Target}, From, State) ->
 handle_call({get_peers, IP, Port, InfoHash}, From, State) ->
     LHash = list_to_binary(etorrent_dht:list_id(InfoHash)),
     Args  = [{<<"info_hash">>, LHash}| common_values()],
+    lager:debug("Send get_peers to ~p:~p for ~s.",
+                [IP, Port, integer_hash_to_literal(InfoHash)]),
     do_send_query('get_peers', Args, IP, Port, From, State);
 
 handle_call({announce, IP, Port, InfoHash, Token, BTPort}, From, State) ->
@@ -365,10 +383,10 @@ handle_call({return, IP, Port, ID, Values}, _From, State) ->
         ok ->
             ok;
         {error, einval} ->
-            error_logger:error_msg("Error (einval) when returning to ~w:~w", [IP, Port]),
+            lager:error("Error (einval) when returning to ~w:~w", [IP, Port]),
             ok;
         {error, eagain} ->
-            error_logger:error_msg("Error (eagain) when returning to ~w:~w", [IP, Port]),
+            lager:error("Error (eagain) when returning to ~w:~w", [IP, Port]),
             ok
     end,
     {reply, ok, State};
@@ -387,6 +405,7 @@ handle_call({get_num_open}, _From, State) ->
 do_send_query(Method, Args, IP, Port, From, State) ->
     #state{sent=Sent,
            socket=Socket} = State,
+    lager:info("Sending ~w to ~w:~w", [Method, IP, Port]),
 
     MsgID = unique_message_id(IP, Port, Sent),
     Query = encode_query(Method, MsgID, Args),
@@ -394,16 +413,16 @@ do_send_query(Method, Args, IP, Port, From, State) ->
     case gen_udp:send(Socket, IP, Port, Query) of
         ok ->
             TRef = timeout_reference(IP, Port, MsgID),
-            error_logger:info_msg("Sent ~w to ~w:~w", [Method, IP, Port]),
+            lager:info("Sent ~w to ~w:~w", [Method, IP, Port]),
 
             NewSent = store_sent_query(IP, Port, MsgID, From, TRef, Sent),
             NewState = State#state{sent=NewSent},
             {noreply, NewState};
         {error, einval} ->
-            error_logger:error_msg("Error (einval) when sending ~w to ~w:~w", [Method, IP, Port]),
+            lager:error("Error (einval) when sending ~w to ~w:~w", [Method, IP, Port]),
             {reply, timeout, State};
         {error, eagain} ->
-            error_logger:error_msg("Error (eagain) when sending ~w to ~w:~w", [Method, IP, Port]),
+            lager:error("Error (eagain) when sending ~w to ~w:~w", [Method, IP, Port]),
             {reply, timeout, State}
     end.
 
@@ -437,11 +456,11 @@ handle_info({udp, _Socket, IP, Port, Packet}, State) ->
     Self = etorrent_dht_state:node_id(),
     NewState = case (catch decode_msg(Packet)) of
         {'EXIT', _} ->
-            error_logger:error_msg("Invalid packet from ~w:~w: ~w", [IP, Port, Packet]),
+            lager:error("Invalid packet from ~w:~w: ~w", [IP, Port, Packet]),
             State;
 
         {error, ID, Code, ErrorMsg} ->
-            error_logger:error_msg("Received error from ~w:~w (~w) ~w", [IP, Port, Code, ErrorMsg]),
+            lager:error("Received error from ~w:~w (~w) ~w", [IP, Port, Code, ErrorMsg]),
             case find_sent_query(IP, Port, ID, Sent) of
                 error ->
                     State;
@@ -463,12 +482,12 @@ handle_info({udp, _Socket, IP, Port, Packet}, State) ->
                     State#state{sent=NewSent}
             end;
         {Method, ID, Params} ->
-            error_logger:info_msg("Received ~w from ~w:~w", [Method, IP, Port]),
+            lager:info("Received ~w from ~w:~w", [Method, IP, Port]),
             case find_sent_query(IP, Port, ID, Sent) of
                 {ok, {Client, Timeout}} ->
                     _ = cancel_timeout(Timeout),
                     _ = gen_server:reply(Client, timeout),
-                    error_logger:error_msg("Bad node, don't send queries to yourself!"),
+                    lager:error("Bad node, don't send queries to yourself!"),
                     NewSent = clear_sent_query(IP, Port, ID, Sent),
                     State#state{sent=NewSent};
                 error ->
@@ -508,19 +527,22 @@ handle_query('ping', _, IP, Port, MsgID, Self, _Tokens) ->
 
 handle_query('find_node', Params, IP, Port, MsgID, Self, _Tokens) ->
     Target = etorrent_dht:integer_id(etorrent_bcoding:get_value(<<"target">>, Params)),
-    CloseNodes = etorrent_dht_state:closest_to(Target),
+    CloseNodes = filter_node(IP, Port, etorrent_dht_state:closest_to(Target)),
     BinCompact = node_infos_to_compact(CloseNodes),
     Values = [{<<"nodes">>, BinCompact}],
     return(IP, Port, MsgID, common_values(Self) ++ Values);
 
 handle_query('get_peers', Params, IP, Port, MsgID, Self, Tokens) ->
     InfoHash = etorrent_dht:integer_id(etorrent_bcoding:get_value(<<"info_hash">>, Params)),
+    lager:debug("Take request get_peers from ~p:~p for ~s.",
+                [IP, Port, integer_hash_to_literal(InfoHash)]),
     Values = case etorrent_dht_tracker:get_peers(InfoHash) of
         [] ->
-            Nodes = etorrent_dht_state:closest_to(InfoHash),
+            Nodes = filter_node(IP, Port, etorrent_dht_state:closest_to(InfoHash)),
             BinCompact = node_infos_to_compact(Nodes),
             [{<<"nodes">>, BinCompact}];
         Peers ->
+            lager:debug("Get a list of peers from the local tracker ~p", [Peers]),
             PeerList = [peers_to_compact([P]) || P <- Peers],
             [{<<"values">>, PeerList}]
     end,
@@ -529,6 +551,8 @@ handle_query('get_peers', Params, IP, Port, MsgID, Self, Tokens) ->
 
 handle_query('announce', Params, IP, Port, MsgID, Self, Tokens) ->
     InfoHash = etorrent_dht:integer_id(etorrent_bcoding:get_value(<<"info_hash">>, Params)),
+    lager:info("Announce from ~p:~p for ~s~n",
+                [IP, Port, integer_hash_to_literal(InfoHash)]),
     BTPort = etorrent_bcoding:get_value(<<"port">>,   Params),
     Token = get_string(<<"token">>, Params),
     case is_valid_token(Token, IP, Port, Tokens) of
@@ -536,7 +560,7 @@ handle_query('announce', Params, IP, Port, MsgID, Self, Tokens) ->
             etorrent_dht_tracker:announce(InfoHash, IP, BTPort);
         false ->
             FmtArgs = [IP, Port, Token],
-            error_logger:error_msg("Invalid token from ~w:~w ~w", FmtArgs)
+            lager:error("Invalid token from ~w:~w ~w", FmtArgs)
     end,
     return(IP, Port, MsgID, common_values(Self)).
 
@@ -826,6 +850,39 @@ valid_token_test() ->
 
 -ifdef(PROPER).
 
+-type octet() :: byte().
+%-type portnum() :: char().
+-type dht_node() :: {{octet(), octet(), octet(), octet()}, portnum()}.
+-type integer_id() :: non_neg_integer().
+-type node_id() :: integer_id().
+-type info_hash() :: integer_id().
+%-type token() :: binary().
+%-type transaction() ::binary().
+
+-type ping_query() ::
+    {ping, transaction(), {{'id', node_id()}}}.
+
+-type find_node_query() ::
+   {find_node, transaction(),
+        {{'id', node_id()}, {'target', node_id()}}}.
+
+-type get_peers_query() ::
+   {get_peers, transaction(),
+        {{'id', node_id()}, {'info_hash', info_hash()}}}.
+
+-type announce_query() ::
+   {announce, transaction(),
+        {{'id', node_id()}, {'info_hash', info_hash()},
+         {'token', token()}, {'port', portnum()}}}.
+
+-type dht_query() ::
+    ping_query() |
+    find_node_query() |
+    get_peers_query() |
+    announce_query().
+
+
+
 
 prop_inv_compact() ->
    ?FORALL(Input, list(dht_node()),
@@ -836,7 +893,7 @@ prop_inv_compact() ->
        end).
 
 prop_inv_compact_test() ->
-    ?assert(proper:quickcheck(prop_inv_compact())).
+    qc(prop_inv_compact()).
 
 tobin(Atom) ->
     iolist_to_binary(atom_to_list(Atom)).
@@ -854,7 +911,24 @@ prop_query_inv() ->
        end).
 
 prop_query_inv_test() ->
-    ?assert(proper:quickcheck(prop_query_inv())).
+    qc(prop_query_inv()).
+
+qc(Gen) ->
+    Res = proper:quickcheck(Gen),
+    case Res of
+        true -> ok;
+        Error -> io:format(user, "Proper error: ~p~n", [Error]), error(proper_error)
+    end.
 
 -endif. %% EQC
 -endif.
+
+
+integer_hash_to_literal(InfoHashInt) when is_integer(InfoHashInt) ->
+    io_lib:format("~40.16.0B", [InfoHashInt]).
+
+
+%% @doc Delete node with `IP' and `Port' from the list.
+filter_node(IP, Port, Nodes) ->
+    [X || {_NID, NIP, NPort}=X <- Nodes, NIP =/= IP orelse NPort =/= Port].
+

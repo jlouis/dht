@@ -5,6 +5,7 @@
 
 -define(AWAIT_TIMEOUT, 10*1000).
 -define(DEFAULT_CHUNK_SIZE, 16#4000). % TODO - get this value from a configuration file
+-define(METADATA_BLOCK_BYTE_SIZE, 16384). %% 16KiB (16384 Bytes) 
 
 
 -export([start_link/2,
@@ -28,6 +29,9 @@
          chunk_size/1         %
         ]).
 
+%% Metadata API (BEP-9)
+-export([metadata_size/1,
+         get_piece/2]).
 
 -export([
 	init/1,
@@ -49,7 +53,9 @@
     total_size :: non_neg_integer(),
     piece_size :: non_neg_integer(),
     chunk_size = ?DEFAULT_CHUNK_SIZE :: non_neg_integer(),
-    piece_count :: non_neg_integer()
+    piece_count :: non_neg_integer(),
+    metadata_size :: non_neg_integer(),
+    metadata_pieces :: [binary()]
     }).
 
 
@@ -226,6 +232,18 @@ file_name(TorrentID, FileID) when is_integer(FileID) ->
     Name.
     
 
+-spec metadata_size(torrent_id()) -> non_neg_integer().
+metadata_size(TorrentID) ->
+    DirPid = await_server(TorrentID),
+    {ok, Len} = gen_server:call(DirPid, metadata_size),
+    Len.
+
+%% Piece is indexed from 0.
+get_piece(TorrentID, PieceNum) when is_integer(PieceNum) ->
+    DirPid = await_server(TorrentID),
+    {ok, PieceData} = gen_server:call(DirPid, {get_piece, PieceNum}),
+    PieceData.
+
 %% ----------------------------------------------------------------------
 
 %% @private
@@ -235,14 +253,21 @@ init([TorrentID, Torrent]) ->
     {Static, PLen, TLen} = Info,
 
     true = register_server(TorrentID),
-    
+
+    MetaInfo = etorrent_bcoding:get_value("info", Torrent),
+    %% Really? First decode, now encode...
+    TorrentBin = iolist_to_binary(etorrent_bcoding:encode(MetaInfo)),
+    MetadataSize = byte_size(TorrentBin),
+
     InitState = #state{
         torrent=TorrentID,
         static_file_info=Static,
         total_size=TLen, 
         piece_size=PLen,
         piece_count=(TLen div PLen) + 
-            (case TLen rem PLen of 0 -> 0; _ -> 1 end) 
+            (case TLen rem PLen of 0 -> 0; _ -> 1 end),
+        metadata_size = MetadataSize,
+        metadata_pieces = list_to_tuple(metadata_pieces(TorrentBin, 0, MetadataSize))
     },
     {ok, InitState}.
 
@@ -354,7 +379,15 @@ handle_call({tree_children, FileID}, _, State) ->
         #file_info {children = Ids} ->
             Children = [array:get(Id, Arr) || Id <- Ids],
             {reply, {ok, Children}, State}
-    end.
+    end;
+handle_call(metadata_size, _, State) ->
+    #state{metadata_size=MetadataSize} = State,
+    {reply, {ok, MetadataSize}, State};
+handle_call({get_piece, PieceNum}, _, State=#state{metadata_pieces=Pieces})
+        when PieceNum < tuple_size(Pieces) ->
+    {reply, {ok, element(PieceNum+1, Pieces)}, State};
+handle_call({get_piece, PieceNum}, _, State=#state{}) ->
+    {reply, {ok, {bad_piece, PieceNum}}, State}.
 
 %% @private
 handle_cast(Msg, State) ->
@@ -670,4 +703,29 @@ add_directories_test() ->
 %           undefined,file,[],0,5753284,1633920175,undefined}
 % NextDir =  "BBC.7.BigToe/Eoin Colfer. Artemis Fowl/. The Arctic Incident
 
+
+metadata_pieces_test_() ->
+    crypto:start(),
+    TorrentBin = crypto:rand_bytes(100000),
+    Pieces = metadata_pieces(TorrentBin, 0, byte_size(TorrentBin)),
+    [Last|InitR] = lists:reverse(Pieces),
+    F = fun(Piece) -> byte_size(Piece) =:= ?METADATA_BLOCK_BYTE_SIZE end,
+    [?_assertEqual(iolist_to_binary(Pieces), TorrentBin)
+    ,?_assert(byte_size(Last) =< ?METADATA_BLOCK_BYTE_SIZE)
+    ,?_assert(lists:all(F, InitR))
+    ].
+
 -endif.
+
+
+%% Not last.
+metadata_pieces(TorrentBin, From, MetadataSize)
+    when MetadataSize > ?METADATA_BLOCK_BYTE_SIZE ->
+    [binary:part(TorrentBin, {From,?METADATA_BLOCK_BYTE_SIZE})
+    |metadata_pieces(TorrentBin,
+                     From+?METADATA_BLOCK_BYTE_SIZE, 
+                     MetadataSize-?METADATA_BLOCK_BYTE_SIZE)];
+
+%% Last.
+metadata_pieces(TorrentBin, From, MetadataSize) ->
+    [binary:part(TorrentBin, {From,MetadataSize})].

@@ -87,6 +87,7 @@ handle_call(_Request, _From, State) ->
     {reply, Reply, State}.
 
 handle_cast({add_peers, TrackerUrl, IPList}, S) ->
+    lager:debug("Add peers ~p.", [IPList]),
     NS = start_new_peers(TrackerUrl, IPList, S),
     {noreply, NS};
 handle_cast({enter_bad_peer, IP, Port, PeerId}, S) ->
@@ -176,7 +177,7 @@ spawn_peer(TrackerUrl, PeerId, PL, TorrentId, IP, Port) ->
 	  {ok, Socket} ->
 	      case etorrent_proto_wire:initiate_handshake(
 		     Socket,
-		     PeerId,
+		     PeerId, %% local peer id as a binary, comes from init/1.
 		     proplists:get_value(info_hash, PL)) of
 		  {ok, _Capabilities, PeerId} -> ok;
 		  {ok, Capabilities, RPID} ->
@@ -184,7 +185,7 @@ spawn_peer(TrackerUrl, PeerId, PL, TorrentId, IP, Port) ->
 			  etorrent_peer_pool:start_child(
 			    TrackerUrl,
 			    RPID,
-			    proplists:get_value(info_hash, PL),
+                proplists:get_value(info_hash, PL),
 			    TorrentId,
 			    {IP, Port},
 			    Capabilities,

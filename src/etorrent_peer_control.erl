@@ -56,7 +56,9 @@
 
     remote = exit(required) :: peerstate(),
     local  = exit(required) :: peerstate(),
-    config = exit(required) :: peerconf()}).
+    config = exit(required) :: peerconf(),
+    extensions = etorrent_ext:new([ut_metadata])
+    }).
 
 %% Default size for a chunk. All clients use this.
 -define(DEFAULT_CHUNK_SIZE, 16384).
@@ -378,6 +380,8 @@ handle_cast(interested, State) ->
     self() ! {interested, true},
     {noreply, State};
 
+%% TODO: this cause death of `etorrent_peer_sup' with reason 
+%%       `reached_max_restart_intensity'.
 handle_cast(stop, S) ->
     {stop, normal, S};
 
@@ -460,6 +464,7 @@ handle_info({peer, {check, seeder}}, State) ->
     {noreply, State};
 
 
+%% Handle a message from `etorrent_download:update/2'.
 handle_info({download, Update}, State) ->
     #state{download=Download} = State,
     NewDownload = etorrent_download:update(Update, Download),
@@ -703,19 +708,37 @@ handle_message({piece, Index, Offset, Data}, State) ->
     NewState = State#state{local=NewLocal},
     {ok, NewState};
 
-handle_message({extended, 0, _Data}, State) ->
-    #state{config=Config} = State,
+%% Extended messaging handshake
+handle_message({extended, 0, Data}, State) ->
+    #state{config=Config, extensions=Exts} = State,
+    lager:debug("Getting a supported extension list from the peer.", []),
     etorrent_peerconf:extended(Config) orelse erlang:error(badarg),
-    %% Disable the extended messaging for now,
-    %?INFO([{extended_message, etorrent_bcoding:decode(BCode)}]),
-    %% We could consider storing the information here, if needed later on,
-    %% but for now we simply ignore that.
-    {ok, State};
+    {ok, Msg} = etorrent_bcoding:decode(Data),
+    Exts2 = etorrent_ext:handle_handshake_respond(Msg, Exts),
+    {ok, State#state{extensions=Exts2}};
+
+handle_message({extended, ExtId, Data}, State) ->
+    #state{extensions=Exts} = State,
+    {ok, Msg} = etorrent_ext:decode_msg(ExtId, Data, Exts),
+    handle_ext_message(Msg, State);
 
 handle_message(Unknown, State) ->
     lager:error("Unknown handle_message: ~p", [Unknown]),
     {stop, normal, State}.
 
+
+handle_ext_message({metadata_request, PieceNum}, State) ->
+    #state{torrent_id=TorrentID, extensions=Exts, send_pid=SendPid} = State,
+    %% Get data.
+    PieceData = etorrent_info:get_piece(TorrentID, PieceNum),
+    %% Form an answer.
+    Answer = {metadata_data, PieceNum, byte_size(PieceData), PieceData},
+    {ok, Encoded} = etorrent_ext:encode_msg(ut_metadata, Answer, Exts),
+    %% Send the answer.
+    etorrent_peer_send:ext_msg(SendPid, Encoded),
+    {ok, State};
+handle_ext_message(_, _State) ->
+    error(unknown_extended_message).
 
 % @doc Initialize the connection, depending on the way the connection is
 connection_initialize(incoming, State) ->
@@ -724,13 +747,15 @@ connection_initialize(incoming, State) ->
         socket=Socket,
         info_hash=Infohash,
         local=Local,
-        config=Config} = State,
+        config=Config,
+        extensions=Exts} = State,
     Extended = etorrent_peerconf:extended(Config),
     LocalID = etorrent_peerconf:localid(Config),
     Valid = etorrent_peerstate:pieces(Local),
     case etorrent_proto_wire:complete_handshake(Socket, Infohash, LocalID) of
         ok ->
-            SendPid = complete_connection_setup(Socket, TorrentID, Extended, Valid),
+            SendPid = complete_connection_setup(Socket, TorrentID, Extended, 
+                                                Valid, Exts),
             NewState = State#state{send_pid=SendPid},
             {ok, NewState};
         {error, stop} ->
@@ -738,10 +763,16 @@ connection_initialize(incoming, State) ->
     end;
 
 connection_initialize(outgoing, State) ->
-    #state{torrent_id=TorrentID, socket=Socket, local=Local, config=Config} = State,
+    #state{
+        torrent_id=TorrentID,
+        socket=Socket,
+        local=Local,
+        config=Config,
+        extensions=Exts} = State,
     Extended = etorrent_peerconf:extended(Config),
     Valid = etorrent_peerstate:pieces(Local),
-    SendPid = complete_connection_setup(Socket, TorrentID, Extended, Valid),
+    SendPid = complete_connection_setup(Socket, TorrentID, Extended, 
+                                        Valid, Exts),
     NewState = State#state{send_pid=SendPid},
     {ok, NewState}.
 
@@ -753,9 +784,18 @@ connection_initialize(outgoing, State) ->
 %%    * Start the send pid
 %%    * Send off the bitfield
 %%--------------------------------------------------------------------
-complete_connection_setup(Socket, _TorrentID, Extended, Valid) ->
+complete_connection_setup(Socket, TorrentID, Extended, Valid, Exts) ->
     SendPid = etorrent_peer_send:await_server(Socket),
     Bitfield = etorrent_pieceset:to_binary(Valid),
-    Extended andalso etorrent_peer_send:extended_msg(SendPid),
+    Extra = add_metadata_size(Exts, TorrentID),
+    Extended andalso etorrent_peer_send:
+        ext_setup(SendPid, etorrent_ext:extension_list(Exts), Extra),
     etorrent_peer_send:bitfield(SendPid, Bitfield),
     SendPid.
+
+
+add_metadata_size(Exts, TorrentID) ->
+    [{<<"metadata_size">>, etorrent_info:metadata_size(TorrentID)}
+    || etorrent_ext:is_locally_supported(ut_metadata, Exts)].
+
+        

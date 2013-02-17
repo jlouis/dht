@@ -71,6 +71,9 @@
 % by DHT. DHT subsystem also uses it as node id and computes nodes
 % distance by 'xor' their ids. Xor can not be applied on binaries.
 % Thus the distinction.
+%
+% The other form is a literal (readable) string.
+% For example, `etorrent_dotdir:info_hash/1' returns infohash in this form.
 -type infohash() :: pos_integer().
 -type nodeid() :: pos_integer().
 -type nodeinfo() :: {nodeid(), ipaddr(), portnum()}.

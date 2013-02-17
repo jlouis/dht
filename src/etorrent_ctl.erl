@@ -13,7 +13,8 @@
 -export([start_link/1,
 
          start/1, start/2, stop/1,
-         check/1, pause/1, continue/1]).
+         check/1, pause/1, continue/1,
+         local_peer_id/0]).
 
 -export([handle_cast/2, handle_call/3, init/1, terminate/2]).
 -export([handle_info/2, code_change/3]).
@@ -21,6 +22,8 @@
 -define(SERVER, ?MODULE).
 
 -type bcode() :: etorrent_types:bcode().
+-type peerid() :: <<_:160>>.
+
 -record(state, {local_peer_id :: binary() }).
 
 %% API
@@ -70,6 +73,16 @@ continue(Id) ->
 -spec stop(string()) -> ok.
 stop(File) ->
     gen_server:cast(?SERVER, {stop, File}).
+
+%% @doc Get a local peer id.
+%%
+%% Most of the code don't need this function, because the peer id is usually
+%% passed as a parameter of the `start_link' function.
+%%
+%% This function can be used for debugging and inside tests.
+-spec local_peer_id() -> peerid().
+local_peer_id() ->
+    gen_server:call(?SERVER, local_peer_id).
 
 %% =======================================================================
 
@@ -124,8 +137,8 @@ handle_call({start, F, CallBack}, _From, S) ->
 handle_call(stop_all, _From, S) ->
     stop_all(),
     {reply, ok, S};
-handle_call(_A, _B, S) ->
-    {noreply, S}.
+handle_call(local_peer_id, _From, S) ->
+    {reply, S#state.local_peer_id, S}.
 
 %% @private
 handle_info(Info, State) ->

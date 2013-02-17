@@ -1,5 +1,6 @@
 %% @author Magnus Klaar <magnus.klaar@sgsstudentbostader.se>
-%% @doc TODO
+%% @doc This module provides few helpers and supervise the DHT processes.
+%% Starts two workers: {@link etorrent_dht_state} and {@link etorrent_dht_net}.
 %% @end
 -module(etorrent_dht).
 -behaviour(supervisor).
@@ -47,6 +48,8 @@ init(Args) ->
             {etorrent_dht_net, start_link, [Port]},
             permanent, 1000, worker, dynamic}]}}.
 
+
+%% @doc Announce yourself as a peer for this torrent.
 add_torrent(InfoHash, TorrentID) ->
     case etorrent_config:dht() of
         false -> ok;

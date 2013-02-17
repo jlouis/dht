@@ -37,6 +37,7 @@ start_link(Id) -> supervisor:start_link(?MODULE, [Id]).
 start_child(PeerId, InfoHash, Id, {IP, Port}, Capabilities, Socket) ->
     start_child("no_tracker_url", PeerId, InfoHash, Id,
                 {IP, Port}, Capabilities, Socket).
+
 -spec start_child(string(), binary(), binary(), integer(),
                   {ipaddr(), portnum()},
                   [capabilities()],

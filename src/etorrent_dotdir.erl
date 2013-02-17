@@ -107,7 +107,7 @@ base_path(Infohash) ->
     filename:join([etorrent_config:dotdir(), Infohash]).
 
 
-%% @doc Get the info hash of a torrent file.
+%% @doc Get the literal info hash of a torrent file.
 %% @end
 -spec info_hash(Torrentfile::string()) -> {ok, [byte()]} | {error, _}.
 info_hash(Torrentfile) ->
@@ -121,10 +121,8 @@ info_hash(Torrentfile) ->
     end.
 
 %% @private Hex encode an info hash.
-info_hash_to_hex(<<Infohash:20/binary>>) ->
-    ToHex = fun(I) -> string:to_lower(integer_to_list(I, 16)) end,
-    HexIO = [ToHex(I) || <<I>> <= Infohash],
-    lists:flatten(HexIO).
+info_hash_to_hex(<<Infohash:160>>) ->
+    binary_to_list(iolist_to_binary(io_lib:format("~40.16.0b", [Infohash]))).
 
 
 %% @private Catch raw info hashes that slips through.
@@ -173,6 +171,14 @@ exists(Path) ->
 
 
 -ifdef(TEST).
+
+infohash_test_() ->
+    FileName =
+    filename:join(code:lib_dir(etorrent_core),
+                  "test/etorrent_eunit_SUITE_data/test_file_30M.random.torrent"),
+    [?_assertEqual({ok, "87be033150bd8dd1801478a32d4c79e54cb55552"}, 
+                   ?MODULE:info_hash(FileName))].
+
 
 %% @private Update dotdir configuration parameter to point to a new directory.
 setup_config() ->
@@ -279,4 +285,6 @@ test_write_info() ->
     {ok, Infohash} = ?MODULE:copy_torrent(testpath()),
     ok = ?MODULE:write_info(Infohash, [{<<"a">>, 1}]),
     {ok, [{<<"a">>, 1}]} = ?MODULE:read_info(Infohash).
+
+
 -endif.
