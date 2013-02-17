@@ -14,7 +14,6 @@
 -type ext_name() :: atom().
 -type ext_mod_name() :: atom().
 -type ext_bname() :: binary().
--type ext_list() :: record().
 -type bcode() :: etorrent_types:bcode().
 
 %% Local id => name as atom
@@ -29,6 +28,7 @@
         all_bname2remote_id = orddict:new() :: orddict:orddict(),
         m :: list({ext_bname(), ext_id()})
 }).
+-type ext_list() :: #exts{}.
 
 % ======================================================================
 
