@@ -775,3 +775,34 @@ mask_to_filelist_rec([FileId|FileIds], Mask, Arr) ->
 mask_to_filelist_rec([], _Mask, _Arr) ->
     [].
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+mask_to_filelist_int_test_() ->
+    FileName = filename:join(code:lib_dir(etorrent_core), 
+                             "test/etorrent_eunit_SUITE_data/coulton.torrent"),
+    {ok, Torrent} = etorrent_bcoding:parse_file(FileName),
+    Info = collect_static_file_info(Torrent),
+    {Arr, _PLen, _TLen} = Info,
+    N2I     = file_name_to_ids(Arr),
+    FileId  = fun(Name) -> dict:fetch(Name, N2I) end,
+    Pieces  = fun(Id) -> #file_info{pieces=Ps} = array:get(Id, Arr), Ps end,
+    Week4   = FileId("Jonathan Coulton/Thing a Week 4"),
+    BigBoom = FileId("Jonathan Coulton/Thing a Week 4/The Big Boom.mp3"),
+    Ikea    = FileId("Jonathan Coulton/Smoking Monkey/04 Ikea.mp3"),
+    Week4Pieces   = Pieces(Week4),
+    BigBoomPieces = Pieces(BigBoom),
+    IkeaPieces    = Pieces(Ikea),
+    W4BBPieces    = etorrent_pieceset:union(Week4Pieces, BigBoomPieces),
+    W4IkeaPieces  = etorrent_pieceset:union(Week4Pieces, IkeaPieces),
+    [?_assertEqual([Week4], mask_to_filelist_int(Week4Pieces, Arr))
+    ,?_assertEqual([Week4], mask_to_filelist_int(W4BBPieces, Arr))
+    ,?_assertEqual([Ikea, Week4], mask_to_filelist_int(W4IkeaPieces, Arr))
+    ].
+
+file_name_to_ids(Arr) ->
+    F = fun(FileId, #file_info{name=Name}, Acc) -> [{Name, FileId}|Acc] end,
+    dict:from_list(array:foldl(F, [], Arr)).
+
+
+-endif.
