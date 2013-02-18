@@ -56,7 +56,7 @@
 
 %% peer API
 -export([start_link/1,
-         start_link/6,
+         start_link/7,
          mark_valid/2]).
 
 %% stats API
@@ -122,6 +122,7 @@
     pieces_begun      :: pieceset(),
     pieces_assigned   :: pieceset(),
     pieces_stored     :: pieceset(),
+    pieces_unwanted   :: pieceset(),
     %% Chunk sets for pieces
     chunks_assigned :: array(),
     chunks_stored   :: array(),
@@ -220,6 +221,8 @@
 %% of each piece and the peer should be removed from the set of monitored
 %% peers.
 %%
+%% # Unwanted pieces
+%% are used for partical downloading.
 
 -spec register_server(torrent_id()) -> true.
 register_server(TorrentID) ->
@@ -252,8 +255,18 @@ start_link(Args) ->
 %% Start a new chunk server for a set of pieces, a subset of the
 %% pieces may already have been fetched.
 %% @end
-start_link(TorrentID, ChunkSize, Fetched, Sizes, TorrentPid, Wishes) ->
-    Args = [
+-spec start_link(TorrentID, ChunkSize, Fetched, Sizes, TorrentPid, 
+                 Wishes, Unwanted) -> ok when
+    TorrentID  :: torrent_id(),
+    ChunkSize  :: non_neg_integer(),
+    Fetched    :: pieceset(),
+    Sizes      :: term(),
+    TorrentPid :: pid(),
+    Wishes     :: [pieceset()],
+    Unwanted   :: pieceset() | undefined.
+start_link(TorrentID, ChunkSize, Fetched, Sizes, TorrentPid, Wishes, Unwanted) ->
+    Args = 
+        [{unwanted, Unwanted} || Unwanted =/= undefined] ++ [
         {torrentid, TorrentID},
         {chunksize, ChunkSize},
         {fetched, Fetched},
@@ -393,6 +406,7 @@ init(Serverargs) ->
     ChunkSets = array:from_orddict(ChunkList),
 
     PiecePriority = init_priority(TorrentID, unassigned, PiecesInvalid),
+    PiecesUnwanted = proplists:get_value(unwanted, Serverargs, PiecesNone),
 
     InitState = #state{
         torrent_id=TorrentID,
@@ -406,6 +420,7 @@ init(Serverargs) ->
         pieces_begun=PiecesNone,
         pieces_assigned=PiecesNone,
         pieces_stored=PiecesNone,
+        pieces_unwanted=PiecesUnwanted,
         %% Initially, the sets of assigned and stored chunks are equal
         chunks_assigned=ChunkSets,
         chunks_stored=ChunkSets,
@@ -430,6 +445,7 @@ handle_call({chunk, {request, Numchunks, Peerset, PeerPid}}, _, State) ->
         chunks_assigned=AssignedChunks,
         piece_priority=PiecePriority,
         pending=Pending,
+        pieces_unwanted=Unwanted,
         user_wishes=UserWish} = State,
 
     %% If this peer has any pieces that we have begun downloading, pick
@@ -444,7 +460,9 @@ handle_call({chunk, {request, Numchunks, Peerset, PeerPid}}, _, State) ->
         true ->
             {false, false};
         false ->
-            ISubOptimal = etorrent_pieceset:intersection(Peerset, Unassigned),
+            %% Wanted, but unassigned.
+            Wanted = etorrent_pieceset:difference(Unassigned, Unwanted),
+            ISubOptimal = etorrent_pieceset:intersection(Peerset, Wanted),
             IHasSubOptimal = not etorrent_pieceset:is_empty(ISubOptimal),
             {ISubOptimal, IHasSubOptimal}
     end,

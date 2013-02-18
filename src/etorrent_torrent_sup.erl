@@ -10,7 +10,7 @@
 -export([start_link/3,
 
          start_child_tracker/5,
-         start_progress/5,
+         start_progress/6,
          start_endgame/2,
          start_peer_sup/2,
          stop_assignor/1,
@@ -57,10 +57,11 @@ start_child_tracker(Pid, UrlTiers, InfoHash, Local_Peer_Id, TorrentId) ->
 -spec start_progress(pid(), etorrent_types:torrent_id(),
                             etorrent_types:bcode(),
                             etorrent_pieceset:t(),
-                            [etorrent_pieceset:t()]) ->
+                            [etorrent_pieceset:t()],
+                            etorrent_pieceset:t()) ->
                             {ok, pid()} | {ok, pid(), term()} | {error, term()}.
-start_progress(Pid, TorrentID, Torrent, ValidPieces, Wishes) ->
-    Spec = progress_spec(TorrentID, Torrent, ValidPieces, Wishes),
+start_progress(Pid, TorrentID, Torrent, ValidPieces, Wishes, UnwantedPieces) ->
+    Spec = progress_spec(TorrentID, Torrent, ValidPieces, Wishes, UnwantedPieces),
     supervisor:start_child(Pid, Spec).
 
 start_endgame(Pid, TorrentID) ->
@@ -112,10 +113,11 @@ scarcity_manager_spec(TorrentID, Torrent) ->
         {etorrent_scarcity, start_link, [TorrentID, Numpieces]},
         permanent, 5000, worker, [etorrent_scarcity]}.
 
-progress_spec(TorrentID, Torrent, ValidPieces, Wishes) ->
+progress_spec(TorrentID, Torrent, ValidPieces, Wishes, UnwantedPieces) ->
     PieceSizes  = etorrent_io:piece_sizes(Torrent), 
     ChunkSize   = etorrent_info:chunk_size(TorrentID),
-    Args = [TorrentID, ChunkSize, ValidPieces, PieceSizes, lookup, Wishes],
+    Args = [TorrentID, ChunkSize, ValidPieces, PieceSizes, lookup, 
+            Wishes, UnwantedPieces],
     {chunk_mgr,
         {etorrent_progress, start_link, Args},
         transient, 20000, worker, [etorrent_progress]}.

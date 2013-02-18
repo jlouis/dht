@@ -84,6 +84,8 @@
     id          :: integer() ,
     torrent     :: bcode(),   % Parsed torrent file
     valid       :: pieceset(),
+    unwanted    :: pieceset() | undefined,
+    unwanted_files :: [file_id()], %% ordset()
     hashes      :: binary(),
     info_hash   :: binary(),  % Infohash of torrent file
     peer_id     :: binary(),
@@ -234,6 +236,27 @@ subscribe(TorrentID, Type, Value) ->
 %% @private
 alert_subscribed(Clients) ->
     [Pid ! {completed, Ref} || {Pid, Ref} <- Clients].
+
+
+%% @doc Do not download selected files.
+-spec skip_file(TorrentID, FileID) -> {ok, wish_list()}
+    when
+      TorrentID :: torrent_id(),
+      FileID :: file_id().
+    
+skip_file(TorrentID, FileID) ->
+    CtlSrv = lookup_server(TorrentID),
+    gen_fsm:sync_send_all_state_event(CtlSrv, {skip_file, FileID}).
+
+
+-spec unskip_file(TorrentID, FileID) -> {ok, wish_list()}
+    when
+      TorrentID :: torrent_id(),
+      FileID :: file_id().
+    
+unskip_file(TorrentID, FileID) ->
+    CtlSrv = lookup_server(TorrentID),
+    gen_fsm:sync_send_all_state_event(CtlSrv, {unskip_file, FileID}).
 
 
 %% @private
@@ -486,23 +509,11 @@ handle_event({switch_mode, Mode}, SN, S=#state{mode=Mode}) ->
 
 handle_event({switch_mode, NewMode}, SN, S=#state{mode=OldMode}) ->
     lager:info("Switch mode: ~p => ~p ~n", [OldMode, NewMode]),
-    #state{mode=OldMode, parent_pid=Sup, id=TorrentID,
-        valid=ValidPieceSet} = S,
+    #state{mode=OldMode, parent_pid=Sup, id=TorrentID} = S,
 
     case NewMode of
     'progress' ->
-        #state{torrent=Torrent, 
-                wishes=Wishes} = S,
-        Masks = wishes_to_masks(Wishes),
-%           etorrent_torrent_sup:stop_endgame(Sup),
-
-        %% Start the progress manager
-        etorrent_torrent_sup:start_progress(
-          Sup,
-          TorrentID,
-          Torrent,
-          ValidPieceSet,
-          Masks);
+         ok;
 
     'endgame' ->
         etorrent_torrent_sup:start_endgame(
@@ -541,6 +552,39 @@ handle_sync_event({subscribe, Type, Value}, {_Pid, Ref} = Client, SN, SD) ->
 handle_sync_event(get_wishes, _From, SN, SD) ->
     Wishes = SD#state.wishes,
     {reply, {ok, Wishes}, SN, SD};
+
+handle_sync_event({skip_file, FileID}, _From, SN, SD) ->
+    #state{
+        id=TorrentID,
+        unwanted=Unwanted,
+        unwanted_files=UnwantedFiles
+    } = SD,
+    Min = etorrent_info:minimize_filelist(TorrentID, [FileID|UnwantedFiles]),
+    UnwantedFiles2 = ordsets:from_list(Min),
+    %% Files, that were deleted.
+%   Merged = ordsets:subtract(UnwantedFiles, UnwantedFiles1),
+    Min = etorrent_info:minimize_filelist(TorrentID, [FileID|UnwantedFiles]),
+    FileMask = etorrent_info:get_mask(TorrentID, FileID),
+    Unwanted2 = etorrent_pieceset:union(Unwanted, FileMask),
+    SD1 = #state{
+        unwanted=Unwanted2,
+        unwanted_files=UnwantedFiles2
+    },
+    {reply, ok, SN, SD1};
+
+handle_sync_event({unskip_file, FileID}, _From, SN, SD) ->
+    #state{
+        id=TorrentID,
+        unwanted=Unwanted
+    } = SD,
+    FileMask = etorrent_info:get_mask(TorrentID, FileID),
+    Unwanted2 = etorrent_pieceset:difference(Unwanted, FileMask),
+    UnwantedFiles2 = etorrent_info:mask_to_filelist(TorrentID, Unwanted2),
+    SD1 = #state{
+        unwanted=Unwanted2,
+        unwanted_files=UnwantedFiles2
+    },
+    {reply, ok, SN, SD1};
 
 handle_sync_event({set_wishes, NewWishes}, _From, SN, 
     SD=#state{id=Id, wishes=OldWishes, valid=ValidPieces}) ->
@@ -621,7 +665,13 @@ do_registration(S=#state{id=Id, torrent=Torrent, hashes=Hashes}) ->
     etorrent_table:statechange_torrent(Id, checking),
     etorrent_event:checking_torrent(Id),
     ValidPieces = read_and_check_torrent(Id, Hashes, FastResumePL),
-    Left = calculate_amount_left(Id, ValidPieces, Torrent),
+    UnwantedFiles0 = proplists:get_value(unwanted_files, FastResumePL, []),
+    %% Get a list of file ids.
+    UnwantedFiles = ordsets:from_list(UnwantedFiles0),
+    %% Convert file ids to pieceset.
+    UnwantedPieces = etorrent_info:get_mask(Id, UnwantedFiles),
+    %% Left is a size of an intersection of invalid and wanted pieces in bytes
+    Left = calculate_amount_left(Id, ValidPieces, UnwantedPieces, Torrent),
     NumberOfPieces = etorrent_pieceset:capacity(ValidPieces),
     NumberOfValidPieces = etorrent_pieceset:size(ValidPieces),
     NumberOfMissingPieces = NumberOfPieces - NumberOfValidPieces,
@@ -649,11 +699,14 @@ do_registration(S=#state{id=Id, torrent=Torrent, hashes=Hashes}) ->
     WishRecordSet = try
         validate_wishes(Id, to_records(Wishes), [], ValidPieces)
         catch error:Reason ->
-        lager:error("Wishes from fast_resume "
-            "module are invalidate~n ~w", [Reason]),
+        lager:error("Wishes from fast_resume module are invalid~n  Reason: ~w",
+                    [Reason]),
         []
     end,
-    NewState = S#state{ valid=ValidPieces, wishes = WishRecordSet },
+    NewState = S#state{valid=ValidPieces,
+                       unwanted=UnwantedPieces,
+                       wishes=WishRecordSet,
+                       unwanted_files=UnwantedFiles},
 
     case TState of
         paused ->
@@ -665,7 +718,8 @@ do_registration(S=#state{id=Id, torrent=Torrent, hashes=Hashes}) ->
     end.
 
 
-do_start(S=#state{id=Id, torrent=Torrent, valid=ValidPieces, wishes=Wishes}) ->
+do_start(S=#state{id=Id, torrent=Torrent, valid=ValidPieces, wishes=Wishes,
+                  unwanted=UnwantedPieces}) ->
     Masks = wishes_to_masks(Wishes),
 
     %% Start the progress manager
@@ -675,7 +729,8 @@ do_start(S=#state{id=Id, torrent=Torrent, valid=ValidPieces, wishes=Wishes}) ->
           Id,
           Torrent,
           ValidPieces,
-          Masks),
+          Masks,
+          UnwantedPieces),
 
     %% Update the tracking map. This torrent has been started.
     %% Altering this state marks the point where we will accept
@@ -709,9 +764,10 @@ do_start(S=#state{id=Id, torrent=Torrent, valid=ValidPieces, wishes=Wishes}) ->
 %% --------------------------------------------------------------------
 
 %% @todo Does this function belong here?
-calculate_amount_left(TorrentID, Valid, Torrent) ->
+calculate_amount_left(TorrentID, Valid, Unwanted, Torrent) ->
     Total = etorrent_metainfo:get_length(Torrent),
-    Indexes = etorrent_pieceset:to_list(Valid),
+    Wanted = etorrent_piecestate:difference(Valid, Unwanted),
+    Indexes = etorrent_pieceset:to_list(Wanted),
     Sizes = [begin
         {ok, Size} = etorrent_io:piece_size(TorrentID, I),
         Size

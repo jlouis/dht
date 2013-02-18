@@ -15,6 +15,7 @@
 
 -export([get_mask/2,
          get_mask/4,
+         mask_to_filelist/2,
          tree_children/2,
          minimize_filelist/2]).
 
@@ -46,6 +47,8 @@
 -type torrent_id() :: etorrent_types:torrent_id().
 -type file_id() :: etorrent_types:file_id().
 -type pieceset() :: etorrent_pieceset:t().
+
+-define(ROOT_FILE_ID, 0).
 
 -record(state, {
     torrent :: torrent_id(),
@@ -143,6 +146,14 @@ get_mask(TorrentID, FileID, PartStart, PartSize)
     DirPid = await_server(TorrentID),
     {ok, Mask} = gen_server:call(DirPid, {get_mask, FileID, PartStart, PartSize}),
     Mask.
+
+
+%% @doc Returns ids of each file, all pieces of that are in the pieceset `Mask'.
+mask_to_filelist(TorrentID, Mask) ->
+    DirPid = await_server(TorrentID),
+    {ok, List} = gen_server:call(DirPid, {mask_to_filelist, Mask}),
+    List.
+
 
 
 piece_size(TorrentID) when is_integer(TorrentID) ->
@@ -387,7 +398,13 @@ handle_call({get_piece, PieceNum}, _, State=#state{metadata_pieces=Pieces})
         when PieceNum < tuple_size(Pieces) ->
     {reply, {ok, element(PieceNum+1, Pieces)}, State};
 handle_call({get_piece, PieceNum}, _, State=#state{}) ->
-    {reply, {ok, {bad_piece, PieceNum}}, State}.
+    {reply, {ok, {bad_piece, PieceNum}}, State};
+
+handle_call({mask_to_filelist, Mask}, _, State=#state{}) ->
+    #state{static_file_info=Arr} = State,
+    List = mask_to_filelist_int(Mask, Arr),
+    {reply, {ok, List}, State}.
+
 
 %% @private
 handle_cast(Msg, State) ->
@@ -729,3 +746,32 @@ metadata_pieces(TorrentBin, From, MetadataSize)
 %% Last.
 metadata_pieces(TorrentBin, From, MetadataSize) ->
     [binary:part(TorrentBin, {From,MetadataSize})].
+
+
+%% Internal.
+mask_to_filelist_int(Mask, Arr) ->
+    Root = array:get(?ROOT_FILE_ID, Arr),
+    case Root of
+        %% Everything is unwanted.
+        #file_info{pieces=Mask} ->
+            [0];
+        #file_info{children=SubFileIds} ->
+            mask_to_filelist_rec(SubFileIds, Mask, Arr)
+    end.
+
+%% Matching all files starting from Root recursively.
+mask_to_filelist_rec([FileId|FileIds], Mask, Arr) ->
+    #file_info{pieces=FileMask, children=SubFileIds} = array:get(FileId, Arr),
+    Diff = etorrent_pieceset:difference(FileMask, Mask),
+    case etorrent_pieceset:is_empty(Diff) of
+        true ->
+            %% The whole file is matched.
+            [FileId|mask_to_filelist_rec(FileIds, Mask, Arr)];
+        false ->
+            %% Check childrens.
+            mask_to_filelist_rec(SubFileIds, Mask, Arr) ++
+            mask_to_filelist_rec(FileIds, Mask, Arr)
+    end;
+mask_to_filelist_rec([], _Mask, _Arr) ->
+    [].
+
