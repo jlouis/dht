@@ -48,6 +48,7 @@
 -record(state, {
     torrent_id = exit(required) :: integer(),
     info_hash = exit(required) ::  binary(),
+    metadata_size :: non_neg_integer(),
     socket = none  :: none | inet:socket(),
     send_pid :: pid(),
 
@@ -292,12 +293,14 @@ init([TrackerUrl, LocalPeerID, InfoHash, TorrentID, {IP, Port}, Caps, Socket]) -
     Config1  = etorrent_peerconf:localid(LocalPeerID, Config0),
     Config   = etorrent_peerconf:extended(Extended, Config1),
 
+    MetadataSize = etorrent_info:metadata_size(TorrentID),
 
     ok = etorrent_table:new_peer(TrackerUrl, IP, Port, TorrentID, self(), leeching),
     ok = etorrent_choker:monitor(self()),
     State = #state{
         torrent_id=TorrentID,
         info_hash=InfoHash,
+        metadata_size=MetadataSize,
         socket=Socket,
         download=Download,
         remote=Remote,
@@ -728,11 +731,12 @@ handle_message(Unknown, State) ->
 
 
 handle_ext_message({metadata_request, PieceNum}, State) ->
-    #state{torrent_id=TorrentID, extensions=Exts, send_pid=SendPid} = State,
+    #state{torrent_id=TorrentID, extensions=Exts, send_pid=SendPid,
+           metadata_size=MetadataSize} = State,
     %% Get data.
     PieceData = etorrent_info:get_piece(TorrentID, PieceNum),
     %% Form an answer.
-    Answer = {metadata_data, PieceNum, byte_size(PieceData), PieceData},
+    Answer = {metadata_data, PieceNum, MetadataSize, PieceData},
     {ok, Encoded} = etorrent_ext:encode_msg(ut_metadata, Answer, Exts),
     %% Send the answer.
     etorrent_peer_send:ext_msg(SendPid, Encoded),
@@ -743,19 +747,19 @@ handle_ext_message(_, _State) ->
 % @doc Initialize the connection, depending on the way the connection is
 connection_initialize(incoming, State) ->
     #state{
-        torrent_id=TorrentID,
         socket=Socket,
         info_hash=Infohash,
         local=Local,
         config=Config,
-        extensions=Exts} = State,
+        extensions=Exts,
+        metadata_size=MetadataSize} = State,
     Extended = etorrent_peerconf:extended(Config),
     LocalID = etorrent_peerconf:localid(Config),
     Valid = etorrent_peerstate:pieces(Local),
     case etorrent_proto_wire:complete_handshake(Socket, Infohash, LocalID) of
         ok ->
-            SendPid = complete_connection_setup(Socket, TorrentID, Extended, 
-                                                Valid, Exts),
+            SendPid = complete_connection_setup(Socket, Extended, 
+                                                Valid, Exts, MetadataSize),
             NewState = State#state{send_pid=SendPid},
             {ok, NewState};
         {error, stop} ->
@@ -764,38 +768,36 @@ connection_initialize(incoming, State) ->
 
 connection_initialize(outgoing, State) ->
     #state{
-        torrent_id=TorrentID,
         socket=Socket,
         local=Local,
         config=Config,
-        extensions=Exts} = State,
+        extensions=Exts,
+        metadata_size=MetadataSize} = State,
     Extended = etorrent_peerconf:extended(Config),
     Valid = etorrent_peerstate:pieces(Local),
-    SendPid = complete_connection_setup(Socket, TorrentID, Extended, 
-                                        Valid, Exts),
+    SendPid = complete_connection_setup(Socket, Extended,
+                                        Valid, Exts, MetadataSize),
     NewState = State#state{send_pid=SendPid},
     {ok, NewState}.
 
 %%--------------------------------------------------------------------
-%% Function: complete_connection_setup(Socket, TorrentId, ExtendedMSG)
-%%              -> SendPid
 %% Description: Do the bookkeeping needed to set up the peer:
 %%    * enable passive messaging mode on the socket.
 %%    * Start the send pid
 %%    * Send off the bitfield
 %%--------------------------------------------------------------------
-complete_connection_setup(Socket, TorrentID, Extended, Valid, Exts) ->
+complete_connection_setup(Socket, Extended, Valid, Exts, MetadataSize) ->
     SendPid = etorrent_peer_send:await_server(Socket),
     Bitfield = etorrent_pieceset:to_binary(Valid),
-    Extra = add_metadata_size(Exts, TorrentID),
+    Extra = add_metadata_size(Exts, MetadataSize),
     Extended andalso etorrent_peer_send:
         ext_setup(SendPid, etorrent_ext:extension_list(Exts), Extra),
     etorrent_peer_send:bitfield(SendPid, Bitfield),
     SendPid.
 
 
-add_metadata_size(Exts, TorrentID) ->
-    [{<<"metadata_size">>, etorrent_info:metadata_size(TorrentID)}
+add_metadata_size(Exts, MetadataSize) ->
+    [{<<"metadata_size">>, MetadataSize}
     || etorrent_ext:is_locally_supported(ut_metadata, Exts)].
 
         

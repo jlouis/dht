@@ -81,10 +81,11 @@ await_respond([_|_]=Workers, TagRef) ->
         {TagRef, Pid, {ok, Metadata}} ->
             [exit(Worker, normal) || Worker <- Workers -- [Pid]],
             {ok, Metadata};
-        {TagRef, Pid, {error, _reason}} ->
+        {TagRef, Pid, {error, Reason}} ->
+            lager:debug("Worker Pid ~p exited with reason ~p~n", [Pid, Reason]),
             await_respond(Workers -- [Pid], TagRef)
        ;Unmatched ->
-            io:format(user, "Unmatched message: ~p~n", [Unmatched]),
+            lager:debug("Unmatched message: ~p~n", [Unmatched]),
             await_respond(Workers, TagRef)
         after ?DEFAULT_AWAIT_TIMEOUT ->
             [exit(Worker, normal) || Worker <- Workers],
@@ -111,16 +112,16 @@ connect_and_download_metainfo(LocalPeerId, IP, Port, InfoHashBin) ->
     try
         {ok, Capabilities, _RemotePeerId} = etorrent_proto_wire:
             initiate_handshake(Socket, LocalPeerId, InfoHashBin),
-        io:format(user, "Capabilities: ~p~n", [Capabilities]),
+        lager:debug("Capabilities: ~p~n", [Capabilities]),
         assert_extended_messaging_support(Capabilities),
         {ok, HeaderMsg} = extended_messaging_handshake(Socket),
-        io:format(user, "Extension header: ~p~n", [HeaderMsg]),
+        lager:debug("Extension header: ~p~n", [HeaderMsg]),
         MetadataExtId = metadata_ext_id(HeaderMsg),
         assert_metadata_extension_support(MetadataExtId),
         MetadataSize = metadata_size(HeaderMsg),
         assert_valid_metadata_size(MetadataSize),
         {ok, Metadata} = download_metadata(Socket, MetadataExtId, MetadataSize),
-        assert_valid_metadata(Metadata, MetadataSize, InfoHashBin),
+        assert_valid_metadata(MetadataSize, InfoHashBin, Metadata),
 %       io:format(user, "Dowloaded metadata: ~n~p~n", [Metadata]),
         {ok, Metadata}
     after
@@ -148,31 +149,34 @@ send_ext_msg(Socket, ExtMsgId, EncodedExtMsg) ->
         etorrent_proto_wire:send_msg(Socket, {extended, ExtMsgId, EncodedExtMsg}).
 
 download_metadata(Socket, MetadataExtId, MetadataSize) ->
-    download_metadata(Socket, MetadataExtId, MetadataSize, 0, <<>>).
+    download_metadata(Socket, MetadataExtId, MetadataSize, MetadataSize, 0, <<>>).
 
-download_metadata(Socket, MetadataExtId, LeftSize, PieceNum, Data) ->
+download_metadata(Socket, MetadataExtId, LeftSize, MetadataSize, PieceNum, Data) ->
     send_ext_msg(Socket, MetadataExtId, piece_request_msg(PieceNum)),
     {ok, RespondMsgBin} = receive_ext_msg(Socket, ?UT_METADATA_EXT_ID),
     {RespondMsg, Piece} = etorrent_bcoding2:decode(RespondMsgBin),
     case decode_metadata_respond(RespondMsg) of
         {data, PieceNum, TotalSize} ->
-            assert_total_size(LeftSize, TotalSize),
+            PieceSize = byte_size(Piece),
+            assert_total_size(MetadataSize, TotalSize),
+            assert_piece_size(LeftSize, PieceSize),
             Data2 = <<Data/binary, Piece/binary>>,
-            case LeftSize - TotalSize of
+            case LeftSize - PieceSize of
                 0 -> {ok, Data2};
                 LeftSize2 when LeftSize2 > 0 ->
-                    download_metadata(Socket, MetadataExtId, LeftSize2, PieceNum+1, Data2)
+                    download_metadata(Socket, MetadataExtId, LeftSize2, 
+                                      MetadataSize, PieceNum+1, Data2)
             end
     end.
 
 receive_ext_msg(Socket, MetadataExtId) ->
     case receive_msg(Socket) of
         {ok, {extended, MetadataExtId, MsgBin}} ->
-%           io:format(user, "Ext message was received: ~n~p~n", [MsgBin]),
+%           lager:debug("Ext message was received: ~n~p~n", [MsgBin]),
             {ok, MsgBin};
         {ok, OtherMess} ->
-            io:format(user, "Unexpected message was received:~n~p~n",
-                      [OtherMess]),
+%           lager:debug("Unexpected message was received:~n~p~n",
+%                     [OtherMess]),
             receive_ext_msg(Socket, MetadataExtId)
     end.
 
@@ -245,21 +249,29 @@ header_example() ->
 
 %% If the piece is the last piece of the metadata, it may be less than 16kiB.
 %% If it is not the last piece of the metadata, it MUST be 16kiB.
-assert_total_size(LeftSize, ?METADATA_BLOCK_BYTE_SIZE)
+assert_piece_size(LeftSize, ?METADATA_BLOCK_BYTE_SIZE)
     when LeftSize >= ?METADATA_BLOCK_BYTE_SIZE ->
     ok;
-assert_total_size(LeftSize, LeftSize) ->
+assert_piece_size(LeftSize, LeftSize) ->
     %% Last piece
     ok.
 
+assert_total_size(TotalSize, TotalSize) ->
+    ok;
+assert_total_size(MetadataSize, TotalSize) ->
+    error({bad_total_size, [{expected, MetadataSize}, {passed, TotalSize}]}).
 
-assert_valid_metadata(Metadata, MetadataSize, InfoHashBin) when
+
+assert_valid_metadata(MetadataSize, InfoHashBin, Metadata) when
     byte_size(Metadata) =:= MetadataSize ->
     case crypto:sha(Metadata) of
         InfoHashBin -> ok;
         OtherHash ->
             error({bad_hash, [{expected, InfoHashBin}, {generated, OtherHash}]})
-    end.
+    end;
+assert_valid_metadata(MetadataSize, _InfoHashBin, Metadata) ->
+    error({bad_size, [{expected, MetadataSize},
+                      {generated, byte_size(Metadata)}]}).
 
 
 
