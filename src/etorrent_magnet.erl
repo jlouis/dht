@@ -3,6 +3,7 @@
 -module(etorrent_magnet).
 -export([download_meta_info/2,
          save_meta_info/2,
+         save_meta_info/3,
          parse_url/1]).
 
 -ifdef(TEST).
@@ -58,7 +59,7 @@ analyse_params([{K,V}|Params], XT, DN, TRS) ->
 analyse_params([], undefined, _DN, _TRS) ->
     error(undefined_xt);
 analyse_params([], XT, DN, TRS) ->
-    {xt_to_integer(list_to_binary(XT)), DN, lists:reverse(lists:usort(TRS))}.
+    {xt_to_integer(list_to_binary(XT)), DN, lists:reverse(TRS)}.
 
 xt_to_integer(<<"urn:btih:", Base16:40/binary>>) ->
     list_to_integer(binary_to_list(Base16), 16);
@@ -73,13 +74,26 @@ xt_to_integer(<<"urn:btih:", Base32:32/binary>>) ->
 -type portnum() :: etorrent_types:portnum().
 -type bcode() :: etorrent_types:bcode().
 
-%% @doc Write a value, returned from {@link download_meta_info/2} into a file.
 -spec save_meta_info(Info::binary(), Out::file:filename()) -> ok.
 save_meta_info(Info, Out) ->
+    save_meta_info(Info, Out, []).
+
+
+%% @doc Write a value, returned from {@link download_meta_info/2} into a file.
+-spec save_meta_info(Info::binary(), Out::file:filename(),
+                     Trackers::[string()]) -> ok.
+save_meta_info(Info, Out, Trackers) ->
     {ok, InfoDecoded} = etorrent_bcoding:decode(Info),
-    Data = [{<<"info">>, InfoDecoded}],
+    Data = add_trackers(Trackers) ++ [{<<"info">>, InfoDecoded}],
     Encoded = etorrent_bcoding:encode(Data),
     file:write_file(Out, Encoded).          
+
+
+add_trackers([T]) ->
+    [{<<"announce">>, T}];
+add_trackers([T|_]=Ts) ->
+    [{<<"announce">>, T}, {<<"announce-list">>, [Ts]}];
+add_trackers([]) -> [].
 
 
 -spec download_meta_info(LocalPeerId::peerid(), InfoHashNum::infohash_int()) -> binary().
