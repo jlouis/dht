@@ -1,11 +1,20 @@
 %% Metadata downloader.
+%% http://wiki.vuze.com/w/Magnet_link
 -module(etorrent_magnet).
 -export([download_meta_info/2,
-         save_meta_info/2]).
+         save_meta_info/2,
+         parse_url/1]).
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 -define(DEFAULT_CONNECT_TIMEOUT, 5000).
 -define(DEFAULT_RECEIVE_TIMEOUT, 5000).
 -define(DEFAULT_AWAIT_TIMEOUT, 25000).
 -define(METADATA_BLOCK_BYTE_SIZE, 16384). %% 16KiB (16384 Bytes)
+
+-define(URL_PARSER, mochiweb_util).
 
 %% The extension message IDs are the IDs used to send the extension messages
 %% to the peer sending this handshake.
@@ -16,6 +25,45 @@
 %% It will be passed during handshake.
 %% It can be any from 1..255.
 -define(UT_METADATA_EXT_ID, 15).
+
+
+%% @doc Parse a magnet link into a tuple "{Infohash, Description, Trackers}".
+-spec parse_url(Url) -> {XT, DN, [TR]} when
+    Url :: string() | binary(),
+    XT :: non_neg_integer(),
+    DN :: string() | undefined,
+    TR :: string().
+parse_url(Url) ->
+    {Scheme, _Netloc, _Path, Query, _Fragment} = ?URL_PARSER:urlsplit(Url),
+    case Scheme of
+        "magnet" ->
+            %% Get a parameter proplist. Keys and values are strings.
+            Params = ?URL_PARSER:parse_qs(Query),
+            analyse_params(Params, undefined, undefined, []);
+        _ ->
+            error({unknown_scheme, Scheme, Url})
+    end.
+
+analyse_params([{K,V}|Params], XT, DN, TRS) ->
+    case K of
+        "xt" ->
+            analyse_params(Params, V, DN, TRS);
+        "dn" ->
+            analyse_params(Params, XT, V, TRS);
+        "tr" ->
+            analyse_params(Params, XT, DN, [V|TRS]);
+        _ ->
+            lager:error("Unknown magnet link parameter ~p.", [K])
+    end;
+analyse_params([], undefined, _DN, _TRS) ->
+    error(undefined_xt);
+analyse_params([], XT, DN, TRS) ->
+    {xt_to_integer(list_to_binary(XT)), DN, lists:reverse(lists:usort(TRS))}.
+
+xt_to_integer(<<"urn:btih:", Base16:40/binary>>) ->
+    list_to_integer(binary_to_list(Base16), 16);
+xt_to_integer(<<"urn:btih:", Base32:32/binary>>) ->
+    etorrent_utils:base32_binary_to_integer(Base32).
 
 
 -type peerid() :: <<_:160>>.
@@ -285,3 +333,27 @@ m_block() ->
 
 integer_hash_to_literal(InfoHashInt) when is_integer(InfoHashInt) ->
     io_lib:format("~40.16.0B", [InfoHashInt]).
+
+
+-ifdef(TEST).
+
+colton_url() ->
+    "magnet:?xt=urn:btih:b48ed25b01668963e1f0ff782be383c5e7060eb4&"
+    "dn=Jonathan+Coulton+-+Discography&"
+    "tr=udp%3A%2F%2Ftracker.openbittorrent.com%3A80&"
+    "tr=udp%3A%2F%2Ftracker.publicbt.com%3A80&"
+    "tr=udp%3A%2F%2Ftracker.istole.it%3A6969&"
+    "tr=udp%3A%2F%2Ftracker.ccc.de%3A80".
+
+parse_url_test_() ->
+    [?_assertEqual(parse_url("magnet:?xt=urn:btih:IXE2K3JMCPUZWTW3YQZZOIB5XD6KZIEQ"),
+                   {398417223648295740807581630131068684170926268560, undefined, []})
+    ,?_assertEqual(parse_url(colton_url()),
+                   {1030803369114085151184244669493103882218552823476,
+                                   "Jonathan Coulton - Discography",
+                                   ["udp://tracker.publicbt.com:80",
+                                    "udp://tracker.openbittorrent.com:80",
+                                    "udp://tracker.istole.it:6969",
+                                    "udp://tracker.ccc.de:80"]})
+    ].
+-endif.
