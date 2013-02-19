@@ -12,7 +12,9 @@
 	 leech_transmission/0, leech_transmission/1,
      bep9/0, bep9/1]).
 
--define(TESTFILE30M, "test_file_30M.random").
+-define(TESTFILE30M,  "test_file_30M.random").
+-define(TESTDIR2x30M, "test_dir_2x30M").
+
 -define(ET_WORK_DIR, "work-et").
 -define(TR_WORK_DIR, "work-tr").
 
@@ -36,11 +38,13 @@ init_per_suite(Config) ->
     %% files we will later rely on for fetching, this is ok I think.
     Directory = ?config(data_dir, Config),
     io:format("Data directory: ~s~n", [Directory]),
-    TestFn = ?TESTFILE30M,
-    Fn = filename:join([Directory, TestFn]),
+    Fn  = filename:join([Directory, ?TESTFILE30M]),
+    Dir = filename:join([Directory, ?TESTDIR2x30M]),
     ensure_random_file(Fn),
+    ensure_random_dir(Dir),
     file:set_cwd(Directory),
-    TorrentFn = ensure_torrent_file(TestFn),
+    TorrentFn  = ensure_torrent_file(Fn),
+    TorrentDir = ensure_torrent_file(Dir),
     %% Literal infohash.
     {ok, TorrentIH} = etorrent_dotdir:info_hash(TorrentFn),
     io:format(user, "Infohash is ~p.~n", [TorrentIH]),
@@ -503,14 +507,23 @@ ensure_random_file(Fn) ->
     end.
 
 create_torrent_file(FName) ->
-    random:seed({137, 314159265, 1337}),
-    Bin = create_binary(30*1024*1024, <<>>),
+    Bin = crypto:rand_bytes(30*1024*1024),
     file:write_file(FName, Bin).
 
-create_binary(0, Bin) -> Bin;
-create_binary(N, Bin) ->
-    Byte = random:uniform(256) - 1,
-    create_binary(N-1, <<Bin/binary, Byte:8/integer>>).
+
+ensure_random_dir(DName) ->
+    case filelib:is_dir(DName) of
+	true ->
+	    ok;
+	false ->
+        file:make_dir(DName)
+    end,
+    File1 = filename:join(DName, "xyz.bin"),
+    File2 = filename:join(DName, "abc.bin"),
+    ensure_random_file(File1),
+    ensure_random_file(File2),
+    ok.
+
 
 sha1_file(F) ->
     Ctx = crypto:sha_init(),

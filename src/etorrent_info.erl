@@ -136,7 +136,12 @@ get_mask(TorrentID, [_|_] = IdList) ->
     %% Do map
     Masks = lists:map(MapFn, IdList),
     %% Do reduce
-    etorrent_pieceset:union(Masks).
+    etorrent_pieceset:union(Masks);
+
+get_mask(TorrentID, []) ->
+    DirPid = await_server(TorrentID),
+    {ok, PieceCount} = gen_server:call(DirPid, piece_count),
+    etorrent_pieceset:empty(PieceCount).
    
  
 %% @doc Build a mask of the part of the file in the torrent.
@@ -275,8 +280,7 @@ init([TorrentID, Torrent]) ->
         static_file_info=Static,
         total_size=TLen, 
         piece_size=PLen,
-        piece_count=(TLen div PLen) + 
-            (case TLen rem PLen of 0 -> 0; _ -> 1 end),
+        piece_count=byte_to_piece_count(TLen, PLen),
         metadata_size = MetadataSize,
         metadata_pieces = list_to_tuple(metadata_pieces(TorrentBin, 0, MetadataSize))
     },
@@ -331,8 +335,7 @@ handle_call({get_mask, FileID, PartStart, PartSize}, _, State) ->
 
             %% Start from beginning of the torrent
             From = FileStart + PartStart,
-            To = From + PartSize,
-            Mask = make_mask(From, To, PLen, TLen),
+            Mask = make_mask(From, PartSize, PLen, TLen),
             Set = etorrent_pieceset:from_bitstring(Mask),
 
             {reply, {ok, Set}, State}
@@ -434,13 +437,12 @@ code_change(_OldVsn, State, _Extra) ->
 collect_static_file_info(Torrent) ->
     PieceLength = etorrent_metainfo:get_piece_length(Torrent),
     FileLengths = etorrent_metainfo:file_path_len(Torrent),
-    Acc = [],
-    Pos = 0,
     %% Rec1, Rec2, .. are lists of nodes.
     %% Calculate positions, create records. They are still not prepared.
-    {TLen, Rec1} = flen_to_record(FileLengths, Pos, Acc),
+    {TLen, Rec1} = flen_to_record(FileLengths, 0, []),
     %% Add directories as additional nodes.
-    Rec2 = add_directories(Rec1),
+    [#file_info{size=TLen2}|_] = Rec2 = add_directories(Rec1),
+    assert_total_length(TLen, TLen2),
     %% Fill `pieces' field.
     %% A mask is a set of pieces which contains the file.
     Rec3 = fill_pieces(Rec2, PieceLength, TLen),
@@ -460,7 +462,7 @@ flen_to_record([{Name, FLen} | T], From, Acc) ->
     flen_to_record(T, To, [X|Acc]);
 
 flen_to_record([], TotalLen, Acc) ->
-    {TotalLen+1, lists:reverse(Acc)}.
+    {TotalLen, lists:reverse(Acc)}.
 
 
 %% @private
@@ -575,8 +577,7 @@ add_directories_([H|T], Idx, Cur, Children, Acc) ->
 %% @private
 fill_pieces(RecList, PLen, TLen) ->
     F = fun(#file_info{position = From, size = Size} = Rec) ->
-            To = From + Size,
-            Mask = make_mask(From, To, PLen, TLen),
+            Mask = make_mask(From, Size, PLen, TLen),
             Set = etorrent_pieceset:from_bitstring(Mask),
             Rec#file_info{pieces = Set}
         end,
@@ -599,9 +600,8 @@ fill_ids_([], _Id, Acc) ->
 
 
 %% @private
-make_mask(From, To, PLen, TLen) 
-    when PLen =< TLen, From =< To, 
-           To  < TLen, From >= 0 ->
+make_mask(From, Size, PLen, TLen)
+    when PLen =< TLen, Size =< TLen, From >= 0, PLen > 0 ->
     %% __Bytes__: 1 <= From <= To <= TLen
     %%
     %% Calculate how many __pieces__ before, in and after the file.
@@ -609,17 +609,18 @@ make_mask(From, To, PLen, TLen)
     %% both into this file and into the next file.
     %% [0..X1 ) [X1..X2] (X2..MaxPieces]
     %% [before) [  in  ] (    after    ]
-    PTotal   = (TLen div PLen)  
-             + case TLen rem PLen of 0 -> 0; _ -> 1 end,
+    PTotal = byte_to_piece_count(TLen, PLen),
 
     %% indexing from 0
-    PFrom = From div PLen,
-    PTo   = To   div PLen,
+    PFrom  = byte_to_piece_index(From, PLen),
 
     PBefore = PFrom,
-    PIn     = PTo - PFrom + 1,
-    PAfter  = PTotal - PFrom - PIn,
-    <<0:PBefore, (bnot 0):PIn, 0:PAfter>>.
+    PIn     = byte_to_piece_count_beetween(From, Size, PLen),
+    PAfter  = PTotal - PIn - PBefore,
+    assert_positive(PBefore),
+    assert_positive(PIn),
+    assert_positive(PAfter),
+    <<0:PBefore, -1:PIn, 0:PAfter>>.
 
 
 %% @private
@@ -653,15 +654,32 @@ minimize_([], Acc) ->
 
 make_mask_test_() ->
     F = fun make_mask/4,
-    % make_index(From, To, PLen, TLen)
-    [?_assertEqual(F(2, 5,  4, 10), <<2#110:3>>)
-    ,?_assertEqual(F(2, 5,  3, 10), <<2#1100:4>>)
-    ,?_assertEqual(F(2, 5,  2, 10), <<2#01100:5>>)
-    ,?_assertEqual(F(2, 5,  1, 10), <<2#0011110000:10>>)
-    ,?_assertEqual(F(2, 5, 10, 10), <<1:1>>)
-    ,?_assertEqual(F(2, 5,  9, 10), <<1:1, 0:1>>)
-    ,?_assertEqual(F(0, 5,  3, 10), <<2#1100:4>>)
-    ,?_assertEqual(F(8, 9,  3, 10), <<2#0011:4>>)
+    % make_index(From, Size, PLen, TLen)
+    %% |0123|4567|89A-|
+    %% |--xx|x---|----|
+    [?_assertEqual(<<2#110:3>>        , F(2, 3,  4, 10))
+    %% |012|345|678|9A-|
+    %% |--x|xx-|---|---|
+    ,?_assertEqual(<<2#1100:4>>       , F(2, 3,  3, 10))
+    %% |01|23|45|67|89|A-|
+    %% |--|xx|x-|--|--|--|
+    ,?_assertEqual(<<2#01100:5>>      , F(2, 3,  2, 10))
+    %% |0|1|2|3|4|5|6|7|8|9|A|
+    %% |-|-|x|x|x|-|-|-|-|-|-|
+    ,?_assertEqual(<<2#0011100000:10>>, F(2, 3,  1, 10))
+    ,?_assertEqual(<<1:1>>            , F(2, 3, 10, 10))
+    ,?_assertEqual(<<1:1, 0:1>>       , F(2, 3,  9, 10))
+    %% |012|345|678|9A-|
+    %% |xxx|xx-|---|---|
+    ,?_assertEqual(<<2#1100:4>>       , F(0, 5,  3, 10))
+    %% |012|345|678|9A-|
+    %% |---|---|--x|---|
+    ,?_assertEqual(<<2#0010:4>>       , F(8, 1,  3, 10))
+    %% |012|345|678|9A-|
+    %% |---|---|--x|x--|
+    ,?_assertEqual(<<2#0011:4>>       , F(8, 2,  3, 10))
+    ,?_assertEqual(<<-1:30>>, F(0, 31457279,  1048576, 31457280))
+    ,?_assertEqual(<<-1:30>>, F(0, 31457280,  1048576, 31457280))
     ].
 
 add_directories_test_() ->
@@ -708,12 +726,14 @@ el(List, Pos) ->
 
 
 add_directories_test() ->
+    [Root|_] =
     add_directories(
         [#file_info{position=0, size=3, name=
     "BBC.7.BigToe/Eoin Colfer. Artemis Fowl/artemis_04.mp3"}
         ,#file_info{position=3, size=2, name=
     "BBC.7.BigToe/Eoin Colfer. Artemis Fowl. The Arctic Incident/artemis2_03.mp3"}
-        ]).
+        ]),
+    ?assertMatch(#file_info{position=0, size=5}, Root).
 
 % H = {file_info,undefined,
 %           "BBC.7.BigToe/Eoin Colfer. Artemis Fowl. The Arctic Incident/artemis2_03.mp3",
@@ -746,6 +766,67 @@ metadata_pieces(TorrentBin, From, MetadataSize)
 %% Last.
 metadata_pieces(TorrentBin, From, MetadataSize) ->
     [binary:part(TorrentBin, {From,MetadataSize})].
+
+
+assert_total_length(TLen, TLen) ->
+    ok;
+assert_total_length(TLen, TLen2) ->
+    error({assert_total_length, TLen, TLen2}).
+
+
+assert_positive(X) when X >= 0 ->
+    ok;
+assert_positive(X) ->
+    error({assert_positive, X}).
+
+
+byte_to_piece_count(TLen, PLen) ->
+    (TLen div PLen) + case TLen rem PLen of 0 -> 0; _ -> 1 end.
+
+byte_to_piece_index(TLen, PLen) ->
+    TLen div PLen.
+
+
+%% Bytes:  |0123|4567|89AB|
+%% Pieces: |0   |1   |2   |
+%% Set:    |---x|xxxx|xxx-|
+%% From:   3
+%% Size:   8
+%% PLen:   4
+%% Left:   1
+%% Right:  3
+%% Mid:    4
+%% PLeft:  1
+%% PRight: 1
+%% PMid:   1
+byte_to_piece_count_beetween(From, Size, PLen) ->
+    To     = From + Size,
+    Left   = case From rem PLen of 0 -> 0; X -> PLen - X end,
+    Right  = To rem PLen,
+    Mid    = Size - Left - Right,
+    PLeft  = case Left  of 0 -> 0; _ -> 1 end,
+    PRight = case Right of 0 -> 0; _ -> 1 end,
+    PMid   = Mid div PLen,
+    %% assert
+    0      = Mid rem PLen,
+    PMid + PLeft + PRight.
+
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+byte_to_piece_count_beetween_test_() ->
+    [?_assertEqual(3, byte_to_piece_count_beetween(3, 8, 4))
+    ,?_assertEqual(0, byte_to_piece_count_beetween(0, 0, 10))
+    ,?_assertEqual(1, byte_to_piece_count_beetween(0, 1, 10))
+    ,?_assertEqual(1, byte_to_piece_count_beetween(0, 9, 10))
+    ,?_assertEqual(1, byte_to_piece_count_beetween(0, 10, 10))
+    ,?_assertEqual(2, byte_to_piece_count_beetween(0, 11, 10))
+    ,?_assertEqual(2, byte_to_piece_count_beetween(1, 10, 10))
+    ,?_assertEqual(2, byte_to_piece_count_beetween(1, 11, 10))
+    ].
+
+-endif.
+
 
 
 %% Internal.

@@ -670,6 +670,7 @@ do_registration(S=#state{id=Id, torrent=Torrent, hashes=Hashes}) ->
     UnwantedFiles = ordsets:from_list(UnwantedFiles0),
     %% Convert file ids to pieceset.
     UnwantedPieces = etorrent_info:get_mask(Id, UnwantedFiles),
+    assert_valid_unwanted(UnwantedPieces, ValidPieces),
     %% Left is a size of an intersection of invalid and wanted pieces in bytes
     Left = calculate_amount_left(Id, ValidPieces, UnwantedPieces, Torrent),
     NumberOfPieces = etorrent_pieceset:capacity(ValidPieces),
@@ -765,8 +766,8 @@ do_start(S=#state{id=Id, torrent=Torrent, valid=ValidPieces, wishes=Wishes,
 
 %% @todo Does this function belong here?
 calculate_amount_left(TorrentID, Valid, Unwanted, Torrent) ->
-    Total = etorrent_metainfo:get_length(Torrent),
-    Wanted = etorrent_piecestate:difference(Valid, Unwanted),
+    Total   = etorrent_metainfo:get_length(Torrent),
+    Wanted  = etorrent_pieceset:difference(Valid, Unwanted),
     Indexes = etorrent_pieceset:to_list(Wanted),
     Sizes = [begin
         {ok, Size} = etorrent_io:piece_size(TorrentID, I),
@@ -875,3 +876,11 @@ hashes_to_binary_test_() ->
 
 
 -endif.
+
+
+
+assert_valid_unwanted(UnwantedPieces, ValidPieces) ->
+    UnwantedCount = etorrent_pieceset:capacity(UnwantedPieces),
+    ValidCount    = etorrent_pieceset:capacity(ValidPieces),
+    [error({assert_valid_unwanted, UnwantedCount, ValidCount})
+     || UnwantedCount =/= ValidCount].
