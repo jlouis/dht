@@ -16,6 +16,7 @@
 -export([get_mask/2,
          get_mask/4,
          mask_to_filelist/2,
+         mask_to_size/2,
          tree_children/2,
          minimize_filelist/2]).
 
@@ -159,7 +160,15 @@ mask_to_filelist(TorrentID, Mask) ->
     {ok, List} = gen_server:call(DirPid, {mask_to_filelist, Mask}),
     List.
 
-
+%% @doc Returns a size of the selected pieces in the pieceset in bytes.
+-spec mask_to_size(TorrentID, Mask) -> Size when
+    TorrentID :: torrent_id(),
+    Mask      :: pieceset(),
+    Size      :: non_neg_integer().
+mask_to_size(TorrentID, Mask) ->
+    DirPid = await_server(TorrentID),
+    {ok, Size} = gen_server:call(DirPid, {mask_to_size, Mask}),
+    Size.
 
 piece_size(TorrentID) when is_integer(TorrentID) ->
     DirPid = await_server(TorrentID),
@@ -406,7 +415,12 @@ handle_call({get_piece, PieceNum}, _, State=#state{}) ->
 handle_call({mask_to_filelist, Mask}, _, State=#state{}) ->
     #state{static_file_info=Arr} = State,
     List = mask_to_filelist_int(Mask, Arr),
-    {reply, {ok, List}, State}.
+    {reply, {ok, List}, State};
+
+handle_call({mask_to_size, Mask}, _, State=#state{}) ->
+    #state{total_size=TLen, piece_size=PLen} = State,
+    Size = mask_to_size(Mask, TLen, PLen),
+    {reply, {ok, Size}, State}.
 
 
 %% @private
@@ -827,6 +841,55 @@ byte_to_piece_count_beetween_test_() ->
 
 -endif.
 
+%% The last piece has the same size as all others.
+mask_to_size(Mask, TLen, PLen) when TLen rem PLen =:= 0 ->
+    etorrent_pieceset:size(Mask) * PLen;
+mask_to_size(Mask, TLen, PLen) ->
+    case etorrent_pieceset:size(Mask) of
+        0 -> 0;
+        PCount ->
+            %% Pieces:
+            %% |1234|567-|
+            %% TLen = 7, PLen = 4, LastPieceId = 1
+            LastPieceId    = TLen div PLen,
+            LastPieceSize  = TLen rem PLen,
+            IsLastPieceSet = etorrent_pieceset:is_member(LastPieceId, Mask),
+            if IsLastPieceSet -> ((PCount - 1) * PLen) + LastPieceSize;
+                         %% All PCount pieces have the same size.
+                         true -> PCount * PLen 
+            end
+    end.
+
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+mask_to_size_test_() ->
+    %% Ids:    |01234|
+    %% Pieces: |----x|
+    [?_assert(etorrent_pieceset:is_member(4, etorrent_pieceset:from_list([4], 5)))
+    %% TLen: 18, PLen: 4, PCount: 5
+    %% Bytes: 3*4 + 2
+    %% Ids:    |01234|
+    %% Pieces: |-xx--|
+    %% Selected: 2*4
+    ,?_assertEqual(8, mask_to_size(etorrent_pieceset:from_list([1,2], 5), 18, 4))
+    %% Ids:    |01234|
+    %% Pieces: |-xx-x|
+    %% Selected: 2*4+2
+    ,?_assertEqual(10, mask_to_size(etorrent_pieceset:from_list([1,2,4], 5), 18, 4))
+    %% Ids:    |01234|
+    %% Pieces: |----x|
+    %% Selected: 2
+    ,?_assertEqual(2, mask_to_size(etorrent_pieceset:from_list([4], 5), 18, 4))
+    %% Ids:    |01234|
+    %% Pieces: |x----|
+    %% Selected: 4
+    ,?_assertEqual(4, mask_to_size(etorrent_pieceset:from_list([0], 5), 18, 4))
+    ,{"All pieces have the same size." %% 2 last pieces are selected.
+     ,?_assertEqual(20, mask_to_size(etorrent_pieceset:from_list([8,9], 10), 100, 10))}
+    ].
+
+-endif.
 
 
 %% Internal.
