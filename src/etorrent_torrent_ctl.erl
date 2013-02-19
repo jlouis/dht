@@ -49,6 +49,10 @@
          wish_piece/3,
          subscribe/3]).
 
+%% partical downloading API
+-export([unskip_file/2,
+         skip_file/2]).
+
 
 -type bcode() :: etorrent_types:bcode().
 -type torrent_id() :: etorrent_types:torrent_id().
@@ -566,10 +570,11 @@ handle_sync_event({skip_file, FileID}, _From, SN, SD) ->
     Min = etorrent_info:minimize_filelist(TorrentID, [FileID|UnwantedFiles]),
     FileMask = etorrent_info:get_mask(TorrentID, FileID),
     Unwanted2 = etorrent_pieceset:union(Unwanted, FileMask),
-    SD1 = #state{
+    SD1 = SD#state{
         unwanted=Unwanted2,
         unwanted_files=UnwantedFiles2
     },
+    etorrent_progress:set_unwanted(TorrentID, Unwanted2),
     {reply, ok, SN, SD1};
 
 handle_sync_event({unskip_file, FileID}, _From, SN, SD) ->
@@ -580,10 +585,11 @@ handle_sync_event({unskip_file, FileID}, _From, SN, SD) ->
     FileMask = etorrent_info:get_mask(TorrentID, FileID),
     Unwanted2 = etorrent_pieceset:difference(Unwanted, FileMask),
     UnwantedFiles2 = etorrent_info:mask_to_filelist(TorrentID, Unwanted2),
-    SD1 = #state{
+    SD1 = SD#state{
         unwanted=Unwanted2,
         unwanted_files=UnwantedFiles2
     },
+    etorrent_progress:set_unwanted(TorrentID, Unwanted2),
     {reply, ok, SN, SD1};
 
 handle_sync_event({set_wishes, NewWishes}, _From, SN, 

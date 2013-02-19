@@ -69,7 +69,8 @@
          num_valid/1]).
 
 %% wish API
--export([set_wishes/2]).
+-export([set_wishes/2,
+         set_unwanted/2]).
 
 -export([show_assigned/1,
          show_valid/1]).
@@ -356,9 +357,16 @@ show_valid(TorrentID) ->
     etorrent_pieceset:to_string(Valid).
 
 
+%% This function was disigned to be called from module `etorrent_torrent_ctl'.
 set_wishes(TorrentID, Wishes) ->
     ChunkSrv = lookup_server(TorrentID),
-    ok = gen_server:call(ChunkSrv, {set_wishes, Wishes}).
+    ok = gen_server:cast(ChunkSrv, {set_wishes, Wishes}).
+
+
+%% This function was disigned to be called from module `etorrent_torrent_ctl'.
+set_unwanted(TorrentID, Wishes) ->
+    ChunkSrv = lookup_server(TorrentID),
+    ok = gen_server:cast(ChunkSrv, {set_unwanted, Wishes}).
 
 
 stored_chunks(TorrentID) ->
@@ -574,9 +582,6 @@ handle_call({state_members, Piecestate}, _, State) ->
     end,
     {reply, Stateset, State};
 
-handle_call({set_wishes, NewWishes}, _, State=#state{pieces_valid=Valid}) ->
-    {reply, ok, State#state{user_wishes=minimize_masks(NewWishes, Valid, [])}};
-
 handle_call(stored_chunks, _, State=#state{chunks_stored=StoredChunks}) ->
     {reply, {ok, StoredChunks}, State}.
 
@@ -611,6 +616,12 @@ choose_best_piece_([PS|T], SO) ->
 
 
 %% @private
+handle_cast({set_wishes, NewWishes}, State=#state{pieces_valid=Valid}) ->
+    {noreply, State#state{user_wishes=minimize_masks(NewWishes, Valid, [])}};
+
+handle_cast({set_unwanted, NewUnwanted}, State) ->
+    {noreply, State#state{pieces_unwanted=NewUnwanted}};
+
 handle_cast(_, State) ->
     {stop, not_implemented, State}.
 
