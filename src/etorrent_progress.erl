@@ -223,7 +223,7 @@
 %% peers.
 %%
 %% # Unwanted pieces
-%% are used for partical downloading.
+%% are used for partial downloading.
 
 -spec register_server(torrent_id()) -> true.
 register_server(TorrentID) ->
@@ -506,7 +506,7 @@ handle_call({chunk, {request, Numchunks, Peerset, PeerPid}}, _, State) ->
             Wanted1 = etorrent_pieceset:difference(Unassigned, Unwanted),
             %% Check, if there are no unassigned (wanted) or started pieces.
             %% We will start endgame in the case, when there are some
-            %% unassigned, but unwanted pieces (in case of partical downloading).
+            %% unassigned, but unwanted pieces (in case of partial downloading).
             BeginEndgame = etorrent_pieceset:is_empty(Wanted1)
                 andalso etorrent_pieceset:is_empty(Begun),
             case BeginEndgame of

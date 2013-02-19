@@ -22,7 +22,8 @@
          check_torrent/1,
          valid_pieces/1,
          switch_mode/2,
-         update_tracker/1]).
+         update_tracker/1,
+         is_partial/1]).
 
 %% gproc registry entries
 -export([register_server/1,
@@ -49,7 +50,7 @@
          wish_piece/3,
          subscribe/3]).
 
-%% partical downloading API
+%% partial downloading API
 -export([unskip_file/2,
          skip_file/2]).
 
@@ -166,6 +167,8 @@ update_tracker(Pid) when is_pid(Pid) ->
     gen_fsm:send_event(Pid, update_tracker).
 
 
+is_partial(Pid) when is_pid(Pid) ->
+    gen_fsm:sync_send_all_state_event(Pid, is_partial).
 
 
 %% =====================\/=== Wish API ===\/===========================
@@ -540,6 +543,14 @@ handle_sync_event(valid_pieces, _, StateName, State) ->
     #state{valid=Valid} = State,
     {reply, {ok, Valid}, StateName, State};
 
+handle_sync_event(is_partial, _, StateName, State) ->
+    #state{unwanted=Unwanted, valid=Valid} = State,
+    %% It is partial, if there are unwanted, invalid pieces.
+    %% If all unwanted pieces are already downloaded (i.e. valid), than
+    %% it is not a partial downloading.
+    UnwantedInvalid = etorrent_pieceset:difference(Unwanted, Valid),
+    IsPartial = not etorrent_pieceset:is_empty(UnwantedInvalid),
+    {reply, {ok, IsPartial}, StateName, State};
 
 
 handle_sync_event({subscribe, Type, Value}, {_Pid, Ref} = Client, SN, SD) ->
@@ -561,7 +572,8 @@ handle_sync_event({skip_file, FileID}, _From, SN, SD) ->
     #state{
         id=TorrentID,
         unwanted=Unwanted,
-        unwanted_files=UnwantedFiles
+        unwanted_files=UnwantedFiles,
+        valid=Valid
     } = SD,
     Min = etorrent_info:minimize_filelist(TorrentID, [FileID|UnwantedFiles]),
     UnwantedFiles2 = ordsets:from_list(Min),
@@ -575,12 +587,14 @@ handle_sync_event({skip_file, FileID}, _From, SN, SD) ->
         unwanted_files=UnwantedFiles2
     },
     etorrent_progress:set_unwanted(TorrentID, Unwanted2),
+    update_left_metric(TorrentID, Unwanted, Unwanted2, Valid),
     {reply, ok, SN, SD1};
 
 handle_sync_event({unskip_file, FileID}, _From, SN, SD) ->
     #state{
         id=TorrentID,
-        unwanted=Unwanted
+        unwanted=Unwanted,
+        valid=Valid
     } = SD,
     FileMask = etorrent_info:get_mask(TorrentID, FileID),
     Unwanted2 = etorrent_pieceset:difference(Unwanted, FileMask),
@@ -590,6 +604,7 @@ handle_sync_event({unskip_file, FileID}, _From, SN, SD) ->
         unwanted_files=UnwantedFiles2
     },
     etorrent_progress:set_unwanted(TorrentID, Unwanted2),
+    update_left_metric(TorrentID, Unwanted, Unwanted2, Valid),
     {reply, ok, SN, SD1};
 
 handle_sync_event({set_wishes, NewWishes}, _From, SN, 
@@ -624,13 +639,18 @@ handle_info({piece, {stored, Index}}, started, State) ->
     #state{id=TorrentID, 
         hashes=Hashes, 
         progress=Progress, 
-        valid=ValidPieces} = State,
+        valid=ValidPieces,
+        unwanted=UnwantedPieces} = State,
     Piecehash = fetch_hash(Index, Hashes),
     case etorrent_io:check_piece(TorrentID, Index, Piecehash) of
         {ok, PieceSize} ->
             Peers = etorrent_peer_control:lookup_peers(TorrentID),
-            ok = etorrent_torrent:statechange(TorrentID, 
-                [{subtract_left, PieceSize}]),
+            case etorrent_pieceset:is_member(Index, UnwantedPieces) of
+                true -> ok; %% Already subtracted, when the piece was skipped.
+                false ->
+                    ok = etorrent_torrent:statechange(TorrentID, 
+                        [{subtract_left, PieceSize}])
+            end,
             ok = etorrent_piecestate:valid(Index, Peers),
             ok = etorrent_piecestate:valid(Index, Progress),
             NewValidState = etorrent_pieceset:insert(Index, ValidPieces),
@@ -890,3 +910,25 @@ assert_valid_unwanted(UnwantedPieces, ValidPieces) ->
     ValidCount    = etorrent_pieceset:capacity(ValidPieces),
     [error({assert_valid_unwanted, UnwantedCount, ValidCount})
      || UnwantedCount =/= ValidCount].
+
+
+
+%% Here, we calculating, how much the total and left size will change 
+%% of wanted parts is changed.
+update_left_metric(TorrentID, Unwanted, Unwanted2, Valid) ->
+    %% Before
+    Invalid       = etorrent_pieceset:difference(Unwanted, Valid),
+    InvalidBytes  = etorrent_info:mask_to_size(TorrentID, Invalid),
+
+    %% After
+    Invalid2      = etorrent_pieceset:difference(Unwanted2, Valid),
+    InvalidBytes2 = etorrent_info:mask_to_size(TorrentID, Invalid2),
+
+    %% If skip_file   was called, than Invalid >= Invalid2.
+    %% If unskip_file was called, than Invalid =< Invalid2.
+
+    %% Maybe positive (skip_file), or negative (unskip_file).
+    Sub = InvalidBytes2 - InvalidBytes,
+    lager:info("update_left_metric subtracted ~p left bytes.", [Sub]),
+
+    ok = etorrent_torrent:statechange(TorrentID, [{subtract_left, Sub}]).

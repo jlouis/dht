@@ -11,7 +11,7 @@
 	 seed_transmission/0, seed_transmission/1,
 	 leech_transmission/0, leech_transmission/1,
      bep9/0, bep9/1,
-     partical_downloading/0, partical_downloading/1
+     partial_downloading/0, partial_downloading/1
      ]).
 
 -define(TESTFILE30M,  "test_file_30M.random").
@@ -179,7 +179,7 @@ init_per_testcase(seed_leech, Config) ->
     spawn_seeder(Config),
     spawn_leecher(Config),
     Config;
-init_per_testcase(partical_downloading, Config) ->
+init_per_testcase(partial_downloading, Config) ->
     spawn_seeder(Config),
     spawn_leecher(Config),
     Config;
@@ -206,7 +206,7 @@ end_per_testcase(seed_leech, Config) ->
     stop_seeder(Config),
     stop_leecher(Config),
     ?line ok = file:delete(?config(et_leech_file, Config));
-end_per_testcase(partical_downloading, Config) ->
+end_per_testcase(partial_downloading, Config) ->
     stop_seeder(Config),
     stop_leecher(Config),
     ?line ok = del_dir_r(?config(et_leech_dir, Config));
@@ -264,7 +264,7 @@ middleman_configuration(Config, CConf, PrivDir, DownloadSuffix) ->
 groups() ->
     Tests = [
 %   Tests = [seed_transmission, seed_leech, leech_transmission, bep9,
-             partical_downloading],
+             partial_downloading],
     [{main_group, [shuffle], Tests}].
 
 all() ->
@@ -321,10 +321,10 @@ seed_leech(Config) ->
     sha1_file(?config(et_leech_file, Config))
 	=:= sha1_file(?config(seed_file, Config)).
 
-partical_downloading() ->
+partial_downloading() ->
     [{require, common_conf, etorrent_common_config}].
 
-partical_downloading(Config) ->
+partial_downloading(Config) ->
     io:format(user, "~n======START PARTICAL DOWNLOADING TEST CASE======~n", []),
     {Ref, Pid} = {make_ref(), self()},
     LeechNode = ?config(leech_node, Config),

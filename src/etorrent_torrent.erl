@@ -125,7 +125,7 @@ all() ->
                     | {tracker_report, integer(), integer()}.
 -spec statechange(integer(), [alteration()]) -> ok.
 statechange(Id, What) ->
-    gen_server:call(?SERVER, {statechange, Id, What}).
+    gen_server:cast(?SERVER, {statechange, Id, What}).
 
 %% @doc Return the number of pieces for torrent Id
 %% @end
@@ -220,10 +220,6 @@ handle_call({num_pieces, Id}, _F, S) ->
 	    end,
     {reply, Reply, S};
 
-handle_call({statechange, Id, What}, _F, S) ->
-    Q = state_change(Id, What),
-    {reply, Q, S};
-
 handle_call({decrease, Id}, _F, S) ->
     N = ets:update_counter(etorrent_c_pieces, Id, {#c_pieces.missing, -1}),
     case N of
@@ -239,6 +235,10 @@ handle_call(_M, _F, S) ->
 
 
 %% @private
+handle_cast({statechange, Id, What}, S) ->
+    state_change(Id, What),
+    {noreply, S};
+
 handle_cast(_Msg, S) ->
     {noreply, S}.
 
@@ -417,10 +417,11 @@ do_state_change([{subtract_left, Amount} | Rem], T) ->
         0 ->
             Id = T#torrent.id,
 	        ControlPid = etorrent_torrent_ctl:lookup_server(Id),
+			IsPartial = etorrent_torrent_ctl:is_partial(ControlPid),
 			etorrent_torrent_ctl:completed(ControlPid),
-            T#torrent { 
+            T#torrent {
                 left = 0, 
-                state = seeding,
+                state = if IsPartial -> seeding; true -> partial end,
                 rate_sparkline = [0.0] };
 
         N when N =< T#torrent.total ->
