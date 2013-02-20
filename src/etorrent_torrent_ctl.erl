@@ -239,7 +239,7 @@ subscribe(TorrentID, Type, Value) ->
     gen_fsm:sync_send_all_state_event(CtlSrv, {subscribe, Type, Value}).
 
   
-%% @doc Send information to the subscribed processes.
+%% @doc Send information to the subscribed processes about wishes.
 %% @private
 alert_subscribed(Clients) ->
     [Pid ! {completed, Ref} || {Pid, Ref} <- Clients].
@@ -462,7 +462,9 @@ started(check_torrent, State) ->
 started(completed, #state{id=Id, tracker_pid=TrackerPid} = S) ->
     etorrent_event:completed_torrent(Id),
     lager:info("Completed torrent #~p.", [Id]),
-    etorrent_tracker_communication:completed(TrackerPid),
+    %% Send `event=completed' to the tracker, if it is not a partial torrent.
+    [etorrent_tracker_communication:completed(TrackerPid)
+     || not is_partial_int(S)],
     {next_state, started, S};
 
 started(pause, #state{id=Id, interval=I} = SO) ->
@@ -544,13 +546,7 @@ handle_sync_event(valid_pieces, _, StateName, State) ->
     {reply, {ok, Valid}, StateName, State};
 
 handle_sync_event(is_partial, _, StateName, State) ->
-    #state{unwanted=Unwanted, valid=Valid} = State,
-    %% It is partial, if there are unwanted, invalid pieces.
-    %% If all unwanted pieces are already downloaded (i.e. valid), than
-    %% it is not a partial downloading.
-    UnwantedInvalid = etorrent_pieceset:difference(Unwanted, Valid),
-    IsPartial = not etorrent_pieceset:is_empty(UnwantedInvalid),
-    {reply, {ok, IsPartial}, StateName, State};
+    {reply, {ok, is_partial_int(State)}, StateName, State};
 
 
 handle_sync_event({subscribe, Type, Value}, {_Pid, Ref} = Client, SN, SD) ->
@@ -645,12 +641,13 @@ handle_info({piece, {stored, Index}}, started, State) ->
     case etorrent_io:check_piece(TorrentID, Index, Piecehash) of
         {ok, PieceSize} ->
             Peers = etorrent_peer_control:lookup_peers(TorrentID),
+            StateChange = 
             case etorrent_pieceset:is_member(Index, UnwantedPieces) of
-                true -> ok; %% Already subtracted, when the piece was skipped.
-                false ->
-                    ok = etorrent_torrent:statechange(TorrentID, 
-                        [{subtract_left, PieceSize}])
+                true -> []; %% Already subtracted, when the piece was skipped.
+                false -> [{subtract_left, PieceSize}]
             end,
+            ok = etorrent_torrent:statechange(TorrentID, 
+                [{subtract_left_or_skipped, PieceSize}|StateChange]),
             ok = etorrent_piecestate:valid(Index, Peers),
             ok = etorrent_piecestate:valid(Index, Progress),
             NewValidState = etorrent_pieceset:insert(Index, ValidPieces),
@@ -924,11 +921,26 @@ update_left_metric(TorrentID, Unwanted, Unwanted2, Valid) ->
     Invalid2      = etorrent_pieceset:difference(Unwanted2, Valid),
     InvalidBytes2 = etorrent_info:mask_to_size(TorrentID, Invalid2),
 
+    Wanted2       = etorrent_pieceset:inversion(Unwanted2),
+    WantedBytes2  = etorrent_info:mask_to_size(TorrentID, Wanted2),
+
     %% If skip_file   was called, than Invalid >= Invalid2.
     %% If unskip_file was called, than Invalid =< Invalid2.
 
     %% Maybe positive (skip_file), or negative (unskip_file).
     Sub = InvalidBytes2 - InvalidBytes,
     lager:info("update_left_metric subtracted ~p left bytes.", [Sub]),
+    lager:info("Want ~p bytes from ~p torrent.", [WantedBytes2, TorrentID]),
 
-    ok = etorrent_torrent:statechange(TorrentID, [{subtract_left, Sub}]).
+    ok = etorrent_torrent:statechange(TorrentID, [{subtract_left, Sub},
+                                                  {set_wanted, WantedBytes2}]).
+
+
+
+is_partial_int(State) ->
+    #state{unwanted=Unwanted, valid=Valid} = State,
+    %% It is partial, if there are unwanted, invalid pieces.
+    %% If all unwanted pieces are already downloaded (i.e. valid), than
+    %% it is not a partial downloading.
+    UnwantedInvalid = etorrent_pieceset:difference(Unwanted, Valid),
+    not etorrent_pieceset:is_empty(UnwantedInvalid).

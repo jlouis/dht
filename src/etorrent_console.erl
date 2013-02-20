@@ -30,7 +30,7 @@
 
 -record(torrent, {
     'id'         :: torrent_id(),
-    'total'      :: non_neg_integer(),
+    'wanted'     :: non_neg_integer(),
     'left'       :: integer(),
     'leechers'   :: integer(),
     'seeders'    :: integer(),
@@ -111,7 +111,7 @@ query_torrent_list() ->
 to_record(X) ->
     #torrent{
         id       = proplists:get_value('id', X),
-        total    = proplists:get_value('total', X),
+        wanted   = proplists:get_value(wanted, X),
         left     = proplists:get_value('left', X),
         leechers = proplists:get_value('leechers', X),
         seeders  = proplists:get_value('seeders', X),
@@ -202,9 +202,9 @@ print_torent_info(undefined, #torrent{id=Id}) ->
     log("STARTED torrent #~p.", [Id]);
 print_torent_info(#torrent{id=Id}, undefined) -> 
     log("STOPPED torrent #~p.", [Id]);
-print_torent_info(_Old, #torrent{state=Status, id=Id, left=Left, total=Total,
+print_torent_info(_Old, #torrent{state=Status, id=Id, left=Left, wanted=Wanted,
                                  speed_in=SpeedIn, speed_out=SpeedOut}) -> 
-    DownloadedPercent = (Total-Left)/Total * 100,
+    DownloadedPercent = (Wanted-Left)/Wanted * 100,
     log("~.10s #~p: ~6.2f% ~s in, ~s out", 
         [string:to_upper(atom_to_list(Status)), Id, DownloadedPercent, 
          pretty_speed(SpeedIn), pretty_speed(SpeedOut)]).

@@ -170,7 +170,9 @@ encode_event(Event) ->
 	none -> 0;
 	completed -> 1;
 	started -> 2;
-	stopped -> 3
+	stopped -> 3;
+    %% BEP-21
+	paused -> 0
     end.
 
 decode_action(I) ->
