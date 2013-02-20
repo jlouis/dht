@@ -273,7 +273,9 @@ get_piece(TorrentID, PieceNum) when is_integer(PieceNum) ->
 
 %% @private
 init([TorrentID, Torrent]) ->
+    lager:debug("Starting collect_static_file_info for ~p.", [TorrentID]),
     Info = collect_static_file_info(Torrent),
+    lager:debug("Static info is collected for ~p.", [TorrentID]),
 
     {Static, PLen, TLen} = Info,
 

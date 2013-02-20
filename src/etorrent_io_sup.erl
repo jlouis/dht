@@ -25,10 +25,12 @@ start_link(TorrentID, Torrent) ->
 
 %% @private
 init([TorrentID, Torrent]) ->
+    lager:debug("Init IO supervisor for ~p.", [TorrentID]),
     Files     = etorrent_metainfo:file_paths(Torrent),
     DirServer = directory_server_spec(TorrentID, Torrent),
     Dldir     = etorrent_config:download_dir(),
     FileSup   = file_server_sup_spec(TorrentID, Dldir, Files),
+    lager:debug("Completing initialization of IO supervisor for ~p.", [TorrentID]),
     {ok, {{one_for_one, 1, 60}, [FileSup, DirServer]}}.
 
 %% ----------------------------------------------------------------------

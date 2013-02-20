@@ -403,11 +403,16 @@ check_piece(TorrentID, Pieceindex, Piecehash) ->
 
 %% @private
 init([TorrentID, Torrent]) ->
+    lager:debug("Init IO directory server for ~p.", [TorrentID]),
     % Let the user define a limit on the amount of files
     % that will be open at the same time
+    lager:debug("Init IO directory server for ~p: max_files.", [TorrentID]),
     MaxFiles = etorrent_config:max_files(),
+    lager:debug("Init IO directory server for ~p: make_piece_map.", [TorrentID]),
     PieceMap  = make_piece_map(Torrent),
+    lager:debug("Init IO directory server for ~p: make_file_list.", [TorrentID]),
     Files     = make_file_list(Torrent),
+    lager:debug("Init IO directory server for ~p: ok.", [TorrentID]),
     true = register_directory(TorrentID),
     InitState = #state{
         torrent=TorrentID,

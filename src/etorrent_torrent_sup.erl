@@ -94,6 +94,7 @@ stop_assignor(Pid) ->
 
 %% @private
 init([{Torrent, TorrentPath, TorrentIH}, PeerID, TorrentID]) ->
+    lager:debug("Init ~p torrent supervisor.", [TorrentID]),
     Children = [
         info_spec(TorrentID, Torrent),
         io_sup_spec(TorrentID, Torrent),
