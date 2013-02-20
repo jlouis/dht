@@ -30,6 +30,8 @@
 -type ipaddr() :: etorrent_types:ipaddr().
 -type portnum() :: etorrent_types:portnum().
 -type action() :: connect | announce | scrape | error.
+%% `paused' is from BEP-21.
+%% `paused' is used by partial seeds, when wanted pieces are completed.
 -type event() :: none | completed | started | stopped.
 -type announce_opt() :: {interval | leechers | seeders, pos_integer()}.
 -type scrape_opt() :: {seeders | leechers | completed, pos_integer()}.
