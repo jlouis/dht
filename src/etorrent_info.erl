@@ -26,7 +26,8 @@
          file_size/2,         %
          piece_size/1,        %
          piece_count/1,       %
-         chunk_size/1         %
+         chunk_size/1,        %
+         is_private/1
         ]).
 
 %% Metadata API (BEP-9)
@@ -55,7 +56,8 @@
     chunk_size = ?DEFAULT_CHUNK_SIZE :: non_neg_integer(),
     piece_count :: non_neg_integer(),
     metadata_size :: non_neg_integer(),
-    metadata_pieces :: [binary()]
+    metadata_pieces :: [binary()],
+    is_private :: boolean()
     }).
 
 
@@ -163,6 +165,12 @@ piece_count(TorrentID) when is_integer(TorrentID) ->
     Count.
 
 
+is_private(TorrentID) when is_integer(TorrentID) ->
+    DirPid = await_server(TorrentID),
+    {ok, Size} = gen_server:call(DirPid, is_private),
+    Size.
+
+
 file_position(TorrentID, FileID) when is_integer(TorrentID), is_integer(FileID) ->
     DirPid = await_server(TorrentID),
     {ok, Pos} = gen_server:call(DirPid, {position, FileID}),
@@ -267,7 +275,8 @@ init([TorrentID, Torrent]) ->
         piece_count=(TLen div PLen) + 
             (case TLen rem PLen of 0 -> 0; _ -> 1 end),
         metadata_size = MetadataSize,
-        metadata_pieces = list_to_tuple(metadata_pieces(TorrentBin, 0, MetadataSize))
+        metadata_pieces = list_to_tuple(metadata_pieces(TorrentBin, 0, MetadataSize)),
+        is_private=etorrent_metainfo:is_private(Torrent)
     },
     {ok, InitState}.
 
@@ -309,6 +318,9 @@ handle_call(piece_size, _, State=#state{piece_size=S}) ->
 
 handle_call(piece_count, _, State=#state{piece_count=C}) ->
     {reply, {ok, C}, State};
+
+handle_call(is_private, _, State=#state{is_private=X}) ->
+    {reply, {ok, X}, State};
 
 handle_call({get_mask, FileID, PartStart, PartSize}, _, State) ->
     #state{static_file_info=Arr, total_size=TLen, piece_size=PLen} = State,

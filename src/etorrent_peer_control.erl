@@ -58,7 +58,7 @@
     remote = exit(required) :: peerstate(),
     local  = exit(required) :: peerstate(),
     config = exit(required) :: peerconf(),
-    extensions = etorrent_ext:new([ut_metadata])
+    extensions
     }).
 
 %% Default size for a chunk. All clients use this.
@@ -292,6 +292,8 @@ init([TrackerUrl, LocalPeerID, InfoHash, TorrentID, {IP, Port}, Caps, Socket]) -
     Config0  = etorrent_peerconf:new(),
     Config1  = etorrent_peerconf:localid(LocalPeerID, Config0),
     Config   = etorrent_peerconf:extended(Extended, Config1),
+    IsPrivate = etorrent_info:is_private(TorrentID),
+    Exts     = etorrent_ext:new([ut_metadata], [private || IsPrivate]),
 
     MetadataSize = etorrent_info:metadata_size(TorrentID),
 
@@ -305,7 +307,8 @@ init([TrackerUrl, LocalPeerID, InfoHash, TorrentID, {IP, Port}, Caps, Socket]) -
         download=Download,
         remote=Remote,
         local=Local,
-        config=Config},
+        config=Config,
+        extensions=Exts},
     {ok, State}.
 
 %% @private
