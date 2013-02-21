@@ -1,11 +1,21 @@
 %% Metadata downloader.
+%% http://wiki.vuze.com/w/Magnet_link
 -module(etorrent_magnet).
 -export([download_meta_info/2,
-         save_meta_info/2]).
+         save_meta_info/2,
+         save_meta_info/3,
+         parse_url/1]).
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 -define(DEFAULT_CONNECT_TIMEOUT, 5000).
 -define(DEFAULT_RECEIVE_TIMEOUT, 5000).
 -define(DEFAULT_AWAIT_TIMEOUT, 25000).
 -define(METADATA_BLOCK_BYTE_SIZE, 16384). %% 16KiB (16384 Bytes)
+
+-define(URL_PARSER, mochiweb_util).
 
 %% The extension message IDs are the IDs used to send the extension messages
 %% to the peer sending this handshake.
@@ -18,6 +28,45 @@
 -define(UT_METADATA_EXT_ID, 15).
 
 
+%% @doc Parse a magnet link into a tuple "{Infohash, Description, Trackers}".
+-spec parse_url(Url) -> {XT, DN, [TR]} when
+    Url :: string() | binary(),
+    XT :: non_neg_integer(),
+    DN :: string() | undefined,
+    TR :: string().
+parse_url(Url) ->
+    {Scheme, _Netloc, _Path, Query, _Fragment} = ?URL_PARSER:urlsplit(Url),
+    case Scheme of
+        "magnet" ->
+            %% Get a parameter proplist. Keys and values are strings.
+            Params = ?URL_PARSER:parse_qs(Query),
+            analyse_params(Params, undefined, undefined, []);
+        _ ->
+            error({unknown_scheme, Scheme, Url})
+    end.
+
+analyse_params([{K,V}|Params], XT, DN, TRS) ->
+    case K of
+        "xt" ->
+            analyse_params(Params, V, DN, TRS);
+        "dn" ->
+            analyse_params(Params, XT, V, TRS);
+        "tr" ->
+            analyse_params(Params, XT, DN, [V|TRS]);
+        _ ->
+            lager:error("Unknown magnet link parameter ~p.", [K])
+    end;
+analyse_params([], undefined, _DN, _TRS) ->
+    error(undefined_xt);
+analyse_params([], XT, DN, TRS) ->
+    {xt_to_integer(list_to_binary(XT)), DN, lists:reverse(TRS)}.
+
+xt_to_integer(<<"urn:btih:", Base16:40/binary>>) ->
+    list_to_integer(binary_to_list(Base16), 16);
+xt_to_integer(<<"urn:btih:", Base32:32/binary>>) ->
+    etorrent_utils:base32_binary_to_integer(Base32).
+
+
 -type peerid() :: <<_:160>>.
 -type infohash_bin() :: <<_:160>>.
 -type infohash_int() :: integer().
@@ -25,13 +74,26 @@
 -type portnum() :: etorrent_types:portnum().
 -type bcode() :: etorrent_types:bcode().
 
-%% @doc Write a value, returned from {@link download_meta_info/2} into a file.
 -spec save_meta_info(Info::binary(), Out::file:filename()) -> ok.
 save_meta_info(Info, Out) ->
+    save_meta_info(Info, Out, []).
+
+
+%% @doc Write a value, returned from {@link download_meta_info/2} into a file.
+-spec save_meta_info(Info::binary(), Out::file:filename(),
+                     Trackers::[string()]) -> ok.
+save_meta_info(Info, Out, Trackers) ->
     {ok, InfoDecoded} = etorrent_bcoding:decode(Info),
-    Data = [{<<"info">>, InfoDecoded}],
+    Data = add_trackers(Trackers) ++ [{<<"info">>, InfoDecoded}],
     Encoded = etorrent_bcoding:encode(Data),
     file:write_file(Out, Encoded).          
+
+
+add_trackers([T]) ->
+    [{<<"announce">>, T}];
+add_trackers([T|_]=Ts) ->
+    [{<<"announce">>, T}, {<<"announce-list">>, [Ts]}];
+add_trackers([]) -> [].
 
 
 -spec download_meta_info(LocalPeerId::peerid(), InfoHashNum::infohash_int()) -> binary().
@@ -81,10 +143,11 @@ await_respond([_|_]=Workers, TagRef) ->
         {TagRef, Pid, {ok, Metadata}} ->
             [exit(Worker, normal) || Worker <- Workers -- [Pid]],
             {ok, Metadata};
-        {TagRef, Pid, {error, _reason}} ->
+        {TagRef, Pid, {error, Reason}} ->
+            lager:debug("Worker Pid ~p exited with reason ~p~n", [Pid, Reason]),
             await_respond(Workers -- [Pid], TagRef)
        ;Unmatched ->
-            io:format(user, "Unmatched message: ~p~n", [Unmatched]),
+            lager:debug("Unmatched message: ~p~n", [Unmatched]),
             await_respond(Workers, TagRef)
         after ?DEFAULT_AWAIT_TIMEOUT ->
             [exit(Worker, normal) || Worker <- Workers],
@@ -111,16 +174,16 @@ connect_and_download_metainfo(LocalPeerId, IP, Port, InfoHashBin) ->
     try
         {ok, Capabilities, _RemotePeerId} = etorrent_proto_wire:
             initiate_handshake(Socket, LocalPeerId, InfoHashBin),
-        io:format(user, "Capabilities: ~p~n", [Capabilities]),
+        lager:debug("Capabilities: ~p~n", [Capabilities]),
         assert_extended_messaging_support(Capabilities),
         {ok, HeaderMsg} = extended_messaging_handshake(Socket),
-        io:format(user, "Extension header: ~p~n", [HeaderMsg]),
+        lager:debug("Extension header: ~p~n", [HeaderMsg]),
         MetadataExtId = metadata_ext_id(HeaderMsg),
         assert_metadata_extension_support(MetadataExtId),
         MetadataSize = metadata_size(HeaderMsg),
         assert_valid_metadata_size(MetadataSize),
         {ok, Metadata} = download_metadata(Socket, MetadataExtId, MetadataSize),
-        assert_valid_metadata(Metadata, MetadataSize, InfoHashBin),
+        assert_valid_metadata(MetadataSize, InfoHashBin, Metadata),
 %       io:format(user, "Dowloaded metadata: ~n~p~n", [Metadata]),
         {ok, Metadata}
     after
@@ -148,31 +211,34 @@ send_ext_msg(Socket, ExtMsgId, EncodedExtMsg) ->
         etorrent_proto_wire:send_msg(Socket, {extended, ExtMsgId, EncodedExtMsg}).
 
 download_metadata(Socket, MetadataExtId, MetadataSize) ->
-    download_metadata(Socket, MetadataExtId, MetadataSize, 0, <<>>).
+    download_metadata(Socket, MetadataExtId, MetadataSize, MetadataSize, 0, <<>>).
 
-download_metadata(Socket, MetadataExtId, LeftSize, PieceNum, Data) ->
+download_metadata(Socket, MetadataExtId, LeftSize, MetadataSize, PieceNum, Data) ->
     send_ext_msg(Socket, MetadataExtId, piece_request_msg(PieceNum)),
     {ok, RespondMsgBin} = receive_ext_msg(Socket, ?UT_METADATA_EXT_ID),
     {RespondMsg, Piece} = etorrent_bcoding2:decode(RespondMsgBin),
     case decode_metadata_respond(RespondMsg) of
         {data, PieceNum, TotalSize} ->
-            assert_total_size(LeftSize, TotalSize),
+            PieceSize = byte_size(Piece),
+            assert_total_size(MetadataSize, TotalSize),
+            assert_piece_size(LeftSize, PieceSize),
             Data2 = <<Data/binary, Piece/binary>>,
-            case LeftSize - TotalSize of
+            case LeftSize - PieceSize of
                 0 -> {ok, Data2};
                 LeftSize2 when LeftSize2 > 0 ->
-                    download_metadata(Socket, MetadataExtId, LeftSize2, PieceNum+1, Data2)
+                    download_metadata(Socket, MetadataExtId, LeftSize2, 
+                                      MetadataSize, PieceNum+1, Data2)
             end
     end.
 
 receive_ext_msg(Socket, MetadataExtId) ->
     case receive_msg(Socket) of
         {ok, {extended, MetadataExtId, MsgBin}} ->
-%           io:format(user, "Ext message was received: ~n~p~n", [MsgBin]),
+%           lager:debug("Ext message was received: ~n~p~n", [MsgBin]),
             {ok, MsgBin};
         {ok, OtherMess} ->
-            io:format(user, "Unexpected message was received:~n~p~n",
-                      [OtherMess]),
+%           lager:debug("Unexpected message was received:~n~p~n",
+%                     [OtherMess]),
             receive_ext_msg(Socket, MetadataExtId)
     end.
 
@@ -245,21 +311,29 @@ header_example() ->
 
 %% If the piece is the last piece of the metadata, it may be less than 16kiB.
 %% If it is not the last piece of the metadata, it MUST be 16kiB.
-assert_total_size(LeftSize, ?METADATA_BLOCK_BYTE_SIZE)
+assert_piece_size(LeftSize, ?METADATA_BLOCK_BYTE_SIZE)
     when LeftSize >= ?METADATA_BLOCK_BYTE_SIZE ->
     ok;
-assert_total_size(LeftSize, LeftSize) ->
+assert_piece_size(LeftSize, LeftSize) ->
     %% Last piece
     ok.
 
+assert_total_size(TotalSize, TotalSize) ->
+    ok;
+assert_total_size(MetadataSize, TotalSize) ->
+    error({bad_total_size, [{expected, MetadataSize}, {passed, TotalSize}]}).
 
-assert_valid_metadata(Metadata, MetadataSize, InfoHashBin) when
+
+assert_valid_metadata(MetadataSize, InfoHashBin, Metadata) when
     byte_size(Metadata) =:= MetadataSize ->
     case crypto:sha(Metadata) of
         InfoHashBin -> ok;
         OtherHash ->
             error({bad_hash, [{expected, InfoHashBin}, {generated, OtherHash}]})
-    end.
+    end;
+assert_valid_metadata(MetadataSize, _InfoHashBin, Metadata) ->
+    error({bad_size, [{expected, MetadataSize},
+                      {generated, byte_size(Metadata)}]}).
 
 
 
@@ -273,3 +347,27 @@ m_block() ->
 
 integer_hash_to_literal(InfoHashInt) when is_integer(InfoHashInt) ->
     io_lib:format("~40.16.0B", [InfoHashInt]).
+
+
+-ifdef(TEST).
+
+colton_url() ->
+    "magnet:?xt=urn:btih:b48ed25b01668963e1f0ff782be383c5e7060eb4&"
+    "dn=Jonathan+Coulton+-+Discography&"
+    "tr=udp%3A%2F%2Ftracker.openbittorrent.com%3A80&"
+    "tr=udp%3A%2F%2Ftracker.publicbt.com%3A80&"
+    "tr=udp%3A%2F%2Ftracker.istole.it%3A6969&"
+    "tr=udp%3A%2F%2Ftracker.ccc.de%3A80".
+
+parse_url_test_() ->
+    [?_assertEqual(parse_url("magnet:?xt=urn:btih:IXE2K3JMCPUZWTW3YQZZOIB5XD6KZIEQ"),
+                   {398417223648295740807581630131068684170926268560, undefined, []})
+    ,?_assertEqual(parse_url(colton_url()),
+                   {1030803369114085151184244669493103882218552823476,
+                                   "Jonathan Coulton - Discography",
+                                   ["udp://tracker.publicbt.com:80",
+                                    "udp://tracker.openbittorrent.com:80",
+                                    "udp://tracker.istole.it:6969",
+                                    "udp://tracker.ccc.de:80"]})
+    ].
+-endif.

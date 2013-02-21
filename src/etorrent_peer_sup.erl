@@ -30,7 +30,7 @@
 %% @doc Start the peer
 %% <p>A peer is fed with quite a lot of data. It gets tracker url, our
 %% local `PeerId', it gets the `InfoHash', the Torrents `Id', the pair
-%% `{IP, Port}` of the remote peer, what `Capabilities' the peer supports
+%% `{IP, Port}' of the remote peer, what `Capabilities' the peer supports
 %% and a `Socket' for communication.</p>
 %% <p>From that a supervisor for the peer and accompanying processes
 %% are spawned.</p>

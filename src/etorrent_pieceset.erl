@@ -97,9 +97,8 @@ from_bitstring(Bin) ->
 %% Convert a piece set to a bitfield, the bitfield will
 %% be padded with at most 7 bits set to zero.
 %% @end
--spec to_binary(t()) -> binary().
-to_binary(Pieceset) ->
-    #pieceset{size=Size, elements=Elements} = Pieceset,
+-spec to_binary(Pieceset::t()) -> binary().
+to_binary(#pieceset{size=Size, elements=Elements}) ->
     PadLen = paddinglen(Size),
     <<Elements/bitstring, 0:PadLen>>.
 

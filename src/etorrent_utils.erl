@@ -24,7 +24,7 @@
 -export([now_subtract_seconds/2]).
 
 %% "bittorrent-like" functions
--export([decode_ips/1, decode_ips_v6/1]).
+-export([decode_ips/1, decode_ips_v6/1, base32_binary_to_integer/1]).
 
 %% "registry-like" functions
 -export([register/1,
@@ -408,4 +408,28 @@ eqc_gsplit_test() ->
     ?assert(proper:quickcheck(prop_gsplit_split())).
 
 -endif.
+-endif.
+
+
+%% @doc Convert base32 binary to integer.
+%% This function is based on code https://github.com/andrewtj/base32_erlang
+%% License: Apache 2
+%%
+%% Description: http://www.ietf.org/rfc/rfc3548.txt
+base32_binary_to_integer(<<Base32Bin:32/binary>>) ->
+    Bin = << <<(std_dec(X)):5>> || <<X>> <= Base32Bin>>,
+    <<Int:160>> = Bin,
+    Int.
+
+std_dec(I) when I >= $2 andalso I =< $7 -> I - 24;
+std_dec(I) when I >= $a andalso I =< $z -> I - $a;
+std_dec(I) when I >= $A andalso I =< $Z -> I - $A.
+
+-ifdef(EUNIT).
+
+base32_binary_to_integer_test_() ->
+    [?_assertEqual(base32_binary_to_integer(<<"IXE2K3JMCPUZWTW3YQZZOIB5XD6KZIEQ">>),
+                   398417223648295740807581630131068684170926268560)
+    ].
+
 -endif.
