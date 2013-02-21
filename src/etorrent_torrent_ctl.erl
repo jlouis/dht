@@ -43,6 +43,7 @@
 
 %% wish API
 -export([get_permanent_wishes/1,
+         get_unwanted_files/1,
          get_wishes/1,
          set_wishes/2,
          wish_file/2,
@@ -192,6 +193,11 @@ get_wishes(TorrentID) ->
 get_permanent_wishes(TorrentID) ->
     {ok, Wishes} = get_record_wishes(TorrentID),
     {ok, to_proplists([X || X <- Wishes, not X#wish.is_transient])}.
+
+
+get_unwanted_files(TorrentID) ->
+    CtlSrv = lookup_server(TorrentID),
+    gen_fsm:sync_send_all_state_event(CtlSrv, get_unwanted_files).
 
 
 %% @doc Add a file at top of wishlist.
@@ -544,6 +550,10 @@ handle_event(Msg, SN, S) ->
 handle_sync_event(valid_pieces, _, StateName, State) ->
     #state{valid=Valid} = State,
     {reply, {ok, Valid}, StateName, State};
+
+handle_sync_event(get_unwanted_files, _, StateName, State) ->
+    #state{unwanted_files=UnwantedFiles} = State,
+    {reply, {ok, UnwantedFiles}, StateName, State};
 
 handle_sync_event(is_partial, _, StateName, State) ->
     {reply, {ok, is_partial_int(State)}, StateName, State};
