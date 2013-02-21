@@ -30,6 +30,7 @@
          min/1,
          union/1,
          union/2,
+         inversion/1,
          progress/1]).
 
 -record(pieceset, {
@@ -324,6 +325,14 @@ size(<<>>, Acc) ->
 capacity(Pieceset) ->
     #pieceset{size=Size} = Pieceset,
     Size.
+
+
+inversion(Set) ->
+    #pieceset{elements=Elements, size=Size} = Set,
+    <<E0:Size>> = Elements,
+    E1 = bnot E0,
+    Elements1 = <<E1:Size>>,
+    Set#pieceset{elements=Elements1}.
 
 
 %% @doc Return float from 0 to 1.

@@ -56,7 +56,7 @@
 
 %% peer API
 -export([start_link/1,
-         start_link/6,
+         start_link/7,
          mark_valid/2]).
 
 %% stats API
@@ -69,7 +69,8 @@
          num_valid/1]).
 
 %% wish API
--export([set_wishes/2]).
+-export([set_wishes/2,
+         set_unwanted/2]).
 
 -export([show_assigned/1,
          show_valid/1]).
@@ -122,6 +123,7 @@
     pieces_begun      :: pieceset(),
     pieces_assigned   :: pieceset(),
     pieces_stored     :: pieceset(),
+    pieces_unwanted   :: pieceset(),
     %% Chunk sets for pieces
     chunks_assigned :: array(),
     chunks_stored   :: array(),
@@ -220,6 +222,8 @@
 %% of each piece and the peer should be removed from the set of monitored
 %% peers.
 %%
+%% # Unwanted pieces
+%% are used for partial downloading.
 
 -spec register_server(torrent_id()) -> true.
 register_server(TorrentID) ->
@@ -252,8 +256,18 @@ start_link(Args) ->
 %% Start a new chunk server for a set of pieces, a subset of the
 %% pieces may already have been fetched.
 %% @end
-start_link(TorrentID, ChunkSize, Fetched, Sizes, TorrentPid, Wishes) ->
-    Args = [
+-spec start_link(TorrentID, ChunkSize, Fetched, Sizes, TorrentPid, 
+                 Wishes, Unwanted) -> ok when
+    TorrentID  :: torrent_id(),
+    ChunkSize  :: non_neg_integer(),
+    Fetched    :: pieceset(),
+    Sizes      :: term(),
+    TorrentPid :: pid(),
+    Wishes     :: [pieceset()],
+    Unwanted   :: pieceset() | undefined.
+start_link(TorrentID, ChunkSize, Fetched, Sizes, TorrentPid, Wishes, Unwanted) ->
+    Args = 
+        [{unwanted, Unwanted} || Unwanted =/= undefined] ++ [
         {torrentid, TorrentID},
         {chunksize, ChunkSize},
         {fetched, Fetched},
@@ -343,9 +357,16 @@ show_valid(TorrentID) ->
     etorrent_pieceset:to_string(Valid).
 
 
+%% This function was disigned to be called from module `etorrent_torrent_ctl'.
 set_wishes(TorrentID, Wishes) ->
     ChunkSrv = lookup_server(TorrentID),
-    ok = gen_server:call(ChunkSrv, {set_wishes, Wishes}).
+    ok = gen_server:cast(ChunkSrv, {set_wishes, Wishes}).
+
+
+%% This function was disigned to be called from module `etorrent_torrent_ctl'.
+set_unwanted(TorrentID, Wishes) ->
+    ChunkSrv = lookup_server(TorrentID),
+    ok = gen_server:cast(ChunkSrv, {set_unwanted, Wishes}).
 
 
 stored_chunks(TorrentID) ->
@@ -393,6 +414,7 @@ init(Serverargs) ->
     ChunkSets = array:from_orddict(ChunkList),
 
     PiecePriority = init_priority(TorrentID, unassigned, PiecesInvalid),
+    PiecesUnwanted = proplists:get_value(unwanted, Serverargs, PiecesNone),
 
     InitState = #state{
         torrent_id=TorrentID,
@@ -406,6 +428,7 @@ init(Serverargs) ->
         pieces_begun=PiecesNone,
         pieces_assigned=PiecesNone,
         pieces_stored=PiecesNone,
+        pieces_unwanted=PiecesUnwanted,
         %% Initially, the sets of assigned and stored chunks are equal
         chunks_assigned=ChunkSets,
         chunks_stored=ChunkSets,
@@ -430,6 +453,7 @@ handle_call({chunk, {request, Numchunks, Peerset, PeerPid}}, _, State) ->
         chunks_assigned=AssignedChunks,
         piece_priority=PiecePriority,
         pending=Pending,
+        pieces_unwanted=Unwanted,
         user_wishes=UserWish} = State,
 
     %% If this peer has any pieces that we have begun downloading, pick
@@ -444,7 +468,9 @@ handle_call({chunk, {request, Numchunks, Peerset, PeerPid}}, _, State) ->
         true ->
             {false, false};
         false ->
-            ISubOptimal = etorrent_pieceset:intersection(Peerset, Unassigned),
+            %% Wanted, but unassigned.
+            Wanted = etorrent_pieceset:difference(Unassigned, Unwanted),
+            ISubOptimal = etorrent_pieceset:intersection(Peerset, Wanted),
             IHasSubOptimal = not etorrent_pieceset:is_empty(ISubOptimal),
             {ISubOptimal, IHasSubOptimal}
     end,
@@ -477,7 +503,11 @@ handle_call({chunk, {request, Numchunks, Peerset, PeerPid}}, _, State) ->
     case PieceIndex of
         %% Check if we are in endgame now.
         assigned ->
-            BeginEndgame = etorrent_pieceset:is_empty(Unassigned)
+            Wanted1 = etorrent_pieceset:difference(Unassigned, Unwanted),
+            %% Check, if there are no unassigned (wanted) or started pieces.
+            %% We will start endgame in the case, when there are some
+            %% unassigned, but unwanted pieces (in case of partial downloading).
+            BeginEndgame = etorrent_pieceset:is_empty(Wanted1)
                 andalso etorrent_pieceset:is_empty(Begun),
             case BeginEndgame of
                 false ->
@@ -556,9 +586,6 @@ handle_call({state_members, Piecestate}, _, State) ->
     end,
     {reply, Stateset, State};
 
-handle_call({set_wishes, NewWishes}, _, State=#state{pieces_valid=Valid}) ->
-    {reply, ok, State#state{user_wishes=minimize_masks(NewWishes, Valid, [])}};
-
 handle_call(stored_chunks, _, State=#state{chunks_stored=StoredChunks}) ->
     {reply, {ok, StoredChunks}, State}.
 
@@ -593,6 +620,12 @@ choose_best_piece_([PS|T], SO) ->
 
 
 %% @private
+handle_cast({set_wishes, NewWishes}, State=#state{pieces_valid=Valid}) ->
+    {noreply, State#state{user_wishes=minimize_masks(NewWishes, Valid, [])}};
+
+handle_cast({set_unwanted, NewUnwanted}, State) ->
+    {noreply, State#state{pieces_unwanted=NewUnwanted}};
+
 handle_cast(_, State) ->
     {stop, not_implemented, State}.
 

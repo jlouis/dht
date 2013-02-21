@@ -35,10 +35,17 @@
 -record(torrent,
 	{ %% Unique identifier of torrent, monotonically increasing
           id :: non_neg_integer(),
-          %% How many bytes are there left before we have the full torrent
-          left = unknown :: non_neg_integer(),
+          %% How many bytes are there left before we have the full torrent.
+          %% Only valid (i.e. stored AND checked) pieces are counted.
+          left = unknown :: unknown | non_neg_integer(),
+          %% The number of bytes this client still has to download. 
+          %% Clarification: The number of bytes needed to download to be 
+          %% 100% complete and get all the included files in the torrent.
+          left_or_skipped = unknown :: unknown | non_neg_integer(),
           %% How many bytes are there in total
           total  :: non_neg_integer(),
+          %% How many bytes we want from this torrent (both downloaded and not yet)
+          wanted :: non_neg_integer(),
           %% How many bytes have we uploaded
           uploaded :: non_neg_integer(),
           %% How many bytes have we downloaded
@@ -121,10 +128,12 @@ all() ->
                     | {add_downloaded, integer()}
                     | {add_upload, integer()}
                     | {subtract_left, integer()}
-                    | {tracker_report, integer(), integer()}.
+                    | {subtract_left_or_skipped, integer()}
+                    | {tracker_report, integer(), integer()}
+                    | {set_wanted, non_neg_integer()}.
 -spec statechange(integer(), [alteration()]) -> ok.
 statechange(Id, What) ->
-    gen_server:call(?SERVER, {statechange, Id, What}).
+    gen_server:cast(?SERVER, {statechange, Id, What}).
 
 %% @doc Return the number of pieces for torrent Id
 %% @end
@@ -219,10 +228,6 @@ handle_call({num_pieces, Id}, _F, S) ->
 	    end,
     {reply, Reply, S};
 
-handle_call({statechange, Id, What}, _F, S) ->
-    Q = state_change(Id, What),
-    {reply, Q, S};
-
 handle_call({decrease, Id}, _F, S) ->
     N = ets:update_counter(etorrent_c_pieces, Id, {#c_pieces.missing, -1}),
     case N of
@@ -238,6 +243,10 @@ handle_call(_M, _F, S) ->
 
 
 %% @private
+handle_cast({statechange, Id, What}, S) ->
+    state_change(Id, What),
+    {noreply, S};
+
 handle_cast(_Msg, S) ->
     {noreply, S}.
 
@@ -285,21 +294,22 @@ props_to_record(Id, PL) ->
         end,
 
     L = FR(left),
+    LS = FO(left_or_skipped, L),
 
     % If the `state' is `undefined' or `unknown' then use the default state.
     State = case FO('state', 'unknown') of
             'unknown' ->
-                case L of
-                    0 -> seeding;
-                    _ -> leeching
-                end;
+                left_to_state(L, LS);
 
             X -> X
         end,
 
+    Total = FR('total'),
     #torrent { id = Id,
                left = L,
-               total = FR('total'),
+               left_or_skipped = LS,
+               total = Total,
+               wanted = FO(wanted, Total),
                uploaded = FO('uploaded', 0),
                downloaded = FO('downloaded', 0),
 			   all_time_uploaded = FO('all_time_uploaded', 0),
@@ -319,17 +329,19 @@ all(Pos) ->
     [proplistify(O) || O <- Objects].
 
 proplistify(T) ->
-    [{id, T#torrent.id},
-     {total, T#torrent.total},
-     {left,  T#torrent.left},
-     {uploaded, T#torrent.uploaded},
-     {downloaded, T#torrent.downloaded},
+    [{id,               T#torrent.id},
+     {total,            T#torrent.total},
+     {wanted,           T#torrent.wanted},
+     {left,             T#torrent.left},
+     {left_or_skipped,  T#torrent.left_or_skipped},
+     {uploaded,         T#torrent.uploaded},
+     {downloaded,       T#torrent.downloaded},
      {all_time_downloaded, T#torrent.all_time_downloaded},
      {all_time_uploaded,   T#torrent.all_time_uploaded},
-     {leechers, T#torrent.leechers},
-     {seeders, T#torrent.seeders},
-     {state, T#torrent.state},
-     {rate_sparkline, T#torrent.rate_sparkline}].
+     {leechers,         T#torrent.leechers},
+     {seeders,          T#torrent.seeders},
+     {state,            T#torrent.state},
+     {rate_sparkline,   T#torrent.rate_sparkline}].
 
 
 %% @doc Run function F on each torrent
@@ -395,10 +407,7 @@ do_state_change([paused | Rem], T) ->
     do_state_change(Rem, T#torrent{state = paused});
 
 do_state_change([continue | Rem], T) ->
-    NewState = case T#torrent.left of
-            0 -> seeding;
-            _ -> leeching
-        end,
+    NewState = left_to_state(T#torrent.left, T#torrent.left_or_skipped),
     do_state_change(Rem, T#torrent{state = NewState});
 
 do_state_change([{add_downloaded, Amount} | Rem], T) ->
@@ -416,10 +425,11 @@ do_state_change([{subtract_left, Amount} | Rem], T) ->
         0 ->
             Id = T#torrent.id,
 	        ControlPid = etorrent_torrent_ctl:lookup_server(Id),
+			IsPartial = etorrent_torrent_ctl:is_partial(ControlPid),
 			etorrent_torrent_ctl:completed(ControlPid),
-            T#torrent { 
+            T#torrent {
                 left = 0, 
-                state = seeding,
+                state = if IsPartial -> seeding; true -> partial end,
                 rate_sparkline = [0.0] };
 
         N when N =< T#torrent.total ->
@@ -427,6 +437,16 @@ do_state_change([{subtract_left, Amount} | Rem], T) ->
            T#torrent { left = N }
         end,
 
+    do_state_change(Rem, NewT);
+
+do_state_change([{subtract_left_or_skipped, Amount} | Rem], T) ->
+    Left = T#torrent.left_or_skipped - Amount,
+    NewT = T#torrent { left_or_skipped = Left },
+    do_state_change(Rem, NewT);
+
+do_state_change([{set_wanted, Amount} | Rem], T)
+    when is_integer(Amount), Amount > 0 ->
+    NewT = T#torrent { wanted = Amount },
     do_state_change(Rem, NewT);
     
 do_state_change([{tracker_report, Seeders, Leechers} | Rem], T) ->
@@ -439,3 +459,8 @@ do_state_change([], T) ->
 
 
 
+left_to_state(L, LS) ->
+    if L =:= 0, LS =:= 0 -> seeding;
+       L =:= 0, LS =/= 0 -> partial; %% partial seeding
+                    true -> leeching
+    end.

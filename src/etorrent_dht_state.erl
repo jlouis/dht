@@ -171,7 +171,7 @@ safe_insert_nodes(NodeInfos) ->
 %
 -spec unsafe_insert_node(nodeid(), ipaddr(), portnum()) ->
     boolean().
-unsafe_insert_node(ID, IP, Port) ->
+unsafe_insert_node(ID, IP, Port) when is_integer(ID) ->
     _WasInserted = gen_server:call(srv_name(), {insert_node, ID, IP, Port}).
 
 -spec unsafe_insert_nodes(list(nodeinfo())) -> 'ok'.
@@ -236,6 +236,7 @@ spawn_keepalive(ID, IP, Port) ->
 % when checking if a node that is already a member of the routing table
 % is online.
 %
+-spec safe_ping(IP::ipaddr(), Port::portnum()) -> pang | nodeid().
 safe_ping(IP, Port) ->
     etorrent_dht_net:ping(IP, Port).
 
@@ -245,18 +246,20 @@ safe_ping(IP, Port) ->
 % be reachable. If a node has not been queried before, a safe_ping
 % will always be performed.
 %
+% Returns pand, if the node is unreachable.
+-spec unsafe_ping(IP::ipaddr(), Port::portnum()) -> pang | nodeid().
 unsafe_ping(IP, Port) ->
-    case ets:lookup(unreachable_tab(), {IP, Port}) of
-        [_|_] ->
+    case ets:member(unreachable_tab(), {IP, Port}) of
+        true ->
             pang;
-        [] ->
+        false ->
             case safe_ping(IP, Port) of
                 pang ->
                     RandNode = random_node_tag(),
                     DelSpec = [{{'_', RandNode}, [], [true]}],
                     _ = ets:select_delete(unreachable_tab(), DelSpec),
                     ets:insert(unreachable_tab(), {{IP, Port}, RandNode}),
-                    {error, timeout};
+                    pang;
                 NodeID ->
                     NodeID
             end

@@ -15,6 +15,8 @@
 
 -export([get_mask/2,
          get_mask/4,
+         mask_to_filelist/2,
+         mask_to_size/2,
          tree_children/2,
          minimize_filelist/2]).
 
@@ -47,6 +49,8 @@
 -type torrent_id() :: etorrent_types:torrent_id().
 -type file_id() :: etorrent_types:file_id().
 -type pieceset() :: etorrent_pieceset:t().
+
+-define(ROOT_FILE_ID, 0).
 
 -record(state, {
     torrent :: torrent_id(),
@@ -135,7 +139,12 @@ get_mask(TorrentID, [_|_] = IdList) ->
     %% Do map
     Masks = lists:map(MapFn, IdList),
     %% Do reduce
-    etorrent_pieceset:union(Masks).
+    etorrent_pieceset:union(Masks);
+
+get_mask(TorrentID, []) ->
+    DirPid = await_server(TorrentID),
+    {ok, PieceCount} = gen_server:call(DirPid, piece_count),
+    etorrent_pieceset:empty(PieceCount).
    
  
 %% @doc Build a mask of the part of the file in the torrent.
@@ -146,6 +155,22 @@ get_mask(TorrentID, FileID, PartStart, PartSize)
     {ok, Mask} = gen_server:call(DirPid, {get_mask, FileID, PartStart, PartSize}),
     Mask.
 
+
+%% @doc Returns ids of each file, all pieces of that are in the pieceset `Mask'.
+mask_to_filelist(TorrentID, Mask) ->
+    DirPid = await_server(TorrentID),
+    {ok, List} = gen_server:call(DirPid, {mask_to_filelist, Mask}),
+    List.
+
+%% @doc Returns a size of the selected pieces in the pieceset in bytes.
+-spec mask_to_size(TorrentID, Mask) -> Size when
+    TorrentID :: torrent_id(),
+    Mask      :: pieceset(),
+    Size      :: non_neg_integer().
+mask_to_size(TorrentID, Mask) ->
+    DirPid = await_server(TorrentID),
+    {ok, Size} = gen_server:call(DirPid, {mask_to_size, Mask}),
+    Size.
 
 piece_size(TorrentID) when is_integer(TorrentID) ->
     DirPid = await_server(TorrentID),
@@ -256,7 +281,9 @@ get_piece(TorrentID, PieceNum) when is_integer(PieceNum) ->
 
 %% @private
 init([TorrentID, Torrent]) ->
+    lager:debug("Starting collect_static_file_info for ~p.", [TorrentID]),
     Info = collect_static_file_info(Torrent),
+    lager:debug("Static info is collected for ~p.", [TorrentID]),
 
     {Static, PLen, TLen} = Info,
 
@@ -272,8 +299,7 @@ init([TorrentID, Torrent]) ->
         static_file_info=Static,
         total_size=TLen, 
         piece_size=PLen,
-        piece_count=(TLen div PLen) + 
-            (case TLen rem PLen of 0 -> 0; _ -> 1 end),
+        piece_count=byte_to_piece_count(TLen, PLen),
         metadata_size = MetadataSize,
         metadata_pieces = list_to_tuple(metadata_pieces(TorrentBin, 0, MetadataSize)),
         is_private=etorrent_metainfo:is_private(Torrent)
@@ -332,8 +358,7 @@ handle_call({get_mask, FileID, PartStart, PartSize}, _, State) ->
 
             %% Start from beginning of the torrent
             From = FileStart + PartStart,
-            To = From + PartSize,
-            Mask = make_mask(From, To, PLen, TLen),
+            Mask = make_mask(From, PartSize, PLen, TLen),
             Set = etorrent_pieceset:from_bitstring(Mask),
 
             {reply, {ok, Set}, State}
@@ -399,7 +424,18 @@ handle_call({get_piece, PieceNum}, _, State=#state{metadata_pieces=Pieces})
         when PieceNum < tuple_size(Pieces) ->
     {reply, {ok, element(PieceNum+1, Pieces)}, State};
 handle_call({get_piece, PieceNum}, _, State=#state{}) ->
-    {reply, {ok, {bad_piece, PieceNum}}, State}.
+    {reply, {ok, {bad_piece, PieceNum}}, State};
+
+handle_call({mask_to_filelist, Mask}, _, State=#state{}) ->
+    #state{static_file_info=Arr} = State,
+    List = mask_to_filelist_int(Mask, Arr),
+    {reply, {ok, List}, State};
+
+handle_call({mask_to_size, Mask}, _, State=#state{}) ->
+    #state{total_size=TLen, piece_size=PLen} = State,
+    Size = mask_to_size(Mask, TLen, PLen),
+    {reply, {ok, Size}, State}.
+
 
 %% @private
 handle_cast(Msg, State) ->
@@ -429,13 +465,12 @@ code_change(_OldVsn, State, _Extra) ->
 collect_static_file_info(Torrent) ->
     PieceLength = etorrent_metainfo:get_piece_length(Torrent),
     FileLengths = etorrent_metainfo:file_path_len(Torrent),
-    Acc = [],
-    Pos = 0,
     %% Rec1, Rec2, .. are lists of nodes.
     %% Calculate positions, create records. They are still not prepared.
-    {TLen, Rec1} = flen_to_record(FileLengths, Pos, Acc),
+    {TLen, Rec1} = flen_to_record(FileLengths, 0, []),
     %% Add directories as additional nodes.
-    Rec2 = add_directories(Rec1),
+    [#file_info{size=TLen2}|_] = Rec2 = add_directories(Rec1),
+    assert_total_length(TLen, TLen2),
     %% Fill `pieces' field.
     %% A mask is a set of pieces which contains the file.
     Rec3 = fill_pieces(Rec2, PieceLength, TLen),
@@ -455,7 +490,7 @@ flen_to_record([{Name, FLen} | T], From, Acc) ->
     flen_to_record(T, To, [X|Acc]);
 
 flen_to_record([], TotalLen, Acc) ->
-    {TotalLen+1, lists:reverse(Acc)}.
+    {TotalLen, lists:reverse(Acc)}.
 
 
 %% @private
@@ -570,8 +605,7 @@ add_directories_([H|T], Idx, Cur, Children, Acc) ->
 %% @private
 fill_pieces(RecList, PLen, TLen) ->
     F = fun(#file_info{position = From, size = Size} = Rec) ->
-            To = From + Size,
-            Mask = make_mask(From, To, PLen, TLen),
+            Mask = make_mask(From, Size, PLen, TLen),
             Set = etorrent_pieceset:from_bitstring(Mask),
             Rec#file_info{pieces = Set}
         end,
@@ -594,9 +628,8 @@ fill_ids_([], _Id, Acc) ->
 
 
 %% @private
-make_mask(From, To, PLen, TLen) 
-    when PLen =< TLen, From =< To, 
-           To  < TLen, From >= 0 ->
+make_mask(From, Size, PLen, TLen)
+    when PLen =< TLen, Size =< TLen, From >= 0, PLen > 0 ->
     %% __Bytes__: 1 <= From <= To <= TLen
     %%
     %% Calculate how many __pieces__ before, in and after the file.
@@ -604,17 +637,18 @@ make_mask(From, To, PLen, TLen)
     %% both into this file and into the next file.
     %% [0..X1 ) [X1..X2] (X2..MaxPieces]
     %% [before) [  in  ] (    after    ]
-    PTotal   = (TLen div PLen)  
-             + case TLen rem PLen of 0 -> 0; _ -> 1 end,
+    PTotal = byte_to_piece_count(TLen, PLen),
 
     %% indexing from 0
-    PFrom = From div PLen,
-    PTo   = To   div PLen,
+    PFrom  = byte_to_piece_index(From, PLen),
 
     PBefore = PFrom,
-    PIn     = PTo - PFrom + 1,
-    PAfter  = PTotal - PFrom - PIn,
-    <<0:PBefore, (bnot 0):PIn, 0:PAfter>>.
+    PIn     = byte_to_piece_count_beetween(From, Size, PLen),
+    PAfter  = PTotal - PIn - PBefore,
+    assert_positive(PBefore),
+    assert_positive(PIn),
+    assert_positive(PAfter),
+    <<0:PBefore, -1:PIn, 0:PAfter>>.
 
 
 %% @private
@@ -648,15 +682,32 @@ minimize_([], Acc) ->
 
 make_mask_test_() ->
     F = fun make_mask/4,
-    % make_index(From, To, PLen, TLen)
-    [?_assertEqual(F(2, 5,  4, 10), <<2#110:3>>)
-    ,?_assertEqual(F(2, 5,  3, 10), <<2#1100:4>>)
-    ,?_assertEqual(F(2, 5,  2, 10), <<2#01100:5>>)
-    ,?_assertEqual(F(2, 5,  1, 10), <<2#0011110000:10>>)
-    ,?_assertEqual(F(2, 5, 10, 10), <<1:1>>)
-    ,?_assertEqual(F(2, 5,  9, 10), <<1:1, 0:1>>)
-    ,?_assertEqual(F(0, 5,  3, 10), <<2#1100:4>>)
-    ,?_assertEqual(F(8, 9,  3, 10), <<2#0011:4>>)
+    % make_index(From, Size, PLen, TLen)
+    %% |0123|4567|89A-|
+    %% |--xx|x---|----|
+    [?_assertEqual(<<2#110:3>>        , F(2, 3,  4, 10))
+    %% |012|345|678|9A-|
+    %% |--x|xx-|---|---|
+    ,?_assertEqual(<<2#1100:4>>       , F(2, 3,  3, 10))
+    %% |01|23|45|67|89|A-|
+    %% |--|xx|x-|--|--|--|
+    ,?_assertEqual(<<2#01100:5>>      , F(2, 3,  2, 10))
+    %% |0|1|2|3|4|5|6|7|8|9|A|
+    %% |-|-|x|x|x|-|-|-|-|-|-|
+    ,?_assertEqual(<<2#0011100000:10>>, F(2, 3,  1, 10))
+    ,?_assertEqual(<<1:1>>            , F(2, 3, 10, 10))
+    ,?_assertEqual(<<1:1, 0:1>>       , F(2, 3,  9, 10))
+    %% |012|345|678|9A-|
+    %% |xxx|xx-|---|---|
+    ,?_assertEqual(<<2#1100:4>>       , F(0, 5,  3, 10))
+    %% |012|345|678|9A-|
+    %% |---|---|--x|---|
+    ,?_assertEqual(<<2#0010:4>>       , F(8, 1,  3, 10))
+    %% |012|345|678|9A-|
+    %% |---|---|--x|x--|
+    ,?_assertEqual(<<2#0011:4>>       , F(8, 2,  3, 10))
+    ,?_assertEqual(<<-1:30>>, F(0, 31457279,  1048576, 31457280))
+    ,?_assertEqual(<<-1:30>>, F(0, 31457280,  1048576, 31457280))
     ].
 
 add_directories_test_() ->
@@ -703,12 +754,14 @@ el(List, Pos) ->
 
 
 add_directories_test() ->
+    [Root|_] =
     add_directories(
         [#file_info{position=0, size=3, name=
     "BBC.7.BigToe/Eoin Colfer. Artemis Fowl/artemis_04.mp3"}
         ,#file_info{position=3, size=2, name=
     "BBC.7.BigToe/Eoin Colfer. Artemis Fowl. The Arctic Incident/artemis2_03.mp3"}
-        ]).
+        ]),
+    ?assertMatch(#file_info{position=0, size=5}, Root).
 
 % H = {file_info,undefined,
 %           "BBC.7.BigToe/Eoin Colfer. Artemis Fowl. The Arctic Incident/artemis2_03.mp3",
@@ -741,3 +794,173 @@ metadata_pieces(TorrentBin, From, MetadataSize)
 %% Last.
 metadata_pieces(TorrentBin, From, MetadataSize) ->
     [binary:part(TorrentBin, {From,MetadataSize})].
+
+
+assert_total_length(TLen, TLen) ->
+    ok;
+assert_total_length(TLen, TLen2) ->
+    error({assert_total_length, TLen, TLen2}).
+
+
+assert_positive(X) when X >= 0 ->
+    ok;
+assert_positive(X) ->
+    error({assert_positive, X}).
+
+
+byte_to_piece_count(TLen, PLen) ->
+    (TLen div PLen) + case TLen rem PLen of 0 -> 0; _ -> 1 end.
+
+byte_to_piece_index(TLen, PLen) ->
+    TLen div PLen.
+
+
+%% Bytes:  |0123|4567|89AB|
+%% Pieces: |0   |1   |2   |
+%% Set:    |---x|xxxx|xxx-|
+%% From:   3
+%% Size:   8
+%% PLen:   4
+%% Left:   1
+%% Right:  3
+%% Mid:    4
+%% PLeft:  1
+%% PRight: 1
+%% PMid:   1
+byte_to_piece_count_beetween(From, Size, PLen) ->
+    To     = From + Size,
+    Left   = case From rem PLen of 0 -> 0; X -> PLen - X end,
+    Right  = To rem PLen,
+    Mid    = Size - Left - Right,
+    PLeft  = case Left  of 0 -> 0; _ -> 1 end,
+    PRight = case Right of 0 -> 0; _ -> 1 end,
+    PMid   = Mid div PLen,
+    %% assert
+    0      = Mid rem PLen,
+    PMid + PLeft + PRight.
+
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+byte_to_piece_count_beetween_test_() ->
+    [?_assertEqual(3, byte_to_piece_count_beetween(3, 8, 4))
+    ,?_assertEqual(0, byte_to_piece_count_beetween(0, 0, 10))
+    ,?_assertEqual(1, byte_to_piece_count_beetween(0, 1, 10))
+    ,?_assertEqual(1, byte_to_piece_count_beetween(0, 9, 10))
+    ,?_assertEqual(1, byte_to_piece_count_beetween(0, 10, 10))
+    ,?_assertEqual(2, byte_to_piece_count_beetween(0, 11, 10))
+    ,?_assertEqual(2, byte_to_piece_count_beetween(1, 10, 10))
+    ,?_assertEqual(2, byte_to_piece_count_beetween(1, 11, 10))
+    ].
+
+-endif.
+
+%% The last piece has the same size as all others.
+mask_to_size(Mask, TLen, PLen) when TLen rem PLen =:= 0 ->
+    etorrent_pieceset:size(Mask) * PLen;
+mask_to_size(Mask, TLen, PLen) ->
+    case etorrent_pieceset:size(Mask) of
+        0 -> 0;
+        PCount ->
+            %% Pieces:
+            %% |1234|567-|
+            %% TLen = 7, PLen = 4, LastPieceId = 1
+            LastPieceId    = TLen div PLen,
+            LastPieceSize  = TLen rem PLen,
+            IsLastPieceSet = etorrent_pieceset:is_member(LastPieceId, Mask),
+            if IsLastPieceSet -> ((PCount - 1) * PLen) + LastPieceSize;
+                         %% All PCount pieces have the same size.
+                         true -> PCount * PLen 
+            end
+    end.
+
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+mask_to_size_test_() ->
+    %% Ids:    |01234|
+    %% Pieces: |----x|
+    [?_assert(etorrent_pieceset:is_member(4, etorrent_pieceset:from_list([4], 5)))
+    %% TLen: 18, PLen: 4, PCount: 5
+    %% Bytes: 3*4 + 2
+    %% Ids:    |01234|
+    %% Pieces: |-xx--|
+    %% Selected: 2*4
+    ,?_assertEqual(8, mask_to_size(etorrent_pieceset:from_list([1,2], 5), 18, 4))
+    %% Ids:    |01234|
+    %% Pieces: |-xx-x|
+    %% Selected: 2*4+2
+    ,?_assertEqual(10, mask_to_size(etorrent_pieceset:from_list([1,2,4], 5), 18, 4))
+    %% Ids:    |01234|
+    %% Pieces: |----x|
+    %% Selected: 2
+    ,?_assertEqual(2, mask_to_size(etorrent_pieceset:from_list([4], 5), 18, 4))
+    %% Ids:    |01234|
+    %% Pieces: |x----|
+    %% Selected: 4
+    ,?_assertEqual(4, mask_to_size(etorrent_pieceset:from_list([0], 5), 18, 4))
+    ,{"All pieces have the same size." %% 2 last pieces are selected.
+     ,?_assertEqual(20, mask_to_size(etorrent_pieceset:from_list([8,9], 10), 100, 10))}
+    ].
+
+-endif.
+
+
+%% Internal.
+mask_to_filelist_int(Mask, Arr) ->
+    Root = array:get(?ROOT_FILE_ID, Arr),
+    case Root of
+        %% Everything is unwanted.
+        #file_info{pieces=Mask} ->
+            [0];
+        #file_info{children=SubFileIds} ->
+            mask_to_filelist_rec(SubFileIds, Mask, Arr)
+    end.
+
+%% Matching all files starting from Root recursively.
+mask_to_filelist_rec([FileId|FileIds], Mask, Arr) ->
+    #file_info{pieces=FileMask, children=SubFileIds} = array:get(FileId, Arr),
+    Diff = etorrent_pieceset:difference(FileMask, Mask),
+    case etorrent_pieceset:is_empty(Diff) of
+        true ->
+            %% The whole file is matched.
+            [FileId|mask_to_filelist_rec(FileIds, Mask, Arr)];
+        false ->
+            %% Check childrens.
+            mask_to_filelist_rec(SubFileIds, Mask, Arr) ++
+            mask_to_filelist_rec(FileIds, Mask, Arr)
+    end;
+mask_to_filelist_rec([], _Mask, _Arr) ->
+    [].
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+mask_to_filelist_int_test_() ->
+    FileName = filename:join(code:lib_dir(etorrent_core), 
+                             "test/etorrent_eunit_SUITE_data/coulton.torrent"),
+    {ok, Torrent} = etorrent_bcoding:parse_file(FileName),
+    Info = collect_static_file_info(Torrent),
+    {Arr, _PLen, _TLen} = Info,
+    N2I     = file_name_to_ids(Arr),
+    FileId  = fun(Name) -> dict:fetch(Name, N2I) end,
+    Pieces  = fun(Id) -> #file_info{pieces=Ps} = array:get(Id, Arr), Ps end,
+    Week4   = FileId("Jonathan Coulton/Thing a Week 4"),
+    BigBoom = FileId("Jonathan Coulton/Thing a Week 4/The Big Boom.mp3"),
+    Ikea    = FileId("Jonathan Coulton/Smoking Monkey/04 Ikea.mp3"),
+    Week4Pieces   = Pieces(Week4),
+    BigBoomPieces = Pieces(BigBoom),
+    IkeaPieces    = Pieces(Ikea),
+    W4BBPieces    = etorrent_pieceset:union(Week4Pieces, BigBoomPieces),
+    W4IkeaPieces  = etorrent_pieceset:union(Week4Pieces, IkeaPieces),
+    [?_assertEqual([Week4], mask_to_filelist_int(Week4Pieces, Arr))
+    ,?_assertEqual([Week4], mask_to_filelist_int(W4BBPieces, Arr))
+    ,?_assertEqual([Ikea, Week4], mask_to_filelist_int(W4IkeaPieces, Arr))
+    ].
+
+file_name_to_ids(Arr) ->
+    F = fun(FileId, #file_info{name=Name}, Acc) -> [{Name, FileId}|Acc] end,
+    dict:from_list(array:foldl(F, [], Arr)).
+
+
+-endif.

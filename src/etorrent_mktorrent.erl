@@ -22,13 +22,15 @@ create(FD, AnnounceURL, OutFile) ->
 %% a torrent file. Finally, an Optional comment can be included.
 %% @end
 create(FD, AnnounceURL, OutFile, Comment) ->
-    {PieceHashes, FileInfo} = read_and_hash(FD),
-    TorrentData = torrent_file(AnnounceURL, PieceHashes, FileInfo, Comment),
+    {PieceHashes, FileInfo} = read_and_hash(drop_last_slash(FD)),
+    TorrentData = torrent_file(FD, AnnounceURL, PieceHashes, FileInfo, Comment),
     write_torrent_file(OutFile, TorrentData).
 
-hash_file(File, {PH, InfoBlocks}) ->
+hash_file(Prefix) -> fun(File, Acc) -> hash_file(File, Acc, Prefix) end.
+
+hash_file(File, {PH, InfoBlocks}, Prefix) ->
     {ok, FI} = file:read_file_info(File),
-    IB = {File, FI},
+    IB = {filename:split(relative_path(Prefix, File)), FI},
     {ok, IODev} = file:open(File, [read, binary, read_ahead]),
     PHUpdate = add_hashes(IODev, PH),
     {PHUpdate, [IB | InfoBlocks]}.
@@ -51,10 +53,10 @@ hash(IODev, {ok, NewData}, {Bin, Hashes}) ->
 read_and_hash(Arg) ->
     Empty = {{<<>>, []}, []},
     PH = case filelib:is_dir(Arg) of
-	true -> filelib:fold_files(Arg, ".*", true, fun hash_file/2, Empty);
+	true -> filelib:fold_files(Arg, ".*", true, hash_file(Arg), Empty);
 	false ->
 	    true = filelib:is_regular(Arg),
-	    hash_file(Arg, Empty)
+            hash_file(filename:basename(Arg), Empty, "")
     end,
     {Keys, FIs} = finish_hash(PH),
     {iolist_to_binary([rpc:yield(K) || K <- Keys]), FIs}.
@@ -74,20 +76,20 @@ mk_comment(Comment) when is_list(Comment) ->
 mk_infodict_single(PieceHashes, Name, Sz) when is_binary(PieceHashes) ->
     [{<<"pieces">>, PieceHashes},
      {<<"piece length">>, ?CHUNKSIZE},
-     {<<"name">>,   list_to_binary(Name)},
+     {<<"name">>, list_to_binary(filename:basename(Name))},
      {<<"length">>, Sz}].
 
 mk_files_list([], Accum, Sz) ->
     {Sz, lists:reverse(Accum)};
-mk_files_list([{N, #file_info { size = Size }} | R], Acc, S) ->
-    D = [{<<"path">>, list_to_binary(N)},
-	 {<<"size">>, Size}],
+mk_files_list([{Ns, #file_info { size = Size }} | R], Acc, S) ->
+    D = [{<<"path">>, [list_to_binary(N) || N <- Ns]}, {<<"length">>, Size}],
     mk_files_list(R, [D | Acc], S + Size).
 
-mk_infodict_multi(PieceHashes, D) when is_binary(PieceHashes) ->
+mk_infodict_multi(PieceHashes, Name, D) when is_binary(PieceHashes) ->
     {Sz, L} = mk_files_list(D, [], 0),
     [{<<"pieces">>, PieceHashes},
      {<<"length">>, Sz},
+     {<<"name">>, list_to_binary(filename:basename(Name))},
      {<<"piece length">>, ?CHUNKSIZE},
      {<<"files">>, L}].
 
@@ -95,14 +97,27 @@ write_torrent_file(Out, Data) ->
     Encoded = etorrent_bcoding:encode(Data),
     file:write_file(Out, Encoded).
 
-torrent_file(AnnounceURL, PieceHashes, FileInfo, Comment) ->
+torrent_file(FileName, AnnounceURL, PieceHashes, FileInfo, Comment) ->
     InfoDict = case FileInfo of
-		   [{Name, #file_info { size = Sz }}] ->
-		       mk_infodict_single(PieceHashes, Name, Sz);
+		   [{_Name, #file_info { size = Sz }}] ->
+		       mk_infodict_single(PieceHashes, FileName, Sz);
 		   L when is_list(L) ->
-		       mk_infodict_multi(PieceHashes, L)
+		       mk_infodict_multi(PieceHashes, FileName, L)
 	       end,
     [{<<"announce">>, list_to_binary(AnnounceURL)},
      {<<"info">>, InfoDict}] ++ mk_comment(Comment).
 
+%% @doc Convert an absolute path to relative path.
+relative_path(Prefix, File) ->
+    drop_leading_slash(drop_prefix(Prefix, File)).
 
+drop_prefix([X|Xs], [X|Ys]) ->
+    drop_prefix(Xs, Ys);
+drop_prefix([], Ys) ->
+    Ys.
+
+drop_leading_slash("/"  ++ X) -> X;
+drop_leading_slash("\\" ++ X) -> X;
+drop_leading_slash(X) -> X.
+
+drop_last_slash(X) -> filename:join(filename:split(X)).

@@ -6,6 +6,27 @@
 %% can be processed to completion.</p>
 %% <p>For UDP tracking, we delegate the work to the UDP tracker
 %% system.</p>
+%%
+%% Events
+%% If specified, must be one of started, completed, stopped, 
+%% (or empty which is the same as not being specified). 
+%% If not specified, then this request is one performed at regular intervals.
+%%
+%% - started: The first request to the tracker must include the event key with this value.
+%% - stopped: Must be sent to the tracker if the client is shutting down gracefully.
+%% - completed: Must be sent to the tracker when the download completes.
+%%   However, must not be sent if the download was already 100% complete 
+%%   when the client started. 
+%%   Presumably, this is to allow the tracker to increment the 
+%%   "completed downloads" metric based solely on this event. 
+%%
+%% - paused: From BEP-21
+%%
+%% In order to tell the tracker that a peer is a partial seed, it MUST send
+%% an event=paused parameter in every announce while it is a partial seed.
+%%
+%% Implementing event=paused is not save:
+%% https://forum.transmissionbt.com/viewtopic.php?f=4&t=7117
 %% @end
 -module(etorrent_tracker_communication).
 
@@ -250,7 +271,8 @@ contact_tracker_udp(Url, IP, Port, Event,
     {value, PL} = etorrent_torrent:lookup(Id),
     Uploaded   = proplists:get_value(uploaded, PL),
     Downloaded = proplists:get_value(downloaded, PL),
-    Left       = proplists:get_value(left, PL),
+    %% Ignore the fact, that this torrent can be partial.
+    Left       = proplists:get_value(left_or_skipped, PL),
     PropList = [{info_hash, InfoHash},
                 {peer_id, PeerId},
                 {up, Uploaded},
@@ -397,7 +419,9 @@ build_tracker_url(Url, Event,
                none -> Request;
                started -> [{"event", "started"} | Request];
                stopped -> [{"event", "stopped"} | Request];
-               completed -> [{"event", "completed"} | Request]
+               completed -> [{"event", "completed"} | Request];
+               %% BEP-21
+               paused -> [{"event", "paused"} | Request]
            end,
 
     %% Url can already has `?'.

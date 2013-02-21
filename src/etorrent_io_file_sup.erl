@@ -25,11 +25,24 @@ start_link(TorrentID, TorrentFile, Files) ->
 
 %% @private
 init([TorrentID, Workdir, Files]) ->
-    FileSpecs  = [file_server_spec(TorrentID, Workdir, Path) || Path <- Files],
+    lager:debug("Init IO file supervisor for ~p.", [TorrentID]),
+    FileSpecs  = file_server_specs(TorrentID, Workdir, Files, 1),
+    lager:debug("Completing initialization of IO file supervisor for ~p.", [TorrentID]),
+    lager:debug("Starting ~p IO file workers for ~p.", [length(FileSpecs), TorrentID]),
     {ok, {{one_for_all, 1, 60}, FileSpecs}}.
 
-file_server_spec(TorrentID, Workdir, Path) ->
+file_server_specs(TorrentID, Workdir, [Path|Paths], N) ->
+    [file_server_spec(TorrentID, Workdir, Path, N)
+    |file_server_specs(TorrentID, Workdir, Paths, N+1)];
+file_server_specs(_TorrentID, _Workdir, [], _N) ->
+    [].
+
+file_server_spec(TorrentID, Workdir, Path, FileID) ->
     Fullpath = filename:join(Workdir, Path),
-    {{TorrentID, Path},
+    %% FileID in the beginning of the worker key is an optimization.
+    %% Key `{TorrentID, Path}' will work very slow, if there are few 
+    %% thousand workers.
+    %% The reason is that supervisor will check specs for duplicates.
+    {{FileID, TorrentID, Path},
         {etorrent_io_file, start_link, [TorrentID, Path, Fullpath]},
         permanent, 2000, worker, [etorrent_io_file]}.

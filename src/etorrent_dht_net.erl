@@ -311,8 +311,9 @@ dht_iter_search(SearchType, Target, Width, Retry, Retries,
             WithPeers ++ Tmp
     end,
 
+    NewNext2 = lists:usort(NewNext),
     dht_iter_search(SearchType, Target, Width, Retry, NewRetries,
-                    NewNext, NewQueried, NewAlive, NewWithPeers).
+                    NewNext2, NewQueried, NewAlive, NewWithPeers).
 
 
 %

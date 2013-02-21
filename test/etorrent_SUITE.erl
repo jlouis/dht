@@ -10,9 +10,13 @@
 -export([seed_leech/0, seed_leech/1,
 	 seed_transmission/0, seed_transmission/1,
 	 leech_transmission/0, leech_transmission/1,
-     bep9/0, bep9/1]).
+     bep9/0, bep9/1,
+     partial_downloading/0, partial_downloading/1
+     ]).
 
--define(TESTFILE30M, "test_file_30M.random").
+-define(TESTFILE30M,  "test_file_30M.random").
+-define(TESTDIR2x30M, "test_dir_2x30M").
+
 -define(ET_WORK_DIR, "work-et").
 -define(TR_WORK_DIR, "work-tr").
 
@@ -36,13 +40,16 @@ init_per_suite(Config) ->
     %% files we will later rely on for fetching, this is ok I think.
     Directory = ?config(data_dir, Config),
     io:format("Data directory: ~s~n", [Directory]),
-    TestFn = ?TESTFILE30M,
-    Fn = filename:join([Directory, TestFn]),
+    Fn  = filename:join([Directory, ?TESTFILE30M]),
+    Dir = filename:join([Directory, ?TESTDIR2x30M]),
     ensure_random_file(Fn),
+    ensure_random_dir(Dir),
     file:set_cwd(Directory),
-    TorrentFn = ensure_torrent_file(TestFn),
+    TorrentFn  = ensure_torrent_file(Fn),
+    TorrentDir = ensure_torrent_file(Dir),
     %% Literal infohash.
-    {ok, TorrentIH} = etorrent_dotdir:info_hash(TorrentFn),
+    {ok, TorrentIH}    = etorrent_dotdir:info_hash(TorrentFn),
+    {ok, DirTorrentIH} = etorrent_dotdir:info_hash(TorrentDir),
     io:format(user, "Infohash is ~p.~n", [TorrentIH]),
     Pid = start_opentracker(Directory),
     {ok, SeedNode} = test_server:start_node('seeder', slave, []),
@@ -51,6 +58,7 @@ init_per_suite(Config) ->
     [prepare_node(Node)
      || Node <- [SeedNode, LeechNode, MiddlemanNode]],
     [{info_hash, TorrentIH},
+     {dir_info_hash, DirTorrentIH},
      {tracker_port, Pid},
      {leech_node, LeechNode},
      {middleman_node, MiddlemanNode},
@@ -95,6 +103,8 @@ init_locations(Config) ->
     SeedFile    = filename:join([DataDir, ?TESTFILE30M]),
     SeedFastResume = filename:join([PrivDir, "seed_fast_resume"]),
 
+    DirTorrent = filename:join([DataDir, ?TESTDIR2x30M ++ ".torrent"]),
+
     LeechFile    = filename:join([PrivDir, ?TESTFILE30M]),
     LeechFastResume = filename:join([PrivDir, "leech_fast_resume"]),
 
@@ -103,6 +113,7 @@ init_locations(Config) ->
     %% Setup Etorrent location
     EtorrentWorkDir          = filename:join([PrivDir, ?ET_WORK_DIR]),
     EtorrentLeechFile        = filename:join([PrivDir, ?ET_WORK_DIR, ?TESTFILE30M]),
+    EtorrentLeechDir         = filename:join([PrivDir, ?ET_WORK_DIR, ?TESTDIR2x30M]),
 
     %% Setup Transmission locations
     TransMissionWorkDir      = filename:join([PrivDir, ?TR_WORK_DIR]),
@@ -111,6 +122,7 @@ init_locations(Config) ->
 			filename:join([TransMissionWorkDir, "settings.json"])),
 
     [{seed_torrent, SeedTorrent},
+     {dir_torrent, DirTorrent},
      {bep9_torrent, filename:join([PrivDir, "bep9.torrent"])},
      {seed_file,    SeedFile},
      {seed_fast_resume, SeedFastResume},
@@ -119,6 +131,7 @@ init_locations(Config) ->
      {middleman_fast_resume, InterFastResume},
      {et_work_dir, EtorrentWorkDir},
      {et_leech_file, EtorrentLeechFile},
+     {et_leech_dir, EtorrentLeechDir},
      {tr_work_dir, TransMissionWorkDir},
      {tr_file, TransMissionFile} | Config].
 
@@ -166,6 +179,10 @@ init_per_testcase(seed_leech, Config) ->
     spawn_seeder(Config),
     spawn_leecher(Config),
     Config;
+init_per_testcase(partial_downloading, Config) ->
+    spawn_seeder(Config),
+    spawn_leecher(Config),
+    Config;
 init_per_testcase(bep9, Config) ->
     spawn_seeder(Config),
     spawn_leecher(Config),
@@ -189,6 +206,10 @@ end_per_testcase(seed_leech, Config) ->
     stop_seeder(Config),
     stop_leecher(Config),
     ?line ok = file:delete(?config(et_leech_file, Config));
+end_per_testcase(partial_downloading, Config) ->
+    stop_seeder(Config),
+    stop_leecher(Config),
+    ?line ok = del_dir_r(?config(et_leech_dir, Config));
 end_per_testcase(bep9, Config) ->
     stop_seeder(Config),
     stop_leecher(Config),
@@ -241,7 +262,9 @@ middleman_configuration(Config, CConf, PrivDir, DownloadSuffix) ->
 %% Tests
 %% ----------------------------------------------------------------------
 groups() ->
-    Tests = [seed_transmission, seed_leech, leech_transmission, bep9],
+    Tests = [
+%   Tests = [seed_transmission, seed_leech, leech_transmission, bep9,
+             partial_downloading],
     [{main_group, [shuffle], Tests}].
 
 all() ->
@@ -297,6 +320,30 @@ seed_leech(Config) ->
     end,
     sha1_file(?config(et_leech_file, Config))
 	=:= sha1_file(?config(seed_file, Config)).
+
+partial_downloading() ->
+    [{require, common_conf, etorrent_common_config}].
+
+partial_downloading(Config) ->
+    io:format(user, "~n======START PARTICAL DOWNLOADING TEST CASE======~n", []),
+    {Ref, Pid} = {make_ref(), self()},
+    LeechNode = ?config(leech_node, Config),
+    ok = rpc:call(LeechNode,
+		  etorrent, start,
+		  [?config(dir_torrent, Config), {Ref, Pid}]),
+    HexIH = ?config(dir_info_hash, Config),
+    IntIH = list_to_integer(HexIH, 16),
+    BinIH = <<IntIH:160>>,
+    {value, Props} = rpc:call(LeechNode, etorrent_table, get_torrent,
+                              [{infohash, BinIH}]),
+    TorrentID = proplists:get_value(id, Props),
+    io:format(user, "TorrentID on the leech node is ~p.~n", [TorrentID]),
+    rpc:call(LeechNode, etorrent_torrent_ctl, skip_file, [TorrentID, 2]),
+    receive
+	{Ref, done} -> ok
+    after
+	120*1000 -> exit(timeout_error)
+    end.
 
 
 bep9() ->
@@ -503,14 +550,23 @@ ensure_random_file(Fn) ->
     end.
 
 create_torrent_file(FName) ->
-    random:seed({137, 314159265, 1337}),
-    Bin = create_binary(30*1024*1024, <<>>),
+    Bin = crypto:rand_bytes(30*1024*1024),
     file:write_file(FName, Bin).
 
-create_binary(0, Bin) -> Bin;
-create_binary(N, Bin) ->
-    Byte = random:uniform(256) - 1,
-    create_binary(N-1, <<Bin/binary, Byte:8/integer>>).
+
+ensure_random_dir(DName) ->
+    case filelib:is_dir(DName) of
+	true ->
+	    ok;
+	false ->
+        file:make_dir(DName)
+    end,
+    File1 = filename:join(DName, "xyz.bin"),
+    File2 = filename:join(DName, "abc.bin"),
+    ensure_random_file(File1),
+    ensure_random_file(File2),
+    ok.
+
 
 sha1_file(F) ->
     Ctx = crypto:sha_init(),
