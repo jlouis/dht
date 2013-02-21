@@ -262,8 +262,7 @@ middleman_configuration(Config, CConf, PrivDir, DownloadSuffix) ->
 %% Tests
 %% ----------------------------------------------------------------------
 groups() ->
-    Tests = [
-%   Tests = [seed_transmission, seed_leech, leech_transmission, bep9,
+    Tests = [seed_transmission, seed_leech, leech_transmission, bep9,
              partial_downloading],
     [{main_group, [shuffle], Tests}].
 

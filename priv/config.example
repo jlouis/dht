@@ -78,19 +78,6 @@
    %% "preallocate" which means the system will fill the file up on disk before using it.
    {preallocation_strategy, sparse },
 
-   %% Enable the Web user interface in etorrent, on 127.0.0.1:8080
-   {webui, true },
-
-   %% Enable logging in the webui
-   {webui_logger_dir, "log/webui"},
-
-   %% The address to bind the webui on. Notice that is has to be given as a tuple for an IP address
-   %% and as a string for a domain name.
-   {webui_bind_address, {127,0,0,1}},
-
-   %% The port to use for the webui
-   {webui_port, 8080},
-
    %% Enable profiling; do not enable unless you need it
    {profiling, false}
   ]},

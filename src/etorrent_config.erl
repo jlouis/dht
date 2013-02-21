@@ -28,11 +28,7 @@
 	 optimistic_slots/0,
 	 profiling/0,
 	 udp_port/0,
-	 webui/0,
-	 webui_address/0,
-	 webui_log_dir/0,
-	 webui_port/0,
-         use_upnp/0,
+     use_upnp/0,
 	 work_dir/0]).
 
 %% API
@@ -52,10 +48,6 @@ configuration_specification() ->
      required(fast_resume_file),
      required(udp_port),
      optional(max_peers, 40),
-     required(webui),
-     required(webui_port),
-     required(webui_bind_address),
-     required(webui_logger_dir),
      optional(fs_watermark_high, 128),
      optional(max_upload_slots, auto),
      required(min_upload),
@@ -105,8 +97,6 @@ udp_port() -> call(udp_port).
 -spec max_peers() -> pos_integer().
 max_peers() -> call(max_peers).
 
--spec webui() -> boolean().
-webui() -> call(webui).
 
 -spec use_upnp() -> boolean().
 use_upnp() -> element(2, (required(use_upnp))([])).
@@ -116,15 +106,6 @@ use_upnp() -> element(2, (required(use_upnp))([])).
 %% Push profiling to be a startup option on the top-level supervisor.
 -spec profiling() -> boolean().
 profiling() -> element(2, (required(profiling))([])).
-
--spec webui_port() -> pos_integer().
-webui_port() -> call(webui_port).
-
--spec webui_address() -> inet:ip_address().
-webui_address() -> call(webui_bind_address).
-
--spec webui_log_dir() -> file_path().
-webui_log_dir() -> call(webui_logger_dir).
 
 -spec max_files() -> pos_integer().
 max_files() -> call(fs_watermark_high).

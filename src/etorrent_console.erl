@@ -90,7 +90,6 @@ handle_info(update, SD=#state{torrents=OldTorrents, tick=Timeout}) ->
     {noreply, SD#state{torrents=NewTorrents2}}.
 
 terminate(_Reason, _SD) ->
-    cascadae_event:delete(),
     ok.
 
 code_change(_OldVsn, SD, _Extra) ->
