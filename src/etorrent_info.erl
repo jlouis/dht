@@ -7,6 +7,10 @@
 -define(DEFAULT_CHUNK_SIZE, 16#4000). % TODO - get this value from a configuration file
 -define(METADATA_BLOCK_BYTE_SIZE, 16384). %% 16KiB (16384 Bytes) 
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 
 -export([start_link/2,
          register_server/1,
@@ -14,6 +18,7 @@
          await_server/1]).
 
 -export([get_mask/2,
+         get_mask/3,
          get_mask/4,
          mask_to_filelist/2,
          mask_to_size/2,
@@ -55,6 +60,7 @@
 -record(state, {
     torrent :: torrent_id(),
     static_file_info :: array(),
+    directories :: [file_id()], %% usorted
     total_size :: non_neg_integer(),
     piece_size :: non_neg_integer(),
     chunk_size = ?DEFAULT_CHUNK_SIZE :: non_neg_integer(),
@@ -78,7 +84,8 @@
     size      = 0 :: non_neg_integer(),
     % byte offset from 0
     position  = 0 :: non_neg_integer(),
-    pieces :: etorrent_pieceset:t()
+    pieces :: etorrent_pieceset:t(),
+    distinct_pieces :: etorrent_pieceset:t()
 }).
 
 %% @doc Start the File I/O Server
@@ -119,32 +126,25 @@ await_server(TorrentID) ->
     etorrent_utils:await(server_name(TorrentID), ?AWAIT_TIMEOUT).
 
 
+get_mask(TorrentID, FileID) ->
+    get_mask(TorrentID, FileID, true).
+
 
 %% @doc Build a mask of the file in the torrent.
--spec get_mask(torrent_id(), file_id()) -> pieceset().
-get_mask(TorrentID, FileID) when is_integer(FileID) ->
+-spec get_mask(torrent_id(), file_id() | [file_id()]) -> pieceset().
+get_mask(TorrentID, FileID, IsGreedy)
+    when is_integer(FileID), is_boolean(IsGreedy) ->
     DirPid = await_server(TorrentID),
-    {ok, Mask} = gen_server:call(DirPid, {get_mask, FileID}),
+    {ok, Mask} = gen_server:call(DirPid, {get_mask, FileID, IsGreedy}),
     Mask;
 
 %% List of files with same priority.
-get_mask(TorrentID, [_|_] = IdList) ->
+get_mask(TorrentID, IdList, IsGreedy)
+    when is_list(IdList), is_boolean(IsGreedy) ->
     true = lists:all(fun is_integer/1, IdList),
     DirPid = await_server(TorrentID),
-    MapFn = fun(FileID) ->
-            {ok, Mask} = gen_server:call(DirPid, {get_mask, FileID}),
-            Mask
-        end,
-
-    %% Do map
-    Masks = lists:map(MapFn, IdList),
-    %% Do reduce
-    etorrent_pieceset:union(Masks);
-
-get_mask(TorrentID, []) ->
-    DirPid = await_server(TorrentID),
-    {ok, PieceCount} = gen_server:call(DirPid, piece_count),
-    etorrent_pieceset:empty(PieceCount).
+    {ok, Mask} = gen_server:call(DirPid, {get_mask, IdList, IsGreedy}),
+    Mask.
    
  
 %% @doc Build a mask of the part of the file in the torrent.
@@ -216,17 +216,22 @@ tree_children(TorrentID, FileID) when is_integer(TorrentID), is_integer(FileID) 
 
     %% get valid pieceset
     CtlPid = etorrent_torrent_ctl:lookup_server(TorrentID),    
-    {ok, Valid} = etorrent_torrent_ctl:valid_pieces(CtlPid),
+    {ok, Valid}    = etorrent_torrent_ctl:valid_pieces(CtlPid),
+    {ok, Unwanted} = etorrent_torrent_ctl:unwanted_pieces(CtlPid),
 
     lists:map(fun(X) ->
-            ValidFP = etorrent_pieceset:intersection(X#file_info.pieces, Valid),
-            SizeFP = etorrent_pieceset:size(X#file_info.pieces),
-            ValidSizeFP = etorrent_pieceset:size(ValidFP),
+            SizeFP         = etorrent_pieceset:size(X#file_info.pieces),
+            Pieces         = X#file_info.pieces,
+            ValidFP        = etorrent_pieceset:intersection(Pieces, Valid),
+            UnwantedFP     = etorrent_pieceset:intersection(Pieces, Unwanted),
+            ValidSizeFP    = etorrent_pieceset:size(ValidFP),
+            UnwantedSizeFP = etorrent_pieceset:size(UnwantedFP),
             [{id, X#file_info.id}
             ,{name, X#file_info.short_name}
             ,{size, X#file_info.size}
             ,{capacity, X#file_info.capacity}
             ,{is_leaf, (X#file_info.children == [])}
+            ,{mode, file_mode(SizeFP, UnwantedSizeFP)}
             ,{progress, ValidSizeFP / SizeFP}
             ]
         end, Records).
@@ -285,7 +290,7 @@ init([TorrentID, Torrent]) ->
     Info = collect_static_file_info(Torrent),
     lager:debug("Static info is collected for ~p.", [TorrentID]),
 
-    {Static, PLen, TLen} = Info,
+    {Static, PLen, TLen, Dirs} = Info,
 
     true = register_server(TorrentID),
 
@@ -297,6 +302,7 @@ init([TorrentID, Torrent]) ->
     InitState = #state{
         torrent=TorrentID,
         static_file_info=Static,
+        directories=Dirs,
         total_size=TLen, 
         piece_size=PLen,
         piece_count=byte_to_piece_count(TLen, PLen),
@@ -364,14 +370,12 @@ handle_call({get_mask, FileID, PartStart, PartSize}, _, State) ->
             {reply, {ok, Set}, State}
     end;
     
-handle_call({get_mask, FileID}, _, State) ->
-    #state{static_file_info=Arr} = State,
-    case array:get(FileID, Arr) of
-        undefined ->
-            {reply, {error, badid}, State};
-        #file_info {pieces = Mask} ->
-            {reply, {ok, Mask}, State}
-    end;
+handle_call({get_mask, FileID, IsGreedy}, _, State) ->
+    #state{static_file_info=Arr,
+           piece_size=PLen,
+           total_size=TLen} = State,
+    Mask = get_mask_int(FileID, Arr, PLen, TLen, IsGreedy),
+    {reply, {ok, Mask}, State};
 
 handle_call({long_file_name, FileIDs}, _, State) ->
     #state{static_file_info=Arr} = State,
@@ -428,7 +432,7 @@ handle_call({get_piece, PieceNum}, _, State=#state{}) ->
 
 handle_call({mask_to_filelist, Mask}, _, State=#state{}) ->
     #state{static_file_info=Arr} = State,
-    List = mask_to_filelist_int(Mask, Arr),
+    List = mask_to_filelist_int(Mask, Arr, true),
     {reply, {ok, List}, State};
 
 handle_call({mask_to_size, Mask}, _, State=#state{}) ->
@@ -474,8 +478,10 @@ collect_static_file_info(Torrent) ->
     %% Fill `pieces' field.
     %% A mask is a set of pieces which contains the file.
     Rec3 = fill_pieces(Rec2, PieceLength, TLen),
-    Rec4 = fill_ids(Rec3),
-    {array:from_list(Rec4), PieceLength, TLen}.
+    Rec4 = fill_distinct_pieces(Rec3, PieceLength, TLen),
+    Rec5 = fill_ids(Rec4),
+    DirIds = [FileId || #file_info{id=FileId, children=[_|_]} <- Rec5],
+    {array:from_list(Rec5), PieceLength, TLen, DirIds}.
 
 
 %% @private
@@ -558,7 +564,6 @@ file_prefix_(S1, S2) ->
 add_directories_([], Idx, _Cur, Children, Acc) ->
     {Acc, lists:reverse(Children), Idx, []};
 
-%% @private
 add_directories_([H|T], Idx, Cur, Children, Acc) ->
     #file_info{ name = Name, position = CurPos } = H,
     Dir = dirname_(Name),
@@ -612,6 +617,15 @@ fill_pieces(RecList, PLen, TLen) ->
         
     lists:map(F, RecList).    
 
+fill_distinct_pieces(RecList, PLen, TLen) ->
+    F = fun(#file_info{position = From, size = Size} = Rec) ->
+            %% Don't be greedy.
+            Mask = make_mask(From, Size, PLen, TLen, false),
+            Set = etorrent_pieceset:from_bitstring(Mask),
+            Rec#file_info{distinct_pieces = Set}
+        end,
+        
+    lists:map(F, RecList).    
 
 fill_ids(RecList) ->
     fill_ids_(RecList, 0, []).
@@ -627,8 +641,19 @@ fill_ids_([], _Id, Acc) ->
     lists:reverse(Acc).
 
 
+make_mask(From, Size, PLen, TLen) ->
+    make_mask(From, Size, PLen, TLen, true).
+
+-spec make_mask(From, Size, PLen, TLen, IsGreedy) -> Mask when
+    From :: non_neg_integer(),
+    Size :: non_neg_integer(),
+    PLen :: non_neg_integer(),
+    TLen :: non_neg_integer(),
+    IsGreedy :: boolean(),
+    Mask :: pieceset().
+
 %% @private
-make_mask(From, Size, PLen, TLen)
+make_mask(From, Size, PLen, TLen, IsGreedy)
     when PLen =< TLen, Size =< TLen, From >= 0, PLen > 0 ->
     %% __Bytes__: 1 <= From <= To <= TLen
     %%
@@ -640,10 +665,10 @@ make_mask(From, Size, PLen, TLen)
     PTotal = byte_to_piece_count(TLen, PLen),
 
     %% indexing from 0
-    PFrom  = byte_to_piece_index(From, PLen),
+    PFrom  = byte_to_piece_index(From, PLen, IsGreedy),
 
     PBefore = PFrom,
-    PIn     = byte_to_piece_count_beetween(From, Size, PLen),
+    PIn     = byte_to_piece_count_beetween(From, Size, PLen, TLen, IsGreedy),
     PAfter  = PTotal - PIn - PBefore,
     assert_positive(PBefore),
     assert_positive(PIn),
@@ -652,8 +677,14 @@ make_mask(From, Size, PLen, TLen)
 
 
 %% @private
+%% Warning: It is not optimal.
 minimize_reclist(RecList) ->
-    minimize_(RecList, []).
+    RecList1 = lists:usort(fun(X, Y) -> sort_file_key(X) =< sort_file_key(Y) end,
+                           RecList),
+    minimize_(RecList1, []).
+
+sort_file_key(#file_info{position=Pos, size=Size}) ->
+    [Pos, -Size].
 
 
 minimize_([H|T], []) ->
@@ -678,36 +709,47 @@ minimize_([], Acc) ->
 
 
 -ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
 
 make_mask_test_() ->
     F = fun make_mask/4,
     % make_index(From, Size, PLen, TLen)
-    %% |0123|4567|89A-|
+    %% |0123|4567|89--|
     %% |--xx|x---|----|
     [?_assertEqual(<<2#110:3>>        , F(2, 3,  4, 10))
-    %% |012|345|678|9A-|
+    %% |012|345|678|9--|
     %% |--x|xx-|---|---|
     ,?_assertEqual(<<2#1100:4>>       , F(2, 3,  3, 10))
-    %% |01|23|45|67|89|A-|
-    %% |--|xx|x-|--|--|--|
+    %% |01|23|45|67|89|
+    %% |--|xx|x-|--|--|
     ,?_assertEqual(<<2#01100:5>>      , F(2, 3,  2, 10))
-    %% |0|1|2|3|4|5|6|7|8|9|A|
-    %% |-|-|x|x|x|-|-|-|-|-|-|
+    %% |0|1|2|3|4|5|6|7|8|9|
+    %% |-|-|x|x|x|-|-|-|-|-|
     ,?_assertEqual(<<2#0011100000:10>>, F(2, 3,  1, 10))
     ,?_assertEqual(<<1:1>>            , F(2, 3, 10, 10))
     ,?_assertEqual(<<1:1, 0:1>>       , F(2, 3,  9, 10))
     %% |012|345|678|9A-|
     %% |xxx|xx-|---|---|
-    ,?_assertEqual(<<2#1100:4>>       , F(0, 5,  3, 10))
+    ,?_assertEqual(<<2#1100:4>>       , F(0, 5,  3, 11))
     %% |012|345|678|9A-|
     %% |---|---|--x|---|
-    ,?_assertEqual(<<2#0010:4>>       , F(8, 1,  3, 10))
+    ,?_assertEqual(<<2#0010:4>>       , F(8, 1,  3, 11))
     %% |012|345|678|9A-|
     %% |---|---|--x|x--|
-    ,?_assertEqual(<<2#0011:4>>       , F(8, 2,  3, 10))
+    ,?_assertEqual(<<2#0011:4>>       , F(8, 2,  3, 11))
     ,?_assertEqual(<<-1:30>>, F(0, 31457279,  1048576, 31457280))
     ,?_assertEqual(<<-1:30>>, F(0, 31457280,  1048576, 31457280))
+    ].
+
+make_ungreedy_mask_test_() ->
+    F = fun(From, Size, PLen, TLen) -> 
+            make_mask(From, Size, PLen, TLen, false) end,
+    % make_index(From, Size, PLen, TLen, false)
+    %% |0123|4567|89A-|
+    %% |--xx|x---|----|
+    [?_assertEqual(<<2#000:3>>        , F(2, 3,  4, 11))
+    %% |0123|4567|89A-|
+    %% |--xx|xxxx|xx--|
+    ,?_assertEqual(<<2#010:3>>        , F(2, 8,  4, 11))
     ].
 
 add_directories_test_() ->
@@ -754,13 +796,14 @@ el(List, Pos) ->
 
 
 add_directories_test() ->
-    [Root|_] =
+    [Root|_] = X=
     add_directories(
         [#file_info{position=0, size=3, name=
     "BBC.7.BigToe/Eoin Colfer. Artemis Fowl/artemis_04.mp3"}
         ,#file_info{position=3, size=2, name=
     "BBC.7.BigToe/Eoin Colfer. Artemis Fowl. The Arctic Incident/artemis2_03.mp3"}
         ]),
+    io:format(user, "Add dirs: ~p~n", [X]),
     ?assertMatch(#file_info{position=0, size=5}, Root).
 
 % H = {file_info,undefined,
@@ -811,8 +854,22 @@ assert_positive(X) ->
 byte_to_piece_count(TLen, PLen) ->
     (TLen div PLen) + case TLen rem PLen of 0 -> 0; _ -> 1 end.
 
-byte_to_piece_index(TLen, PLen) ->
-    TLen div PLen.
+byte_to_piece_index(Pos, PLen, true) ->
+    Pos div PLen;
+byte_to_piece_index(Pos, PLen, false) ->
+    case Pos rem PLen of
+        %% Bytes:  |0123|4567|89AB|
+        %% Pieces: |0   |1   |2   |
+        %% Set:    |----|xxxx|xxx-|
+        %% Index: 1
+        0 -> Pos div PLen;
+        %% Bytes:  |0123|4567|89AB|
+        %% Pieces: |0   |1   |2   |
+        %% Set:    |---x|xxxx|xxx-|
+        %% Index: 1
+        %% Rem: 3
+        _ -> (Pos div PLen) + 1
+    end.
 
 
 %% Bytes:  |0123|4567|89AB|
@@ -827,7 +884,8 @@ byte_to_piece_index(TLen, PLen) ->
 %% PLeft:  1
 %% PRight: 1
 %% PMid:   1
-byte_to_piece_count_beetween(From, Size, PLen) ->
+byte_to_piece_count_beetween(From, Size, PLen, _TLen, true) ->
+    %% Greedy.
     To     = From + Size,
     Left   = case From rem PLen of 0 -> 0; X -> PLen - X end,
     Right  = To rem PLen,
@@ -837,20 +895,83 @@ byte_to_piece_count_beetween(From, Size, PLen) ->
     PMid   = Mid div PLen,
     %% assert
     0      = Mid rem PLen,
-    PMid + PLeft + PRight.
+    PMid + PLeft + PRight;
+%% Bytes:  |0123|4567|89AB|
+%% Pieces: |0   |1   |2   |
+%% Set:    |---x|xxxx|xxx-|
+%% From:   3
+%% Size:   8
+%% PLen:   4
+%% Result: 1
+byte_to_piece_count_beetween(From, Size, PLen, TLen, false) 
+    when Size < PLen -> 0 + check_last_piece(From, Size, PLen, TLen);
+    %% heuristic
+byte_to_piece_count_beetween(From, Size, PLen, TLen, false) ->
+    %% Ungreedy.
+    To     = From + Size,
+    Left   = case From rem PLen of 0 -> 0; X -> PLen - X end,
+    Right  = To rem PLen,
+    Mid    = Size - Left - Right,
+    io:format(user, "~nFrom: ~p Size ~p PLen ~p Res ~p",
+              [From, Size, PLen, Mid div PLen]),
+    (Mid div PLen) + check_last_piece(From, Size, PLen, TLen).
 
+%% If last piece has non-standard size and it fully included, return 1.
+check_last_piece(From, Size, PLen, TLen) ->
+    LastPieceSize = TLen rem PLen,
+    %% If LastPieceSize =:= 0, then the last piece has a standard length.
+    if LastPieceSize =/= 0, LastPieceSize =< Size, From + Size =:= TLen -> 1;
+       true -> 0
+    end.
+    
+    
+    
 
 -ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
+check_last_piece_test_() ->
+    %% Bytes:  |0123|4567|89AB|
+    %% Pieces: |0   |1   |2   |
+    %% Set:    |---x|xxxx|xxx-|
+    [{"The last piece is not full.",
+      ?_assertEqual(0, check_last_piece(3, 8, 4, 12))},
+    %% Bytes:  |0123|4567|89AB|
+    %% Pieces: |0   |1   |2   |
+    %% Set:    |---x|xxxx|xxx-|
+     {"The last piece has a standard size.",
+      ?_assertEqual(0, check_last_piece(3, 9, 4, 12))},
+    %% Bytes:  |0123|4567|89A-|
+    %% Pieces: |0   |1   |2   |
+    %% Set:    |---x|xxxx|xxx-|
+    ?_assertEqual(1, check_last_piece(3, 8, 4, 11))
+    ].
+
 byte_to_piece_count_beetween_test_() ->
-    [?_assertEqual(3, byte_to_piece_count_beetween(3, 8, 4))
-    ,?_assertEqual(0, byte_to_piece_count_beetween(0, 0, 10))
-    ,?_assertEqual(1, byte_to_piece_count_beetween(0, 1, 10))
-    ,?_assertEqual(1, byte_to_piece_count_beetween(0, 9, 10))
-    ,?_assertEqual(1, byte_to_piece_count_beetween(0, 10, 10))
-    ,?_assertEqual(2, byte_to_piece_count_beetween(0, 11, 10))
-    ,?_assertEqual(2, byte_to_piece_count_beetween(1, 10, 10))
-    ,?_assertEqual(2, byte_to_piece_count_beetween(1, 11, 10))
+    [?_assertEqual(3, byte_to_piece_count_beetween(3, 8,  4,  20, true))
+    ,?_assertEqual(0, byte_to_piece_count_beetween(0, 0,  10, 20, true))
+    ,?_assertEqual(1, byte_to_piece_count_beetween(0, 1,  10, 20, true))
+    ,?_assertEqual(1, byte_to_piece_count_beetween(0, 9,  10, 20, true))
+    ,?_assertEqual(1, byte_to_piece_count_beetween(0, 10, 10, 20, true))
+    ,?_assertEqual(2, byte_to_piece_count_beetween(0, 11, 10, 20, true))
+    ,?_assertEqual(2, byte_to_piece_count_beetween(1, 10, 10, 20, true))
+    ,?_assertEqual(2, byte_to_piece_count_beetween(1, 11, 10, 20, true))
+
+    ,?_assertEqual(1, byte_to_piece_count_beetween(0, 4,  4, 20, false))
+    ,?_assertEqual(1, byte_to_piece_count_beetween(3, 8,  4, 20, false))
+    ,?_assertEqual(1, byte_to_piece_count_beetween(2030, 1156,
+                                                   524288, 600000, true))
+    %% From: 2030 Size 1156 PLen 524288 Res -1
+    %% test the heuristic.
+    ,?_assertEqual(0, byte_to_piece_count_beetween(2030, 1156,
+                                                   524288, 600000, false))
+   
+    %% Bytes:  |0123|4567|89A-|
+    %% Pieces: |0   |1   |2   |
+    %% Set:    |----|----|xxx-|
+    ,?_assertEqual(1, byte_to_piece_count_beetween(8, 3, 4, 11, false))
+    %% Bytes:  |0123|4567|89A-|
+    %% Pieces: |0   |1   |2   |
+    %% Set:    |----|----|xx--|
+    ,?_assertEqual(0, byte_to_piece_count_beetween(8, 2, 4, 11, false))
     ].
 
 -endif.
@@ -876,7 +997,6 @@ mask_to_size(Mask, TLen, PLen) ->
 
 
 -ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
 mask_to_size_test_() ->
     %% Ids:    |01234|
     %% Pieces: |----x|
@@ -907,41 +1027,67 @@ mask_to_size_test_() ->
 
 
 %% Internal.
-mask_to_filelist_int(Mask, Arr) ->
+-spec mask_to_filelist_int(Mask, Arr, IsGreedy) -> [FileID] when
+    Mask :: pieceset(),
+    Arr :: term(),
+    IsGreedy :: boolean(),
+    FileID :: file_id().
+mask_to_filelist_int(Mask, Arr, true) ->
     Root = array:get(?ROOT_FILE_ID, Arr),
     case Root of
         %% Everything is unwanted.
         #file_info{pieces=Mask} ->
             [0];
         #file_info{children=SubFileIds} ->
-            mask_to_filelist_rec(SubFileIds, Mask, Arr)
+            mask_to_filelist_rec(SubFileIds, Mask, Arr, #file_info.pieces)
+    end;
+mask_to_filelist_int(Mask, Arr, false) ->
+    Root = array:get(?ROOT_FILE_ID, Arr),
+    case Root of
+        %% Everything is unwanted.
+        #file_info{distinct_pieces=Mask} ->
+            [0];
+        #file_info{children=SubFileIds} ->
+            mask_to_filelist_rec(SubFileIds, Mask, Arr,
+                                 #file_info.distinct_pieces)
     end.
 
 %% Matching all files starting from Root recursively.
-mask_to_filelist_rec([FileId|FileIds], Mask, Arr) ->
-    #file_info{pieces=FileMask, children=SubFileIds} = array:get(FileId, Arr),
+mask_to_filelist_rec([FileId|FileIds], Mask, Arr, PieceField) ->
+    File = #file_info{children=SubFileIds} = array:get(FileId, Arr),
+    FileMask = element(PieceField, File),
     Diff = etorrent_pieceset:difference(FileMask, Mask),
-    case etorrent_pieceset:is_empty(Diff) of
-        true ->
+    case {etorrent_pieceset:is_empty(FileMask),
+          etorrent_pieceset:is_empty(Diff)} of
+        {true, true} ->
+            mask_to_filelist_rec_tiny_file(File, Mask) ++
+            mask_to_filelist_rec(FileIds, Mask, Arr, PieceField);
+        {false, true} ->
             %% The whole file is matched.
-            [FileId|mask_to_filelist_rec(FileIds, Mask, Arr)];
-        false ->
+            [FileId|mask_to_filelist_rec(FileIds, Mask, Arr, PieceField)];
+        {false, false} ->
             %% Check childrens.
-            mask_to_filelist_rec(SubFileIds, Mask, Arr) ++
-            mask_to_filelist_rec(FileIds, Mask, Arr)
+            mask_to_filelist_rec(SubFileIds, Mask, Arr, PieceField) ++
+            mask_to_filelist_rec(FileIds, Mask, Arr, PieceField)
     end;
-mask_to_filelist_rec([], _Mask, _Arr) ->
+mask_to_filelist_rec([], _Mask, _Arr, _PieceField) ->
     [].
 
+%% When IsGreedy = false, small files can be skipped.
+%% This function is for this case.
+mask_to_filelist_rec_tiny_file(#file_info{id=Id, pieces=FileMask}, Mask) ->
+    Diff = etorrent_pieceset:difference(FileMask, Mask),
+    [Id || etorrent_pieceset:is_empty(Diff)].
+
+
 -ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
 
 mask_to_filelist_int_test_() ->
     FileName = filename:join(code:lib_dir(etorrent_core), 
                              "test/etorrent_eunit_SUITE_data/coulton.torrent"),
     {ok, Torrent} = etorrent_bcoding:parse_file(FileName),
     Info = collect_static_file_info(Torrent),
-    {Arr, _PLen, _TLen} = Info,
+    {Arr, _PLen, _TLen, _} = Info,
     N2I     = file_name_to_ids(Arr),
     FileId  = fun(Name) -> dict:fetch(Name, N2I) end,
     Pieces  = fun(Id) -> #file_info{pieces=Ps} = array:get(Id, Arr), Ps end,
@@ -953,14 +1099,115 @@ mask_to_filelist_int_test_() ->
     IkeaPieces    = Pieces(Ikea),
     W4BBPieces    = etorrent_pieceset:union(Week4Pieces, BigBoomPieces),
     W4IkeaPieces  = etorrent_pieceset:union(Week4Pieces, IkeaPieces),
-    [?_assertEqual([Week4], mask_to_filelist_int(Week4Pieces, Arr))
-    ,?_assertEqual([Week4], mask_to_filelist_int(W4BBPieces, Arr))
-    ,?_assertEqual([Ikea, Week4], mask_to_filelist_int(W4IkeaPieces, Arr))
+    [?_assertEqual([Week4], mask_to_filelist_int(Week4Pieces, Arr, true))
+    ,?_assertEqual([Week4], mask_to_filelist_int(W4BBPieces, Arr, true))
+    ,?_assertEqual([Ikea, Week4], mask_to_filelist_int(W4IkeaPieces, Arr, true))
+    ].
+
+mask_to_filelist_int_ungreedy_test_() ->
+    FileName = filename:join(code:lib_dir(etorrent_core), 
+               "test/etorrent_eunit_SUITE_data/joco2011-03-25.torrent"),
+    {ok, Torrent} = etorrent_bcoding:parse_file(FileName),
+    Info = collect_static_file_info(Torrent),
+    {Arr, _PLen, _TLen, _} = Info,
+%   List = lists:keysort(#file_info.size, array:to_list(Arr)),
+%   io:format(user, "Arr: ~p~n", [List]),
+    N2I     = file_name_to_ids(Arr),
+    FileId  = fun(Name) -> dict:fetch(Name, N2I) end,
+    Pieces  = fun(Id) -> #file_info{pieces=Ps, distinct_pieces=DPs} = 
+                            array:get(Id, Arr), {Ps, DPs} end,
+    T01     = FileId("joco2011-03-25/joco-2011-03-25t01.flac"),
+    TXT     = FileId("joco2011-03-25/joco2011-03-25.txt"),
+    FFP     = FileId("joco2011-03-25/joco2011-03-25.ffp"),
+
+    {T01Pieces, T01DisPieces} = Pieces(T01),
+    [{"Large file overlaps small files."
+     ,?_assertEqual([FFP, TXT, T01], mask_to_filelist_int(T01Pieces, Arr, true))}
+    ,?_assert(T01Pieces =/= T01DisPieces)
+    ,{"Match by distinct pieces."
+     ,?_assertEqual([T01], mask_to_filelist_int(T01DisPieces, Arr, false))}
+    ,{"Match by distinct pieces. Test for mask_to_filelist_rec_tiny_file."
+     ,?_assertEqual([FFP, TXT, T01],
+                    mask_to_filelist_int(T01Pieces, Arr, false))}
     ].
 
 file_name_to_ids(Arr) ->
     F = fun(FileId, #file_info{name=Name}, Acc) -> [{Name, FileId}|Acc] end,
     dict:from_list(array:foldl(F, [], Arr)).
 
-
 -endif.
+
+-spec file_mode(SizeFP, UnwantedSizeFP) -> Mode when
+    SizeFP :: non_neg_integer(),
+    UnwantedSizeFP :: non_neg_integer(),
+    Mode :: partial | skip | download.
+
+file_mode(_, 0) -> download;
+file_mode(X, X) -> skip;
+file_mode(_, _) -> partial.
+
+
+
+
+
+get_mask_int(FileID, Arr, _PLen, _TLen, true)
+    when is_integer(FileID) ->
+    get_greedy_mask(FileID, Arr);
+get_mask_int([_|_]=FileIDs, Arr, _PLen, _TLen, true) ->
+    %% Do map
+    Masks = [get_greedy_mask(FileID, Arr) || FileID <- FileIDs],
+    %% Do reduce
+    etorrent_pieceset:union(Masks);
+
+get_mask_int([], _Arr, PLen, TLen, _IsGreedy) ->
+    PieceCount = byte_to_piece_count(TLen, PLen),
+    etorrent_pieceset:empty(PieceCount);
+
+get_mask_int(FileID, Arr, _PLen, _TLen, false) when is_integer(FileID) ->
+    get_distinct_mask(FileID, Arr);
+
+get_mask_int([_|_]=FileIDs, _Arr, PLen, TLen, false) ->
+    Files = [array:get(FileID) || FileID <- lists:usort(FileIDs)],
+    ByteRanges = recs_to_byte_ranges(Files),
+    ByteRanges2 = collapse_ranges(ByteRanges),
+    byte_ranges_to_mask(ByteRanges2, 0, PLen, TLen, false, <<>>).   
+
+
+get_greedy_mask(FileID, Arr) ->
+    #file_info{pieces=Mask} = array:get(FileID, Arr),
+    Mask.
+
+get_distinct_mask(FileID, Arr) ->
+    #file_info{distinct_pieces=Mask} = array:get(FileID, Arr),
+    Mask.
+
+recs_to_byte_ranges(Files) ->
+    [{From, Size} || #file_info{position=From, size=Size} <- Files].
+
+%% If one file ends in the same piece, as the next starts, than this
+%% piece must be included.
+collapse_ranges([{F1,S1},{F2,S2}|Ranges])
+    when F1+S2 =:= F2 ->
+    %% Collapse
+    collapse_ranges([{F1,S1+S2}|Ranges]);
+collapse_ranges([Range|Ranges]) ->
+    [Range|collapse_ranges(Ranges)];
+collapse_ranges([]) ->
+    [].
+
+
+byte_ranges_to_mask([{From, Size}|Ranges], FromPiece, PLen, TLen, IsGreedy, Bin)
+    when PLen =< TLen, Size =< TLen, From >= 0, PLen > 0, FromPiece >= 0 ->
+    %% indexing from 0
+    PFrom  = byte_to_piece_index(From, PLen, IsGreedy),
+    PBefore = PFrom - FromPiece,
+    PIn     = byte_to_piece_count_beetween(From, Size, PLen, TLen, IsGreedy),
+    assert_positive(PBefore),
+    assert_positive(PIn),
+    FromPiece2 = PFrom + PIn,
+    Bin2 = <<Bin/binary, 0:PBefore, -1:PIn>>,
+    byte_ranges_to_mask(Ranges, FromPiece2, PLen, TLen, IsGreedy, Bin2);
+byte_ranges_to_mask([], FromPiece, PLen, TLen, _IsGreedy, Bin) ->
+    PTotal = byte_to_piece_count(TLen, PLen),
+    PAfter = PTotal - FromPiece,
+    <<Bin/binary, 0:PAfter>>.

@@ -21,6 +21,7 @@
          continue_torrent/1,
          check_torrent/1,
          valid_pieces/1,
+         unwanted_pieces/1,
          switch_mode/2,
          update_tracker/1,
          is_partial/1]).
@@ -156,6 +157,11 @@ continue_torrent(Pid) ->
 -spec valid_pieces(pid()) -> {ok, pieceset()}.
 valid_pieces(Pid) ->
     gen_fsm:sync_send_all_state_event(Pid, valid_pieces).
+
+
+-spec unwanted_pieces(pid()) -> {ok, pieceset()}.
+unwanted_pieces(Pid) ->
+    gen_fsm:sync_send_all_state_event(Pid, unwanted_pieces).
 
 
 switch_mode(Pid, Mode) ->
@@ -551,6 +557,10 @@ handle_sync_event(valid_pieces, _, StateName, State) ->
     #state{valid=Valid} = State,
     {reply, {ok, Valid}, StateName, State};
 
+handle_sync_event(unwanted_pieces, _, StateName, State) ->
+    #state{unwanted=Unwanted} = State,
+    {reply, {ok, Unwanted}, StateName, State};
+
 handle_sync_event(get_unwanted_files, _, StateName, State) ->
     #state{unwanted_files=UnwantedFiles} = State,
     {reply, {ok, UnwantedFiles}, StateName, State};
@@ -586,7 +596,7 @@ handle_sync_event({skip_file, FileID}, _From, SN, SD) ->
     %% Files, that were deleted.
 %   Merged = ordsets:subtract(UnwantedFiles, UnwantedFiles1),
     Min = etorrent_info:minimize_filelist(TorrentID, [FileID|UnwantedFiles]),
-    FileMask = etorrent_info:get_mask(TorrentID, FileID),
+    FileMask = etorrent_info:get_mask(TorrentID, FileID, false),
     Unwanted2 = etorrent_pieceset:union(Unwanted, FileMask),
     SD1 = SD#state{
         unwanted=Unwanted2,
