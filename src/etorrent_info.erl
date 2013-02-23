@@ -220,10 +220,16 @@ tree_children(TorrentID, FileID) when is_integer(TorrentID), is_integer(FileID) 
     {ok, Unwanted} = etorrent_torrent_ctl:unwanted_pieces(CtlPid),
 
     lists:map(fun(X) ->
-            SizeFP         = etorrent_pieceset:size(X#file_info.pieces),
             Pieces         = X#file_info.pieces,
+            DisPieces      = X#file_info.distinct_pieces,
+            SizeFP         = etorrent_pieceset:size(Pieces),
+            SizeDisFP      = etorrent_pieceset:size(DisPieces),
+            {SizeCheckFP, CheckPieces} = case SizeDisFP of
+                    0 -> {SizeFP, Pieces};
+                    _ -> {SizeDisFP, DisPieces}
+                end,
             ValidFP        = etorrent_pieceset:intersection(Pieces, Valid),
-            UnwantedFP     = etorrent_pieceset:intersection(Pieces, Unwanted),
+            UnwantedFP     = etorrent_pieceset:intersection(CheckPieces, Unwanted),
             ValidSizeFP    = etorrent_pieceset:size(ValidFP),
             UnwantedSizeFP = etorrent_pieceset:size(UnwantedFP),
             [{id, X#file_info.id}
@@ -231,10 +237,19 @@ tree_children(TorrentID, FileID) when is_integer(TorrentID), is_integer(FileID) 
             ,{size, X#file_info.size}
             ,{capacity, X#file_info.capacity}
             ,{is_leaf, (X#file_info.children == [])}
-            ,{mode, file_mode(SizeFP, UnwantedSizeFP)}
+            ,{mode, atom_to_binary(file_mode(SizeCheckFP, UnwantedSizeFP), utf8)}
             ,{progress, ValidSizeFP / SizeFP}
             ]
         end, Records).
+
+-spec file_mode(SizeCheckFP, UnwantedSizeFP) -> Mode when
+    SizeCheckFP :: non_neg_integer(),
+    UnwantedSizeFP :: non_neg_integer(),
+    Mode :: partial | skip | download.
+
+file_mode(_, 0) -> download;
+file_mode(X, X) -> skip;
+file_mode(_, _) -> partial.
     
 
 %% @doc Form minimal version of the filelist with the same pieceset.
@@ -912,8 +927,6 @@ byte_to_piece_count_beetween(From, Size, PLen, TLen, false) ->
     Left   = case From rem PLen of 0 -> 0; X -> PLen - X end,
     Right  = To rem PLen,
     Mid    = Size - Left - Right,
-    io:format(user, "~nFrom: ~p Size ~p PLen ~p Res ~p",
-              [From, Size, PLen, Mid div PLen]),
     (Mid div PLen) + check_last_piece(From, Size, PLen, TLen).
 
 %% If last piece has non-standard size and it fully included, return 1.
@@ -1137,15 +1150,6 @@ file_name_to_ids(Arr) ->
 
 -endif.
 
--spec file_mode(SizeFP, UnwantedSizeFP) -> Mode when
-    SizeFP :: non_neg_integer(),
-    UnwantedSizeFP :: non_neg_integer(),
-    Mode :: partial | skip | download.
-
-file_mode(_, 0) -> download;
-file_mode(X, X) -> skip;
-file_mode(_, _) -> partial.
-
 
 
 
@@ -1166,11 +1170,14 @@ get_mask_int([], _Arr, PLen, TLen, _IsGreedy) ->
 get_mask_int(FileID, Arr, _PLen, _TLen, false) when is_integer(FileID) ->
     get_distinct_mask(FileID, Arr);
 
-get_mask_int([_|_]=FileIDs, _Arr, PLen, TLen, false) ->
-    Files = [array:get(FileID) || FileID <- lists:usort(FileIDs)],
+get_mask_int([_|_]=FileIDs, Arr, PLen, TLen, false) ->
+    %% TESTME
+    %% It does not work, when we pass directory and its descenders.
+    Files = [array:get(FileID, Arr) || FileID <- lists:usort(FileIDs)],
     ByteRanges = recs_to_byte_ranges(Files),
     ByteRanges2 = collapse_ranges(ByteRanges),
-    byte_ranges_to_mask(ByteRanges2, 0, PLen, TLen, false, <<>>).   
+    Field = byte_ranges_to_mask(ByteRanges2, 0, PLen, TLen, false, <<>>),
+    etorrent_pieceset:from_bitstring(Field).
 
 
 get_greedy_mask(FileID, Arr) ->
@@ -1186,6 +1193,21 @@ recs_to_byte_ranges(Files) ->
 
 %% If one file ends in the same piece, as the next starts, than this
 %% piece must be included.
+%% TODO: This function can minimize ranges too, for example:
+%%  [{0,6734117},
+%%   {0,186178},
+%%   {186178,595460},
+%%   {781638,103642},
+%%   {885280,358619},
+%%   {1243899,642669},
+%%   {1886568,830769}]
+%%  [{55,6734117},
+%%   {0,186178},
+%%   {186178,595460},
+%%   {781638,103642},
+%%   {885280,358619},
+%%   {1243899,642669},
+%%   {1886568,830769}]
 collapse_ranges([{F1,S1},{F2,S2}|Ranges])
     when F1+S2 =:= F2 ->
     %% Collapse
@@ -1211,3 +1233,26 @@ byte_ranges_to_mask([], FromPiece, PLen, TLen, _IsGreedy, Bin) ->
     PTotal = byte_to_piece_count(TLen, PLen),
     PAfter = PTotal - FromPiece,
     <<Bin/binary, 0:PAfter>>.
+
+
+-ifdef(TEST).
+
+byte_ranges_to_mask_test_() ->
+    %% Bytes:  |0123|4567|89AB|
+    %% Pieces: |0   |1   |2   |
+    %% Set:    |---x|xxxx|xxx-|
+    [?_assertEqual(<<2#010:3>>, byte_ranges_to_mask([{3,8}], 0, 4, 12,
+                                                    false, <<>>)),
+    %% Bytes:  |0123|4567|89AB|
+    %% Pieces: |0   |1   |2   |
+    %% Set:    |---x|xxxx|xxxx|
+     ?_assertEqual(<<2#011:3>>, byte_ranges_to_mask([{3,9}], 0, 4, 12,
+                                                    false, <<>>)),
+    %% Bytes:  |0123|4567|89A-|
+    %% Pieces: |0   |1   |2   |
+    %% Set:    |---x|xxxx|xxx-|
+     ?_assertEqual(<<2#011:3>>, byte_ranges_to_mask([{3,8}], 0, 4, 11,
+                                                    false, <<>>))
+    ].
+
+-endif.

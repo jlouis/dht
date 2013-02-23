@@ -591,12 +591,12 @@ handle_sync_event({skip_file, FileID}, _From, SN, SD) ->
         unwanted_files=UnwantedFiles,
         valid=Valid
     } = SD,
-    Min = etorrent_info:minimize_filelist(TorrentID, [FileID|UnwantedFiles]),
-    UnwantedFiles2 = ordsets:from_list(Min),
+    FileIds = add_one_or_many_files(FileID, UnwantedFiles),
+    UnwantedFiles2 = etorrent_info:minimize_filelist(TorrentID, FileIds),
+    lager:debug("Minimize filelist ~p => ~p.", [FileIds, UnwantedFiles2]),
     %% Files, that were deleted.
 %   Merged = ordsets:subtract(UnwantedFiles, UnwantedFiles1),
-    Min = etorrent_info:minimize_filelist(TorrentID, [FileID|UnwantedFiles]),
-    FileMask = etorrent_info:get_mask(TorrentID, FileID, false),
+    FileMask = etorrent_info:get_mask(TorrentID, UnwantedFiles2, false),
     Unwanted2 = etorrent_pieceset:union(Unwanted, FileMask),
     SD1 = SD#state{
         unwanted=Unwanted2,
@@ -768,13 +768,21 @@ do_start(S=#state{id=Id, torrent=Torrent, valid=ValidPieces, wishes=Wishes,
 
     %% Start the progress manager
     {ok, ProgressPid} =
-        etorrent_torrent_sup:start_progress(
+    case etorrent_torrent_sup:start_progress(
           S#state.parent_pid,
           Id,
           Torrent,
           ValidPieces,
           Masks,
-          UnwantedPieces),
+          UnwantedPieces) of
+        {ok, Pid} ->
+            {ok, Pid}; 
+        {error, {already_started, Pid}} ->
+            %% It is a rare case. For example, etorrent_torrent_sup restarted
+            %% all active children.
+            lager:debug("Progress manager is already started for ~p.", [Id]),
+            {ok, Pid}
+    end,
 
     %% Update the tracking map. This torrent has been started.
     %% Altering this state marks the point where we will accept
@@ -784,12 +792,17 @@ do_start(S=#state{id=Id, torrent=Torrent, valid=ValidPieces, wishes=Wishes,
 
     %% Start the tracker
     {ok, TrackerPid} =
-        etorrent_torrent_sup:start_child_tracker(
+    case etorrent_torrent_sup:start_child_tracker(
           S#state.parent_pid,
           etorrent_metainfo:get_url(Torrent),
           S#state.info_hash,
           S#state.peer_id,
-          Id),
+          Id) of
+        {ok, Pid1} ->
+            {ok, Pid1}; 
+        {error, {already_started, Pid1}} ->
+            {ok, Pid1}
+    end,
 
     etorrent_torrent_sup:start_peer_sup(S#state.parent_pid, Id),
 
@@ -807,11 +820,10 @@ do_start(S=#state{id=Id, torrent=Torrent, valid=ValidPieces, wishes=Wishes,
 
 %% --------------------------------------------------------------------
 
-%% @todo Does this function belong here?
 calculate_amount_left(TorrentID, Valid, Unwanted, Torrent) ->
-    Total   = etorrent_metainfo:get_length(Torrent),
-    Wanted  = etorrent_pieceset:difference(Valid, Unwanted),
-    Indexes = etorrent_pieceset:to_list(Wanted),
+    Total          = etorrent_metainfo:get_length(Torrent),
+    ValidOrSkipped = etorrent_pieceset:union(Valid, Unwanted),
+    Indexes        = etorrent_pieceset:to_list(ValidOrSkipped),
     Sizes = [begin
         {ok, Size} = etorrent_io:piece_size(TorrentID, I),
         Size
@@ -964,3 +976,9 @@ is_partial_int(State) ->
     %% it is not a partial downloading.
     UnwantedInvalid = etorrent_pieceset:difference(Unwanted, Valid),
     not etorrent_pieceset:is_empty(UnwantedInvalid).
+
+
+add_one_or_many_files(FileID, UnwantedFiles) when is_integer(FileID) ->
+    [FileID|UnwantedFiles];
+add_one_or_many_files(FileIds, UnwantedFiles) when is_list(FileIds) ->
+    FileIds ++ UnwantedFiles.
