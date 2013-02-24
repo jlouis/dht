@@ -202,11 +202,14 @@ print_torent_info(undefined, #torrent{id=Id}) ->
 print_torent_info(#torrent{id=Id}, undefined) -> 
     log("STOPPED torrent #~p.", [Id]);
 print_torent_info(_Old, #torrent{state=Status, id=Id, left=Left, wanted=Wanted,
-                                 speed_in=SpeedIn, speed_out=SpeedOut}) -> 
+                                 speed_in=SpeedIn, speed_out=SpeedOut})
+    when Wanted > 0 -> 
     DownloadedPercent = (Wanted-Left)/Wanted * 100,
     log("~.10s #~p: ~6.2f% ~s in, ~s out", 
         [string:to_upper(atom_to_list(Status)), Id, DownloadedPercent, 
-         pretty_speed(SpeedIn), pretty_speed(SpeedOut)]).
+         pretty_speed(SpeedIn), pretty_speed(SpeedOut)]);
+print_torent_info(_Old, #torrent{id=Id}) ->
+    log("IGNORE torrent #~p.", [Id]).
     
 %   'leechers'   :: integer(),
 %   'seeders'    :: integer(),

@@ -419,23 +419,37 @@ do_state_change([{add_upload, Amount} | Rem], T) ->
     do_state_change(Rem, NewT);
 
 do_state_change([{subtract_left, Amount} | Rem], T) ->
-    Left = T#torrent.left - Amount,
+    #torrent{id=Id, state=OldState, left=OldLeft} = T,
+    Left = OldLeft - Amount,
 
     NewT = case Left of
         0 ->
-            Id = T#torrent.id,
 	        ControlPid = etorrent_torrent_ctl:lookup_server(Id),
-			IsPartial = etorrent_torrent_ctl:is_partial(ControlPid),
+			{ok, IsPartial} = etorrent_torrent_ctl:is_partial(ControlPid),
 			etorrent_torrent_ctl:completed(ControlPid),
+            lager:debug("IsPartial is ~p.", [IsPartial]),
             T#torrent {
                 left = 0, 
-                state = if IsPartial -> seeding; true -> partial end,
+                state = if OldState =:= paused -> paused;
+                           IsPartial           -> partial;
+                           true                -> seeding
+                        end,
                 rate_sparkline = [0.0] };
 
+        N when OldLeft =:= 0, OldState =:= partial ->
+           %% partial => leeching
+           T#torrent { left = N, state = leeching };
+
         N when N =< T#torrent.total ->
-%          io:format(user, "Torrent#~p: ~p bytes left.~n", [T#torrent.id, N]),
            T#torrent { left = N }
         end,
+
+    case {OldState, NewT#torrent.state} of
+        {X, X} -> ok;
+        {OldState, NewState} ->
+            lager:debug("~p changed its state from ~p to ~p.",
+                        [Id, OldState, NewState])
+    end,
 
     do_state_change(Rem, NewT);
 
@@ -445,7 +459,7 @@ do_state_change([{subtract_left_or_skipped, Amount} | Rem], T) ->
     do_state_change(Rem, NewT);
 
 do_state_change([{set_wanted, Amount} | Rem], T)
-    when is_integer(Amount), Amount > 0 ->
+    when is_integer(Amount), Amount >= 0 ->
     NewT = T#torrent { wanted = Amount },
     do_state_change(Rem, NewT);
     

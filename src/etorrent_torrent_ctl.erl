@@ -174,6 +174,7 @@ update_tracker(Pid) when is_pid(Pid) ->
     gen_fsm:send_event(Pid, update_tracker).
 
 
+-spec is_partial(Pid::pid()) -> {ok, boolean()}.
 is_partial(Pid) when is_pid(Pid) ->
     gen_fsm:sync_send_all_state_event(Pid, is_partial).
 
@@ -971,6 +972,9 @@ update_left_metric(TorrentID, Unwanted, Unwanted2, Valid) ->
 
 is_partial_int(State) ->
     #state{unwanted=Unwanted, valid=Valid} = State,
+    lager:debug("Unwanted size ~p, valid size ~p.",
+                [etorrent_pieceset:size(Unwanted),
+                 etorrent_pieceset:size(Valid)]),
     %% It is partial, if there are unwanted, invalid pieces.
     %% If all unwanted pieces are already downloaded (i.e. valid), than
     %% it is not a partial downloading.
