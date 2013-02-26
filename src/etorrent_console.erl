@@ -30,6 +30,7 @@
 
 -record(torrent, {
     'id'         :: torrent_id(),
+    'is_private' :: boolean(),
     'wanted'     :: non_neg_integer(),
     'left'       :: integer(),
     'leechers'   :: integer(),
@@ -115,6 +116,7 @@ to_record(X) ->
         leechers = proplists:get_value('leechers', X),
         seeders  = proplists:get_value('seeders', X),
         state    = proplists:get_value('state', X),
+        is_private = proplists:get_value(is_private, X),
         downloaded = proplists:get_value('downloaded', X),
         uploaded   = proplists:get_value('uploaded', X),
         all_time_downloaded = proplists:get_value('all_time_downloaded', X),
@@ -197,24 +199,21 @@ map_records2(F, OldT, []) ->
 
 
 print_torent_info(X, X) -> skip;
-print_torent_info(undefined, #torrent{id=Id}) -> 
-    log("STARTED torrent #~p.", [Id]);
+print_torent_info(undefined, #torrent{id=Id, is_private=IsPrivate}) -> 
+    Type = if IsPrivate -> "private"; true -> "public" end,
+    log("STARTED ~s torrent #~p.", [Type, Id]);
 print_torent_info(#torrent{id=Id}, undefined) -> 
     log("STOPPED torrent #~p.", [Id]);
 print_torent_info(_Old, #torrent{state=Status, id=Id, left=Left, wanted=Wanted,
-                                 speed_in=SpeedIn, speed_out=SpeedOut})
+                                 speed_in=SpeedIn, speed_out=SpeedOut,
+                                 leechers=Leachers, seeders=Seeders})
     when Wanted > 0 -> 
     DownloadedPercent = (Wanted-Left)/Wanted * 100,
-    log("~.10s #~p: ~6.2f% ~s in, ~s out", 
+    log("~.10s #~p: ~6.2f% ~s in, ~s out, ls ~p, ss ~p", 
         [string:to_upper(atom_to_list(Status)), Id, DownloadedPercent, 
-         pretty_speed(SpeedIn), pretty_speed(SpeedOut)]);
+         pretty_speed(SpeedIn), pretty_speed(SpeedOut), Leachers, Seeders]);
 print_torent_info(_Old, #torrent{id=Id}) ->
     log("IGNORE torrent #~p.", [Id]).
-    
-%   'leechers'   :: integer(),
-%   'seeders'    :: integer(),
-%   'speed_in'  = 0 :: integer(),
-%   'speed_out' = 0 :: integer()
 
 log(Pattern, Args) ->
     io:format(user, Pattern ++ "~n", Args),

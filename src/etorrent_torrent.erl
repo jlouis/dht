@@ -56,8 +56,10 @@
           %% Number of pieces in torrent
           pieces = unknown :: non_neg_integer() | 'unknown',
           %% How many people have a completed file?
+          %% `complete' field from the tracker responce.
           seeders = 0 :: non_neg_integer(),
           %% How many people are downloaded
+          %% `incomplete' field from the tracker responce.
           leechers = 0 :: non_neg_integer(),
           %% This is a list of recent speeds present so we can plot them
           rate_sparkline = [0.0] :: [float()],
@@ -330,6 +332,7 @@ all(Pos) ->
 
 proplistify(T) ->
     [{id,               T#torrent.id},
+     {is_private,       T#torrent.is_private},
      {total,            T#torrent.total},
      {wanted,           T#torrent.wanted},
      {left,             T#torrent.left},

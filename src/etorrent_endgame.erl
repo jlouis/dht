@@ -1,3 +1,4 @@
+%% TODO: make it more aggressive after activation.
 -module(etorrent_endgame).
 -behaviour(gen_server).
 
