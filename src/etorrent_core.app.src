@@ -41,6 +41,7 @@
         ranch,
         cowboy,
         hackney,
+        lhttpc,
         upnp
       ]},
     {mod, {etorrent_app, []}},

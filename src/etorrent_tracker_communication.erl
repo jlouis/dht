@@ -304,9 +304,12 @@ contact_tracker_udp(Url, IP, Port, Event,
 
 %% @todo: consider not passing around the state here!
 contact_tracker_http(Url, Event, S) ->
+    lager:debug("Send event ~p to ~p", [Event, Url]),
     RequestUrl = build_tracker_url(Url, Event, S),
+    lager:debug("Request: ~p", [RequestUrl]),
     case etorrent_http:request(RequestUrl) of
         {ok, {200, _, Body}} ->
+            lager:debug("Tracker returns~n~p", [Body]),
             case etorrent_bcoding:decode(Body) of
                 {ok, BC} -> {ok, handle_tracker_response(Url, BC, S)};
                 {error, _} ->
@@ -407,7 +410,7 @@ build_tracker_url(Url, Event,
     Request = [{"info_hash",
                 etorrent_http:build_encoded_form_rfc1738(InfoHash)},
                {"peer_id",
-                etorrent_http:build_encoded_form_rfc1738(PeerId)},
+                "-UT3000-640308218333"},
                {"uploaded", Uploaded},
                {"downloaded", Downloaded},
                {"left", Left},
