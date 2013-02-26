@@ -29,6 +29,7 @@
 
 %% The type of torrent records.
 -type(torrent_state() :: 'leeching' | 'seeding' | 'endgame' | 'paused' | 'unknown').
+-type peer_id() :: etorrent_types:peer_id().
 
 %% A single torrent is represented as the 'torrent' record
 %% TODO: How many seeders/leechers are we connected to?
@@ -65,6 +66,8 @@
           rate_sparkline = [0.0] :: [float()],
           %% BEP 27: is this torrent private
           is_private :: boolean(),
+          %% Rewrite peer id for this torrent.
+          peer_id :: peer_id() | undefined,
           state :: torrent_state()}).
 
 -define(SERVER, ?MODULE).
@@ -283,6 +286,7 @@ terminate(_Reason, _S) ->
 
 
 props_to_record(Id, PL) ->
+    FU = fun(Key) -> proplists:get_value(Key, PL) end,
 
     % Read optional value. 
     % If it is undefined then use default value.
@@ -318,6 +322,7 @@ props_to_record(Id, PL) ->
 			   all_time_downloaded = FO('all_time_downloaded', 0),
                pieces = FO(pieces, 'unknown'),
                is_private = FR('is_private'),
+               peer_id = FU(peer_id),
                state = State }.
 
 
@@ -344,6 +349,7 @@ proplistify(T) ->
      {leechers,         T#torrent.leechers},
      {seeders,          T#torrent.seeders},
      {state,            T#torrent.state},
+     {peer_id,          T#torrent.peer_id},
      {rate_sparkline,   T#torrent.rate_sparkline}].
 
 

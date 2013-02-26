@@ -202,31 +202,33 @@ form_entry(Id, Props) ->
     DownloadDiff  = proplists:get_value(downloaded, Props),
     Downloaded    = DownloadTotal + DownloadDiff,
 
-    Left = proplists:get_value(left, Props),
     LeftOrSkipped = proplists:get_value(left_or_skipped, Props),
 
-    case proplists:get_value(state, Props) of
+    PeerId = proplists:get_value(peer_id, Props),
+    State  = proplists:get_value(state, Props),
+
+    Basic = case PeerId of undefined -> []; _ -> [{peer_id, PeerId}] end ++
+            [{state, State}
+            ,{uploaded, Uploaded}
+            ,{downloaded, Downloaded}],
+
         %% not prepared
-        unknown ->
+    if State =:= unknown ->
             ignore;
 
         %% downloaded
-        State when LeftOrSkipped =:= 0 ->
-            [{state, State}
-            ,{uploaded, Uploaded}
-            ,{downloaded, Downloaded}];
+        LeftOrSkipped =:= 0 ->
+            Basic;
 
         %% not downloaded
-        State ->
+        true ->
             TorrentPid   = etorrent_torrent_ctl:lookup_server(Id),
             {ok, Valid}  = etorrent_torrent_ctl:valid_pieces(TorrentPid),
             Bitfield     = etorrent_pieceset:to_binary(Valid),
             {ok, Wishes} = etorrent_torrent_ctl:get_permanent_wishes(Id),
             {ok, UnwantedFiles} = etorrent_torrent_ctl:get_unwanted_files(Id),
-            [{state, State}
-            ,{bitfield, Bitfield}
+            [{bitfield, Bitfield}
             ,{unwanted_files, UnwantedFiles}
             ,{wishes, Wishes}
-            ,{uploaded, Uploaded}
-            ,{downloaded, Downloaded}]
+            |Basic]
     end.

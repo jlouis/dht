@@ -24,7 +24,8 @@
          unwanted_pieces/1,
          switch_mode/2,
          update_tracker/1,
-         is_partial/1]).
+         is_partial/1,
+         set_peer_id/2]).
 
 %% gproc registry entries
 -export([register_server/1,
@@ -57,6 +58,7 @@
          skip_file/2]).
 
 
+-type peer_id() :: etorrent_types:peer_id().
 -type bcode() :: etorrent_types:bcode().
 -type torrent_id() :: etorrent_types:torrent_id().
 -type file_id() :: etorrent_types:file_id().
@@ -95,7 +97,10 @@
     unwanted_files :: [file_id()], %% ordset()
     hashes      :: binary(),
     info_hash   :: binary(),  % Infohash of torrent file
+    %% Used peer id.
     peer_id     :: binary(),
+    %% Default peer id.
+    default_peer_id :: binary(),
     parent_pid  :: pid(),
     tracker_pid :: pid(),
     progress    :: pid(),
@@ -177,6 +182,12 @@ update_tracker(Pid) when is_pid(Pid) ->
 -spec is_partial(Pid::pid()) -> {ok, boolean()}.
 is_partial(Pid) when is_pid(Pid) ->
     gen_fsm:sync_send_all_state_event(Pid, is_partial).
+
+
+%% @doc Pass `undefined' as a `PeerId' to set a default one.
+-spec set_peer_id(Pid::pid(), PeerId::peer_id() | undefined) -> ok.
+set_peer_id(Pid, PeerId) ->
+    gen_fsm:send_all_state_event(Pid, {set_peer_id, PeerId}).
 
 
 %% =====================\/=== Wish API ===\/===========================
@@ -445,6 +456,7 @@ init([Parent, Id, {Torrent, TorrentFile, TorrentIH}, PeerId]) ->
         torrent=Torrent,
         info_hash=TorrentIH,
         peer_id=PeerId,
+        default_peer_id=PeerId,
         parent_pid=Parent,
         hashes=Hashes},
     {ok, initializing, InitState, 0}.
@@ -546,6 +558,20 @@ handle_event({switch_mode, NewMode}, SN, S=#state{mode=OldMode}) ->
     etorrent_download:switch_mode(TorrentID, OldMode, NewMode),
 
     {next_state, SN, S#state{mode=NewMode}};
+
+%% Handle `{set_peer_id, PeerId}'.
+handle_event({set_peer_id, undefined}, SN, S=#state{default_peer_id=PeerId}) ->
+    %% Set default peer id back.
+    handle_event({set_peer_id, PeerId}, SN, S);
+
+handle_event({set_peer_id, PeerId}, paused, S=#state{}) ->
+    {next_state, paused, S#state{peer_id=PeerId}};
+
+handle_event({set_peer_id, PeerId}, started, S=#state{parent_pid=SupPid}) ->
+    %% Restart communication processes.
+    ok = etorrent_torrent_sup:pause(SupPid),
+    %% Start then with a new peer id.
+    do_start(S#state{peer_id=PeerId});
 
 handle_event(Msg, SN, S) ->
     lager:error("Problem: ~p~n", [Msg]),
@@ -700,7 +726,8 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 
 %% --------------------------------------------------------------------
 
-do_registration(S=#state{id=Id, torrent=Torrent, hashes=Hashes}) ->
+do_registration(S=#state{id=Id, torrent=Torrent, hashes=Hashes,
+                         peer_id=LocalPeerId}) ->
     %% @todo: Try to coalesce some of these operations together.
 
     %% Read the torrent, check its contents for what we are missing
@@ -726,10 +753,14 @@ do_registration(S=#state{id=Id, torrent=Torrent, hashes=Hashes}) ->
     TState = proplists:get_value(state, FastResumePL, unknown),
     Wishes = proplists:get_value(wishes, FastResumePL, []),
 
+    %% Rewritten peer id or `undefined'.
+    PeerId = proplists:get_value(peer_id, FastResumePL),
+
     %% Add a torrent entry for this torrent.
     %% @todo Minimize calculation in `etorrent_torrent' module.
     ok = etorrent_torrent:new(
            Id,
+           case PeerId of undefined -> []; _ -> [{peer_id, PeerId}] end ++
            [{uploaded, 0},
             {downloaded, 0},
             {all_time_uploaded, AU},
@@ -751,7 +782,10 @@ do_registration(S=#state{id=Id, torrent=Torrent, hashes=Hashes}) ->
     NewState = S#state{valid=ValidPieces,
                        unwanted=UnwantedPieces,
                        wishes=WishRecordSet,
-                       unwanted_files=UnwantedFiles},
+                       unwanted_files=UnwantedFiles,
+                       peer_id=case PeerId of undefined -> LocalPeerId;
+                                              _         -> PeerId end
+                      },
 
     case TState of
         paused ->
