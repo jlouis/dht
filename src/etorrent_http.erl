@@ -39,7 +39,7 @@ request_lhttpc(URL) ->
     case lhttpc:request(URL, get, Headers, <<>>, 15000, Options) of
         {ok, {{StatusCode, _StatusStr}, RespHeaders, RespBody}} ->
                     lager:debug("Response body~n~p", [RespBody]),
-                    case decode_content_encoding(RespHeaders) of
+                    case decode_content_encoding_lhttpc(RespHeaders) of
                         identity ->
                             {ok, {StatusCode, RespHeaders, RespBody}};
                         gzip ->
@@ -116,7 +116,17 @@ header_conv(Str) when is_list(Str) -> Str.
 % Variant that decodes the content headers, handling compression.
 decode_content_encoding(Headers) ->
     HeadersDict = hackney_headers:new(Headers),
-    case hackney_headers:get_value(<<"content-encoding">>, HeadersDict) of
+    case hackney_headers:get_value("content-encoding", HeadersDict) of
+        <<"gzip">> ->
+            gzip;
+        <<"deflate">> ->
+            deflate;
+        _ ->
+            identity
+    end.
+
+decode_content_encoding_lhttpc(Headers) ->
+    case lhttpc_lib:header_value("content-encoding", Headers) of
         <<"gzip">> ->
             gzip;
         <<"deflate">> ->

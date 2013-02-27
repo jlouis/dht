@@ -6,6 +6,8 @@
 
 -export([new/2,
          new/1,
+         proto_full/1,
+         proto_empty/1,
          size/1,
          min/1,
          min/2,
@@ -40,6 +42,22 @@ new(PieceLen, ChunkLen) ->
 %% @doc Create am empty copy of the chunkset.
 new(Prototype) ->
     Prototype#chunkset{chunks=[]}.
+
+
+%% @doc Create a copy with all chunks, using a prototype.
+proto_full(#chunkset{piece_len=PieceLen, chunk_len=ChunkLen}) ->
+    #chunkset{
+        piece_len=PieceLen,
+        chunk_len=ChunkLen,
+        chunks=[{0, PieceLen - 1}]}.
+
+
+%% @doc Create an empty copy, using a prototype.
+proto_empty(#chunkset{piece_len=PieceLen, chunk_len=ChunkLen}) ->
+    #chunkset{
+        piece_len=PieceLen,
+        chunk_len=ChunkLen,
+        chunks=[]}.
 
 
 from_list(PieceLen, ChunkLen, Chunks) ->

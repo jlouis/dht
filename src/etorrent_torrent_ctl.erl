@@ -564,14 +564,17 @@ handle_event({set_peer_id, undefined}, SN, S=#state{default_peer_id=PeerId}) ->
     %% Set default peer id back.
     handle_event({set_peer_id, PeerId}, SN, S);
 
-handle_event({set_peer_id, PeerId}, paused, S=#state{}) ->
+handle_event({set_peer_id, PeerId}, paused, S=#state{id=TorrentID}) ->
+    ok = etorrent_torrent:statechange(TorrentID, [{set_peer_id, PeerId}]),
     {next_state, paused, S#state{peer_id=PeerId}};
 
-handle_event({set_peer_id, PeerId}, started, S=#state{parent_pid=SupPid}) ->
+handle_event({set_peer_id, PeerId}, started, S=#state{parent_pid=SupPid, id=TorrentID}) ->
     %% Restart communication processes.
     ok = etorrent_torrent_sup:pause(SupPid),
     %% Start then with a new peer id.
-    do_start(S#state{peer_id=PeerId});
+    Res = do_start(S#state{peer_id=PeerId}),
+    ok = etorrent_torrent:statechange(TorrentID, [{set_peer_id, PeerId}]),
+    Res;
 
 handle_event(Msg, SN, S) ->
     lager:error("Problem: ~p~n", [Msg]),

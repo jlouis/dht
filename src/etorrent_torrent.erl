@@ -135,7 +135,8 @@ all() ->
                     | {subtract_left, integer()}
                     | {subtract_left_or_skipped, integer()}
                     | {tracker_report, integer(), integer()}
-                    | {set_wanted, non_neg_integer()}.
+                    | {set_wanted, non_neg_integer()}
+                    | {set_peer_id, peer_id()}.
 -spec statechange(integer(), [alteration()]) -> ok.
 statechange(Id, What) ->
     gen_server:cast(?SERVER, {statechange, Id, What}).
@@ -160,8 +161,9 @@ lookup(Id) ->
 %% @end
 -spec is_seeding(integer()) -> boolean().
 is_seeding(Id) ->
-    {value, S} = lookup(Id),
-    proplists:get_value(state, S) =:= seeding.
+    case ets:lookup(?TAB, Id) of
+	[#torrent{state=State}] -> State =:= seeding
+    end.
 
 %% @doc Returns all torrents which are currently seeding
 %% @end
@@ -182,6 +184,7 @@ decrease_not_fetched(Id) ->
 
 %% @doc Returns true if the torrent is in endgame mode
 %% @end
+%% TODO: checkme
 -spec is_endgame(integer()) -> boolean().
 is_endgame(Id) ->
     case ets:lookup(?TAB, Id) of
@@ -470,6 +473,10 @@ do_state_change([{subtract_left_or_skipped, Amount} | Rem], T) ->
 do_state_change([{set_wanted, Amount} | Rem], T)
     when is_integer(Amount), Amount >= 0 ->
     NewT = T#torrent { wanted = Amount },
+    do_state_change(Rem, NewT);
+
+do_state_change([{set_peer_id, PeerId} | Rem], T) ->
+    NewT = T#torrent { peer_id = PeerId },
     do_state_change(Rem, NewT);
     
 do_state_change([{tracker_report, Seeders, Leechers} | Rem], T) ->

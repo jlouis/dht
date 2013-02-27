@@ -127,6 +127,10 @@ handle_call({start, F, CallBack}, _From, S) ->
                     install_callback(TorrentPid, TorrentIH, CallBack),
                     {reply, ok, S};
                 {error, {already_started, _Pid}} = Err ->
+                    lager:error("Cannot load the torrent ~p twice.", [TorrentIH]),
+                    {reply, Err, S};
+                {error, Reason} = Err ->
+                    lager:error("Unknown error: ~p", [Reason]),
                     {reply, Err, S}
             end;
         {error, Reason} ->

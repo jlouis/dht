@@ -71,7 +71,7 @@ start_link() ->
 call(Key) ->
     case gen_server:call(?MODULE, {get_param, Key}) of
 	undefined ->
-	   exit(no_such_application_config_value);
+	   exit({no_such_application_config_value, Key});
 	V -> V
     end.
 

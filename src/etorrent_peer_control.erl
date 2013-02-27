@@ -329,6 +329,7 @@ handle_cast({incoming_msg, Msg}, S) ->
         {stop, Reason, NS} -> {stop, Reason, NS}
     end;
 
+%% Block the remote node (send from etorrent_choker).
 handle_cast(choke, State) ->
     #state{
         torrent_id=TorrentID, send_pid=SendPid,
@@ -433,7 +434,7 @@ handle_info({chunk, {contents, Index, Offset, Length, Data}}, State) ->
             NewRemote = etorrent_peerstate:requests(NewRequests, Remote),
             NewState = State#state{remote=NewRemote},
             ok = etorrent_peer_send:piece(SendPid, Index, Offset, Length, Data),
-            % Already in peer_send? It cause double-rating!
+            % Is this call already in peer_send? It causes double-rating!
             % ok = etorrent_torrent:statechange(TorrentID, [{add_upload, Length}]),
             ok = pop_remote_rqueue_hook(TorrentID, NewRequests),
             {noreply, NewState};
@@ -570,6 +571,7 @@ handle_message(not_interested, State) ->
     #state{torrent_id=TorrentID, remote=Remote} = State,
     ok = etorrent_peer_states:set_not_interested(TorrentID, self()),
     ok = etorrent_peer_control:check_choke(self()),
+    %% FIXME: badarg
     NewRemote = etorrent_peerstate:interested(false, Remote),
     NewState = State#state{remote=NewRemote},
     {ok, NewState};
@@ -632,9 +634,9 @@ handle_message({cancel, Index, Offset, Length}, State) ->
             NewReqs = etorrent_rqueue:delete(Index, Offset, Length, Reqs),
             NewRemote = etorrent_peerstate:requests(NewReqs, Remote),
             NewState = State#state{remote=NewRemote},
-            {noreply, NewState};
+            {ok, NewState};
         false ->
-            {noreply, State}
+            {ok, State}
     end;
 
 handle_message({suggest, Piece}, State) ->

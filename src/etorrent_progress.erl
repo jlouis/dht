@@ -429,7 +429,8 @@ init(Serverargs) ->
         pieces_assigned=PiecesNone,
         pieces_stored=PiecesNone,
         pieces_unwanted=PiecesUnwanted,
-        %% Initially, the sets of assigned and stored chunks are equal
+        %% Initially, the sets of assigned and stored chunks are equal.
+        %% Chunksets are empty for valid pieces, and full for invalid ones.
         chunks_assigned=ChunkSets,
         chunks_stored=ChunkSets,
         piece_priority=PiecePriority,
@@ -654,6 +655,37 @@ handle_info({piece, {valid, Index}}, State) ->
             {noreply, NewState}
     end;
 
+handle_info({piece, {invalid, Index}}, State) ->
+    %% _ => invalid
+    %% Chunks must be downloaded again.
+    %% Will not work, if in endgame.
+    #state{
+        pieces_stored=Stored,
+        pieces_begun=Begun,
+        pieces_valid=Valid,
+        pieces_assigned=Assigned,
+        chunks_stored=ChunksStored,
+        chunks_assigned=ChunksAssigned} = State,
+    AssignedChunkSet  = array:get(Index, ChunksAssigned),
+    FullCS = etorrent_chunkset:proto_full(AssignedChunkSet),
+
+    NewChunksStored   = array:set(Index, FullCS, ChunksStored),
+    NewChunksAssigned = array:set(Index, FullCS, ChunksAssigned),
+
+    %% Assigned or valid -> Begun
+    NewStored     = etorrent_pieceset:delete(Index, Stored),
+    NewValid      = etorrent_pieceset:delete(Index, Valid),
+    NewAssigned   = etorrent_pieceset:delete(Index, Assigned),
+    NewBegun      = etorrent_pieceset:insert(Index, Begun),
+
+    NewState = State#state{
+        pieces_begun=NewBegun,
+        pieces_stored=NewStored,
+        pieces_valid=NewValid,
+        pieces_assigned=NewAssigned,
+        chunks_stored=NewChunksStored,
+        chunks_assigned=NewChunksAssigned},
+    {noreply, NewState};
 
 handle_info({chunk, {stored, Index, Offset, Length, _Pid}}, State) ->
     #state{
@@ -705,11 +737,11 @@ handle_info({chunk, {stored, Index, Offset, Length, _Pid}}, State) ->
 handle_info({chunk, {fetched, _, _, _, _}}, State) ->
     {noreply, State};
 
-handle_info({chunk, {dropped, _, _, _, _}}, State)
-    when not State#state.active ->
+handle_info({chunk, {assigned,_,_,_,_}}, State) ->
     {noreply, State};
 
-handle_info({chunk, {assigned,_,_,_,_}}, State) ->
+handle_info({chunk, {dropped, _, _, _, _}}, State)
+    when not State#state.active ->
     {noreply, State};
 
 handle_info({chunk, {dropped, Piece, Offset, Length, _}}, State) ->
