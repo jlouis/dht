@@ -1,4 +1,4 @@
-%% TODO: make it more aggressive after activation.
+%% @doc Assignor process for endgame mode.
 -module(etorrent_endgame).
 -behaviour(gen_server).
 
@@ -27,6 +27,7 @@
 -record(state, {
     torrent_id = exit(required) :: torrent_id(),
     pending    = exit(required) :: pid(),
+    %% will be initially filled by messages from the pending process.
     assigned   = exit(required) :: gb_tree(),
     fetched    = exit(required) :: gb_tree(),
     stored     = exit(required) :: gb_set()}).

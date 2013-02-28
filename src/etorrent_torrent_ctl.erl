@@ -464,13 +464,15 @@ init([Parent, Id, {Torrent, TorrentFile, TorrentIH}, PeerId]) ->
 %% @private
 initializing(timeout, #state{id=Id} = S0) ->
     Pending  = etorrent_pending:await_server(Id),
-    S = S0#state{
-        pending=Pending},
+    S = S0#state{pending=Pending},
 
     case etorrent_table:acquire_check_token(Id) of
         false ->
             {next_state, initializing, S, ?CHECK_WAIT_TIME};
         true ->
+            %% Reset a parent supervisor to a default state.
+            %% It is required, if the process was restarted.
+            ok = etorrent_torrent_sup:pause(S0#state.parent_pid),
             do_registration(S)
     end.
 
@@ -550,9 +552,7 @@ handle_event({switch_mode, NewMode}, SN, S=#state{mode=OldMode}) ->
          ok;
 
     'endgame' ->
-        etorrent_torrent_sup:start_endgame(
-          Sup,
-          TorrentID)
+        etorrent_torrent_sup:start_endgame(Sup, TorrentID)
     end,
         
     etorrent_download:switch_mode(TorrentID, OldMode, NewMode),

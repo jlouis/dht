@@ -40,12 +40,13 @@
          terminate/2,
          code_change/3]).
 
+-type torrent_id() :: etorrent_types:torrent_id().
 
 -record(state, {
+    torrent_id :: torrent_id(),
     receiver :: pid(),
     table :: integer()}).
 
--type torrent_id()  :: etorrent_types:torrent_id().
 
 register_server(TorrentID) ->
     etorrent_utils:register(server_name(TorrentID)).
@@ -86,6 +87,7 @@ init([TorrentID]) ->
     true = register_server(TorrentID),
     Table = ets:new(none, [private, set, {keypos, 1}]),
     InitState = #state{
+        torrent_id=TorrentID,
         receiver=self(),
         table=Table},
     {ok, InitState}.
@@ -103,12 +105,15 @@ handle_call({register, Peerpid}, _, State) ->
     {reply, Reply, State};
 
 handle_call({receiver, Newrecvpid}, _, State) ->
-    #state{table=Table} = State,
+    #state{table=Table, torrent_id=TorrentID} = State,
     Requests = list_requests(Table),
     Assigned = fun({Piece, Offset, Length, Peerpid}) ->
         etorrent_chunkstate:assigned(Piece, Offset, Length, Peerpid, Newrecvpid)
     end,
+    %% TODO: we can use only one messange here.
     [Assigned(Request) || Request <- Requests],
+    Peers = etorrent_peer_control:lookup_peers(TorrentID),
+    [etorrent_peer_control:update_queue(Peer) || Peer <- Peers],
     NewState = State#state{receiver=Newrecvpid},
     {reply, ok, NewState};
 

@@ -656,9 +656,11 @@ handle_info({piece, {valid, Index}}, State) ->
     end;
 
 handle_info({piece, {invalid, Index}}, State) ->
+    %% TODO: Forward this messange to endgame process.
+    [error(fixme) || not State#state.active],
+
     %% _ => invalid
     %% Chunks must be downloaded again.
-    %% Will not work, if in endgame.
     #state{
         pieces_stored=Stored,
         pieces_begun=Begun,

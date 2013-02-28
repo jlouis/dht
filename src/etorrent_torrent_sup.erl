@@ -73,14 +73,14 @@ start_peer_sup(Pid, TorrentID) ->
     supervisor:start_child(Pid, Spec).
 
 pause(Pid) ->
-    ok = supervisor:terminate_child(Pid, peer_pool_sup),
-    ok = supervisor:delete_child(Pid, peer_pool_sup),
-    ok = supervisor:terminate_child(Pid, tracker_communication),
-    ok = supervisor:delete_child(Pid, tracker_communication),
-    ok = supervisor:terminate_child(Pid, chunk_mgr),
-    ok = supervisor:delete_child(Pid, chunk_mgr),
-         supervisor:terminate_child(Pid, endgame),
-         supervisor:delete_child(Pid, endgame),
+    supervisor:terminate_child(Pid, peer_pool_sup),
+    supervisor:delete_child(Pid, peer_pool_sup),
+    supervisor:terminate_child(Pid, tracker_communication),
+    supervisor:delete_child(Pid, tracker_communication),
+    supervisor:terminate_child(Pid, chunk_mgr),
+    supervisor:delete_child(Pid, chunk_mgr),
+    supervisor:terminate_child(Pid, endgame),
+    supervisor:delete_child(Pid, endgame),
     ok.
 
 

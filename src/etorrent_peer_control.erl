@@ -125,7 +125,7 @@ unchoke(Pid) ->
     gen_server:cast(Pid, unchoke).
 
 %% @doc Rerun `poll_local_rqueue'.
-%% <p>The intended caller of this function is the {@link etorrent_reordered}</p>
+%% <p>The intended caller of this function is the {@link etorrent_pending}</p>
 %% @end
 update_queue(Pid) ->
     gen_server:cast(Pid, update_queue).
@@ -339,6 +339,7 @@ handle_cast(choke, State) ->
             Reqs = etorrent_peerstate:requests(Remote),
             case etorrent_peerconf:fast(Config) of
                 true ->
+                    %% TODO: This can be delayed for few seconds.
                     [etorrent_peer_send:reject(SendPid, Index, Offset, Length)
                     || {Index, Offset, Length} <- etorrent_rqueue:to_list(Reqs)];
                 false ->
@@ -382,6 +383,13 @@ handle_cast(check_choke, State) ->
             ok
     end,
     {noreply, State};
+
+%% The chunk manager wants new chunks.
+handle_cast(update_queue, State) ->
+    #state{download=Download, send_pid=SendPid, local=Local, remote=Remote} = State,
+    NewLocal = poll_local_rqueue(Download, SendPid, Remote, Local),
+    NewState = State#state{local=NewLocal},
+    {noreply, NewState};
 
 handle_cast(interested, State) ->
     self() ! {interested, true},
@@ -454,13 +462,6 @@ handle_info({piece, {valid, Piece}}, State) ->
     {noreply, NewState};
 
 handle_info({piece, {unassigned, _}}, State) ->
-    #state{download=Download, send_pid=SendPid, local=Local, remote=Remote} = State,
-    NewLocal = poll_local_rqueue(Download, SendPid, Remote, Local),
-    NewState = State#state{local=NewLocal},
-    {noreply, NewState};
-
-%% The chunk manager wants new chunks.
-handle_info(update_queue, State) ->
     #state{download=Download, send_pid=SendPid, local=Local, remote=Remote} = State,
     NewLocal = poll_local_rqueue(Download, SendPid, Remote, Local),
     NewState = State#state{local=NewLocal},
