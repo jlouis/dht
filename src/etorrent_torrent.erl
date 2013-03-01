@@ -66,7 +66,7 @@
           rate_sparkline = [0.0] :: [float()],
           %% BEP 27: is this torrent private
           is_private :: boolean(),
-          %% Rewrite peer id for this torrent.
+          %% Rewrite the local peer id for this torrent.
           peer_id :: peer_id() | undefined,
           state :: torrent_state()}).
 
@@ -339,6 +339,9 @@ all(Pos) ->
     [proplistify(O) || O <- Objects].
 
 proplistify(T) ->
+    OptionalPairs =
+    [{peer_id,          T#torrent.peer_id}],
+    skip_undefined(OptionalPairs) ++
     [{id,               T#torrent.id},
      {is_private,       T#torrent.is_private},
      {total,            T#torrent.total},
@@ -352,7 +355,6 @@ proplistify(T) ->
      {leechers,         T#torrent.leechers},
      {seeders,          T#torrent.seeders},
      {state,            T#torrent.state},
-     {peer_id,          T#torrent.peer_id},
      {rate_sparkline,   T#torrent.rate_sparkline}].
 
 
@@ -494,3 +496,6 @@ left_to_state(L, LS) ->
        L =:= 0, LS =/= 0 -> partial; %% partial seeding
                     true -> leeching
     end.
+
+skip_undefined(Pairs) ->
+    [{K,V} || {K,V} <- Pairs, V =/= undefined].

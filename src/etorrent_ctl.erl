@@ -74,7 +74,7 @@ continue(Id) ->
 stop(File) ->
     gen_server:cast(?SERVER, {stop, File}).
 
-%% @doc Get a local peer id.
+%% @doc Get a local peer id (as a binary).
 %%
 %% Most of the code don't need this function, because the peer id is usually
 %% passed as a parameter of the `start_link' function.

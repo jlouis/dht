@@ -183,7 +183,7 @@ decode_msg(Message) ->
        <<?SUGGEST, Index:32/big>> -> {suggest, Index};
        <<?HAVE_ALL>> -> have_all;
        <<?HAVE_NONE>> -> have_none;
-       <<?REJECT_REQUEST, Index:32, Offset:32, Len:32>> ->
+       <<?REJECT_REQUEST, Index:32/big, Offset:32/big, Len:32/big>> ->
            {reject_request, Index, Offset, Len};
        <<?ALLOWED_FAST, FastSet/binary>> ->
            {allowed_fast, decode_allowed_fast(FastSet)};
@@ -248,7 +248,7 @@ receive_handshake(Socket) ->
 -spec initiate_handshake(port(), peerid(), infohash()) ->
      {'error',atom() | {'bad_header',binary()}}
      | {'ok',['extended_messaging' | 'fast_extension',...],<<_:160>>}.
-initiate_handshake(Socket, LocalPeerId, InfoHash) ->
+initiate_handshake(Socket, <<_:160>> = LocalPeerId, <<_:160>> = InfoHash) ->
     % Since we are the initiator, send out this handshake
     Header = protocol_header(),
     try
@@ -257,7 +257,7 @@ initiate_handshake(Socket, LocalPeerId, InfoHash) ->
         ok = gen_tcp:send(Socket, LocalPeerId),
         receive_header(Socket, InfoHash)
     catch
-        error:_ -> {error, stop}
+        error:Reason -> {error, Reason}
     end.
 
 %% @doc Return the default contents of the Extended Messaging Protocol (BEP-10)
@@ -306,7 +306,7 @@ encode_msg(Message) ->
        have_all -> <<?HAVE_ALL>>;
        have_none -> <<?HAVE_NONE>>;
        {reject_request, Index, Offset, Len} ->
-           <<?REJECT_REQUEST, Index, Offset, Len>>;
+           <<?REJECT_REQUEST, Index:32/big, Offset:32/big, Len:32/big>>;
        {allowed_fast, FastSet} ->
            BinFastSet = encode_fastset(FastSet),
            <<?ALLOWED_FAST, BinFastSet/binary>>;

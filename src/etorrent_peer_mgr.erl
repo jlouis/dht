@@ -28,7 +28,7 @@
                     peerid       :: binary()       | '_',
                     last_offense :: {integer(), integer(), integer()} | '$1' }).
 
--record(state, { our_peer_id           :: binary(),
+-record(state, { local_peer_id         :: binary(),
                  available_peers = []  :: [{torrent_id(), peerinfo()}] }).
 
 -define(SERVER, ?MODULE).
@@ -41,9 +41,9 @@
 % @doc Start the peer manager
 % @end
 -spec start_link(binary()) -> {ok, pid()} | ignore | {error, term()}.
-start_link(OurPeerId)
-  when is_binary(OurPeerId) ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [OurPeerId], []).
+start_link(LocalPeerId)
+  when is_binary(LocalPeerId) ->
+    gen_server:start_link({local, ?SERVER}, ?MODULE, [LocalPeerId], []).
 
 % @doc Tell the peer mananger that a given peer behaved badly.
 % @end
@@ -75,16 +75,16 @@ is_bad_peer(IP, Port) ->
 
 %% ====================================================================
 
-init([OurPeerId]) ->
+init([LocalPeerId]) ->
     random:seed(now()), %% Seed RNG
     erlang:send_after(?CHECK_TIME, self(), cleanup_table),
     _Tid = ets:new(etorrent_bad_peer, [protected, named_table,
                                        {keypos, #bad_peer.ipport}]),
-    {ok, #state{ our_peer_id = OurPeerId }}.
+    {ok, #state{ local_peer_id = LocalPeerId }}.
 
 handle_call(_Request, _From, State) ->
-    Reply = ok,
-    {reply, Reply, State}.
+    error(badarg),
+    {reply, ok, State}.
 
 handle_cast({add_peers, TrackerUrl, IPList}, S) ->
     lager:debug("Add peers ~p.", [IPList]),
@@ -132,7 +132,7 @@ start_new_peers(TrackerUrl, IPList, State) ->
     %% Update the PeerList with the new incoming peers
     PeerList = etorrent_utils:list_shuffle(
 		 clean_list(IPList ++ State#state.available_peers)),
-    PeerId   = State#state.our_peer_id,
+    PeerId   = State#state.local_peer_id,
     {value, SlotsLeft} = etorrent_counters:slots_left(),
     Remaining = fill_peers(TrackerUrl, SlotsLeft, PeerId, PeerList),
     State#state{available_peers = Remaining}.
@@ -170,21 +170,30 @@ try_spawn_peer(TrackerUrl, K, PeerId, PL, TorrentId, IP, Port, R) ->
     spawn_peer(TrackerUrl, PeerId, PL, TorrentId, IP, Port),
     fill_peers(TrackerUrl, K-1, PeerId, R).
 
-spawn_peer(TrackerUrl, PeerId, PL, TorrentId, IP, Port) ->
-    spawn(fun () ->
-      case gen_tcp:connect(IP, Port, [binary, {active, false}],
-			   ?DEFAULT_CONNECT_TIMEOUT) of
+spawn_peer(TrackerUrl, LocalPeerId, PL, TorrentId, IP, Port) ->
+    proc_lib:spawn(fun () ->
+      {value, PL2} = etorrent_torrent:lookup(TorrentId),
+      %% Get the rewritten peer id (if defined).
+      LocalPeerId2 = proplists:get_value(peer_id, PL2, LocalPeerId),
+
+      LocalIP = etorrent_config:listen_ip(),
+      Options = case LocalIP of all -> []; _ -> [{ip, LocalIP}] end
+                ++ [binary, {active, false}],
+      case gen_tcp:connect(IP, Port, Options, ?DEFAULT_CONNECT_TIMEOUT) of
 	  {ok, Socket} ->
 	      case etorrent_proto_wire:initiate_handshake(
 		     Socket,
-		     PeerId, %% local peer id as a binary, comes from init/1.
+		     LocalPeerId2, %% local peer id as a binary, comes from init/1.
 		     proplists:get_value(info_hash, PL)) of
-		  {ok, _Capabilities, PeerId} -> ok;
-		  {ok, Capabilities, RPID} ->
+          %% Connected to the local node.
+		  {ok, _Capabilities, LocalPeerId} -> ok;
+		  {ok, _Capabilities, LocalPeerId2} -> ok;
+		  {ok, Capabilities, RemotePeerId} ->
 		      {ok, RecvPid, ControlPid} =
 			  etorrent_peer_pool:start_child(
 			    TrackerUrl,
-			    RPID,
+			    LocalPeerId2,
+                RemotePeerId,
                 proplists:get_value(info_hash, PL),
 			    TorrentId,
 			    {IP, Port},
@@ -193,7 +202,9 @@ spawn_peer(TrackerUrl, PeerId, PL, TorrentId, IP, Port) ->
 		      ok = gen_tcp:controlling_process(Socket, RecvPid),
 		      etorrent_peer_control:initialize(ControlPid, outgoing),
 		      ok;
-		  {error, _Reason} -> ok
+          {error, Reason} ->
+              lager:debug("Outgoing handshake failed with reason ~p.", [Reason]),
+              ok
 	      end;
 	  {error, _Reason} -> ok
       end

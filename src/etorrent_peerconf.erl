@@ -51,7 +51,7 @@ remoteid(Peerconf) ->
 
 -spec remoteid(<<_:160>>, peerconf()) -> peerconf().
 remoteid(<<NewRemoteID:160/bitstring>>, Peerconf) ->
-    #peerconf{localid=RemoteID} = Peerconf,
+    #peerconf{remoteid=RemoteID} = Peerconf,
     RemoteID == none orelse erlang:error(badarg),
     Peerconf#peerconf{remoteid=NewRemoteID}.
 
