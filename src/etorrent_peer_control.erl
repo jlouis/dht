@@ -61,7 +61,8 @@
     remote = exit(required) :: peerstate(),
     local  = exit(required) :: peerstate(),
     config = exit(required) :: peerconf(),
-    extensions :: term()
+    extensions :: term(),
+    reject_after_choke_tref
     }).
 
 %% Default size for a chunk. All clients use this.
@@ -247,11 +248,7 @@ handle_cast(choke, State) ->
     case etorrent_peerstate:choked(Remote) of
         false ->
             Reqs = etorrent_peerstate:requests(Remote),
-
-%           %% TODO: This can be delayed for few seconds.
-%           [etorrent_peer_send:reject(SendPid, Index, Offset, Length)
-%           || {Index, Offset, Length} <- etorrent_rqueue:to_list(Reqs)],
-            {Remote1, RejectTimeoutRef} =
+            {Remote1, RejectTRef} =
             case {etorrent_peerconf:fast(Config),
                   etorrent_rqueue:is_empty(Reqs)} of
                 {true, false} ->
@@ -271,14 +268,17 @@ handle_cast(choke, State) ->
             etorrent_peer_states:set_local_choke(TorrentID, self()),
             etorrent_peer_send:choke(SendPid),
             Remote2 = etorrent_peerstate:choked(true, Remote1),
-            NewState = State#state{remote=Remote2},
+            NewState = State#state{remote=Remote2,
+                                   reject_after_choke_tref=RejectTRef},
             {noreply, NewState};
         true ->
             {noreply, State}
     end;
 
 handle_cast(unchoke, State) ->
-    #state{torrent_id=TorrentID, send_pid=SendPid, remote=Remote} = State,
+    #state{torrent_id=TorrentID, send_pid=SendPid, remote=Remote,
+           reject_after_choke_tref=RejectTRef} = State,
+    [timer:cancel(RejectTRef) || RejectTRef =/= undefined],
     case etorrent_peerstate:choked(Remote) of
         false ->
             %% @todo handle duplicate unchoke?
@@ -287,7 +287,8 @@ handle_cast(unchoke, State) ->
             etorrent_peer_states:set_local_unchoke(TorrentID, self()),
             etorrent_peer_send:unchoke(SendPid),
             NewRemote = etorrent_peerstate:choked(false, Remote),
-            NewState = State#state{remote=NewRemote},
+            NewState = State#state{remote=NewRemote,
+                                   reject_after_choke_tref=undefined},
             {noreply, NewState}
     end;
 
@@ -327,6 +328,17 @@ handle_cast(Msg, State) ->
 
 
 %% @private
+handle_info(reject_after_choke_timeout, State) ->
+    lager:debug("Handle request reject timeout.", []),
+    #state{remote=Remote, send_pid=SendPid} = State,
+    Reqs = etorrent_peerstate:requests(Remote), 
+    [etorrent_peer_send:reject(SendPid, Index, Offset, Length)
+    || {Index, Offset, Length} <- etorrent_rqueue:to_list(Reqs)],
+    NewReqs = etorrent_rqueue:flush(Reqs),
+    Remote1 = etorrent_peerstate:requests(NewReqs, Remote),
+    NewState = State#state{remote=Remote1, reject_after_choke_tref=undefined},
+    {noreply, NewState};
+
 handle_info({chunk, {fetched, Index, Offset, Length, _}}, State) ->
     #state{send_pid=SendPid, local=Local} = State,
     Requests = etorrent_peerstate:requests(Local),
