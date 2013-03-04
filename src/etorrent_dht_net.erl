@@ -110,7 +110,7 @@ token_lifetime() ->
 % Public interface
 %
 start_link(DHTPort) ->
-    gen_server:start({local, srv_name()}, ?MODULE, [DHTPort], []).
+    gen_server:start_link({local, srv_name()}, ?MODULE, [DHTPort], []).
 
 -spec node_port() -> portnum().
 node_port() ->

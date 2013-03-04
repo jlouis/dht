@@ -7,6 +7,7 @@
 -export([start_link/0,
          start_link/1,
          start_link/2,
+         start_link/3,
          add_torrent/2,
          integer_id/1,
          list_id/1,
@@ -28,21 +29,26 @@ start_link(DHTPort) ->
     StateFile = etorrent_config:dht_state_file(),
     start_link(DHTPort, StateFile).
 
-
-
 start_link(DHTPort, StateFile) ->
+    BootstapNodes = etorrent_config:dht_bootstrap_nodes(),
+    start_link(DHTPort, StateFile, BootstapNodes).
+
+
+
+start_link(DHTPort, StateFile, BootstapNodes) ->
     _ = etorrent_dht_tracker:start_link(),
     SupName = {local, etorrent_dht_sup},
-    SupArgs = [{port, DHTPort}, {file, StateFile}],
+    SupArgs = [{port, DHTPort}, {file, StateFile}, {bootstap_nodes, BootstapNodes}],
     supervisor:start_link(SupName, ?MODULE, SupArgs).
 
 
 init(Args) ->
     Port = proplists:get_value(port, Args),
     File = proplists:get_value(file, Args),
+    BootstapNodes = proplists:get_value(bootstap_nodes, Args),
     {ok, {{one_for_one, 1, 60}, [
         {dht_state_srv,
-            {etorrent_dht_state, start_link, [File]},
+            {etorrent_dht_state, start_link, [File, BootstapNodes]},
             permanent, 2000, worker, dynamic},
         {dht_socket_srv,
             {etorrent_dht_net, start_link, [Port]},

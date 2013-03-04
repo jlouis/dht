@@ -764,7 +764,8 @@ do_registration(S=#state{id=Id, torrent=Torrent, hashes=Hashes,
     ok = etorrent_torrent:new(
            Id,
            case PeerId of undefined -> []; _ -> [{peer_id, PeerId}] end ++
-           [{uploaded, 0},
+           [{display_name, list_to_binary(etorrent_metainfo:get_name(Torrent))},
+            {uploaded, 0},
             {downloaded, 0},
             {all_time_uploaded, AU},
             {all_time_downloaded, AD},

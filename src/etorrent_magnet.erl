@@ -1,9 +1,13 @@
 %% Metadata downloader.
 %% http://wiki.vuze.com/w/Magnet_link
 -module(etorrent_magnet).
+%% Public API
+-export([download/1]).
+
+%% Used for testing
 -export([download_meta_info/2,
-         save_meta_info/2,
-         save_meta_info/3,
+         build_torrent/2,
+         write_torrent/2,
          parse_url/1]).
 
 -ifdef(TEST).
@@ -74,25 +78,52 @@ xt_to_integer(<<"urn:btih:", Base32:32/binary>>) ->
 -type portnum() :: etorrent_types:portnum().
 -type bcode() :: etorrent_types:bcode().
 
--spec save_meta_info(Info::binary(), Out::file:filename()) -> ok.
-save_meta_info(Info, Out) ->
-    save_meta_info(Info, Out, []).
+download({infohash, Hash}) ->
+    LocalPeerId = etorrent_ctl:local_peer_id(),
+    {ok, Info} = download_meta_info(LocalPeerId, Hash),
+    {ok, DecodedInfo} = etorrent_bcoding:decode(Info),
+    {ok, Torrent} = build_torrent(DecodedInfo, []),
+    write_torrent(Torrent);
+download({magnet_link, Link}) ->
+    LocalPeerId = etorrent_ctl:local_peer_id(),
+    {Hash, _, Trackers} = parse_url(Link),
+    {ok, Info} = download_meta_info(LocalPeerId, Hash),
+    {ok, DecodedInfo} = etorrent_bcoding:decode(Info),
+    {ok, Torrent} = build_torrent(DecodedInfo, Trackers),
+    write_torrent(Torrent).
+
+
 
 
 %% @doc Write a value, returned from {@link download_meta_info/2} into a file.
--spec save_meta_info(Info::binary(), Out::file:filename(),
-                     Trackers::[string()]) -> ok.
-save_meta_info(Info, Out, Trackers) ->
-    {ok, InfoDecoded} = etorrent_bcoding:decode(Info),
-    Data = add_trackers(Trackers) ++ [{<<"info">>, InfoDecoded}],
-    Encoded = etorrent_bcoding:encode(Data),
-    file:write_file(Out, Encoded).          
+-spec write_torrent(Out, Torrent::bcode()) -> {ok, Out} | {error, term()} when
+    Out :: file:filename().
+write_torrent(Out, Torrent) ->
+    Encoded = etorrent_bcoding:encode(Torrent),
+    case file:write_file(Out, Encoded) of
+        ok -> {ok, Out};
+        {error, Reason} -> {error, Reason}
+    end.
+    
+-spec write_torrent(Torrent::bcode()) -> {ok, Out} | {error, term()} when
+    Out :: file:filename().
+write_torrent(Torrent) ->
+    Name = filename:basename(etorrent_metainfo:get_name(Torrent)),
+    Out = filename:join(etorrent_config:work_dir(), Name) ++ ".torrent",
+    write_torrent(Out, Torrent).
+
+
+-spec build_torrent(Info::bcode(), Trackers::[string()]) -> {ok, Torrent::bcode()}.
+build_torrent(InfoDecoded, Trackers) ->
+    Torrent = add_trackers(Trackers) ++ [{<<"info">>, InfoDecoded}],
+    {ok, Torrent}.
 
 
 add_trackers([T]) ->
     [{<<"announce">>, T}];
 add_trackers([T|_]=Ts) ->
-    [{<<"announce">>, T}, {<<"announce-list">>, [Ts]}];
+    Teer1 = [iolist_to_binary(X) || X <- Ts],
+    [{<<"announce">>, iolist_to_binary(T)}, {<<"announce-list">>, [Teer1]}];
 add_trackers([]) -> [].
 
 

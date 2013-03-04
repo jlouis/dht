@@ -39,6 +39,7 @@
           %% How many bytes are there left before we have the full torrent.
           %% Only valid (i.e. stored AND checked) pieces are counted.
           left = unknown :: unknown | non_neg_integer(),
+          display_name :: string(),
           %% The number of bytes this client still has to download. 
           %% Clarification: The number of bytes needed to download to be 
           %% 100% complete and get all the included files in the torrent.
@@ -315,6 +316,7 @@ props_to_record(Id, PL) ->
 
     Total = FR('total'),
     #torrent { id = Id,
+               display_name = FU(display_name),
                left = L,
                left_or_skipped = LS,
                total = Total,
@@ -343,6 +345,7 @@ proplistify(T) ->
     [{peer_id,          T#torrent.peer_id}],
     skip_undefined(OptionalPairs) ++
     [{id,               T#torrent.id},
+     {display_name,     T#torrent.display_name},
      {is_private,       T#torrent.is_private},
      {total,            T#torrent.total},
      {wanted,           T#torrent.wanted},

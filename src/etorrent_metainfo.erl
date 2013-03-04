@@ -154,7 +154,7 @@ split_into_chunks(<<Chunk:20/binary, Rest/binary>>) ->
 process_file_entry(Dict) ->
     F = etorrent_bcoding:get_value("path", Dict),
     Sz = etorrent_bcoding:get_value("length", Dict),
-    true = lists:all(fun valid_path/1, F),
+    lists:all(fun valid_path/1, F) orelse error({invalid_path, F}),
     Filename = filename:join([binary_to_list(X) || X <- F]),
     {Filename, Sz}.
 
@@ -163,7 +163,7 @@ get_files_section(Torrent) ->
 	none ->
 	    % Single value torrent, fake entry
 	    N = etorrent_bcoding:get_info_value("name", Torrent),
-	    true = valid_path(N),
+	    valid_path(N) orelse error({invalid_path, N}),
 	    L = get_length(Torrent),
 	    [[{<<"path">>, [N]},
 	      {<<"length">>, L}]];
@@ -218,7 +218,8 @@ is_private_test() ->
 valid_path(Bin) when is_binary(Bin) -> valid_path(binary_to_list(Bin));
 valid_path(Path) when is_list(Path) ->
     {ok, RM} = re:compile("^[^/\\.~][^\\/]*$"),
-    case re:run(Path, RM) of
-        {match, _} -> true;
-        nomatch    -> false
+    case re:run(Path, RM, [{capture, none}]) of
+        _       -> true; %% disable check, it is too strict.
+        match   -> true;
+        nomatch -> false
     end.

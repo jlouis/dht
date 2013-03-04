@@ -11,6 +11,7 @@
 -export([dht/0,
 	 dht_port/0,
 	 dht_state_file/0,
+	 dht_bootstrap_nodes/0,
          dotdir/0,
 	 dirwatch_interval/0,
 	 download_dir/0,
@@ -59,6 +60,8 @@ configuration_specification() ->
      optional(listen_ip, all),
      optional(dht_port, 6882),
      optional(dht_state, "etorrent_dht_state"),
+     optional(dht_bootstrap_nodes, ["router.utorrent.com:6881",
+                                    "router.bittorrent.com:6881"]),
      optional(log_settings, [])].
 
 %%====================================================================
@@ -144,6 +147,9 @@ dht_port() -> call(dht_port).
 
 -spec dht_state_file() -> file_path().
 dht_state_file() -> call(dht_state).
+
+-spec dht_bootstrap_nodes() -> list().
+dht_bootstrap_nodes() -> call(dht_bootstrap_nodes).
 
 -spec log_settings() -> list().
 % @todo fix this return value

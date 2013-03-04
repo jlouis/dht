@@ -48,7 +48,7 @@
 
 
 -export([srv_name/0,
-         start_link/1,
+         start_link/2,
          node_id/0,
          safe_insert_node/2,
          safe_insert_node/3,
@@ -94,6 +94,7 @@
 % attempts to refresh the bucket.
 %
 
+-include_lib("kernel/include/inet.hrl").
 
 %
 % The server has started to use integer IDs internally, before the
@@ -106,8 +107,10 @@ ensure_int_id(ID) when is_integer(ID) -> ID.
 srv_name() ->
     etorrent_dht_state_server.
 
-start_link(StateFile) ->
-    gen_server:start_link({local, srv_name()}, ?MODULE, [StateFile], []).
+start_link(StateFile, BootstapNodes) ->
+    gen_server:start_link({local, srv_name()},
+                          ?MODULE,
+                          [StateFile, BootstapNodes], []).
 
 
 %% @doc Return a this node id as an integer.
@@ -327,7 +330,7 @@ random_node_tag() ->
     random:uniform(max_unreachable()).
 
 %% @private
-init([StateFile]) ->
+init([StateFile, BootstapNodes]) ->
     % Initialize the table of unreachable nodes when the server is started.
     % The safe_ping and unsafe_ping functions aren't exported outside of
     % of this module so they should fail unless the server is not running.
@@ -339,6 +342,8 @@ init([StateFile]) ->
 
 
     {NodeID, NodeList} = load_state(StateFile),
+
+    [spawn_link(fun() -> safe_insert_node(BN) end) || BN <- BootstapNodes],
 
     % Insert any nodes loaded from the persistent state later
     % when we are up and running. Use unsafe insertions or the
@@ -918,3 +923,57 @@ test_valid() ->
     ?assert(is_list(Nodes)).
 
 -endif.
+
+
+safe_insert_node(NodeAddr) ->
+    Addrs = decode_node_address(NodeAddr),
+    safe_insert_node_oneof(Addrs).
+
+
+%% Try to connect to the node, using different addresses.
+safe_insert_node_oneof([{IP, Port}|Addrs]) ->
+    case safe_insert_node(IP, Port) of
+        true -> true;
+        false -> safe_insert_node_oneof(Addrs)
+    end;
+safe_insert_node_oneof([]) ->
+    false.
+
+
+%-spec decode_node_address(NodeAddr::term()) -> [{IP, Port}].
+decode_node_address({{_,_,_,_}, _}=NodeAddr) ->
+    [NodeAddr];
+decode_node_address([_|_]=NodeAddr) ->
+    {Addr, Port} = parse_address(NodeAddr),
+    IPs = dns_lookup(Addr),
+    [{IP, Port} || IP <- IPs].
+
+
+%% Parses IP address or DNS-name and an optional port.
+%% [1080:0:0:0:8:800:200C:417A]:180
+%% [1080:0:0:0:8:800:200C:417A]
+%% router.example.com
+%% 127.0.0.1
+-spec parse_address(Addr::string()) -> {string(), non_neg_integer()}.
+parse_address(Addr) ->
+    %% re:run("[1080:0:0:0:8:800:200C:417A]:180$", "(.*):(\\d+)$", [{capture, all_but_first, list}])
+    %% {match,["[1080:0:0:0:8:800:200C:417A]","180"]}
+    %% re:run("[1080:0:0:0:8:800:200C:417A]", "(.*):(\\d+)$", [{capture, all_but_first, list}])
+    %% nomatch
+    case re:run(Addr, "(.*):(\\d+)$", [{capture, all_but_first, list}]) of
+        {match, [Host, Port]} -> {Host, list_to_integer(Port)};
+        nomatch               -> {Addr, 6881}
+    end.
+
+
+dns_lookup(Addr) ->
+    %% inet:gethostbyname("8.8.8.8").  
+    %% {ok,{hostent,"8.8.8.8",[],inet,4,[{8,8,8,8}]}}
+    %% inet:gethostbyname("8.8.8.8").  
+    %% {ok,{hostent,"8.8.8.8",[],inet,4,[{8,8,8,8}]}}
+    case inet_res:gethostbyname(Addr) of
+        {ok, #hostent{h_addr_list=IPs}} -> IPs;
+        {error, Reason} ->
+            lager:error("Cannot lookup address ~p because ~p.", [Addr, Reason]),
+            []
+    end.
