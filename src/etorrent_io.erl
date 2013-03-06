@@ -158,6 +158,8 @@ read_piece(TorrentID, Piece) ->
 
 %% @doc Request the size of a piece
 %% <p>Returns `{ok, Size}' where `Size' is the amount of bytes in that piece</p>
+%%
+%% You can use `etorrent_info:piece_size/2' instead.
 %% @end
 -spec piece_size(torrent_id(), piece_index()) -> {ok, integer()}.
 piece_size(TorrentID, Piece) ->

@@ -18,7 +18,7 @@
                    missing :: non_neg_integer()}). % Number of missing pieces
 %% API
 -export([start_link/0,
-         new/2, all/0, statechange/2,
+         insert/2, all/0, statechange/2,
          num_pieces/1, decrease_not_fetched/1,
          is_seeding/1, seeding/0,
          lookup/1, is_endgame/1,
@@ -105,15 +105,14 @@ start_link() ->
 %% '''
 %%
 %% @end
--spec new(integer(),
-       [{atom(), term()}]) -> ok.
-new(Id, PL) ->
+-spec insert(integer(), [{atom(), term()}]) -> ok.
+insert(Id, PL) ->
     T = props_to_record(Id, PL),
 
     Missing = proplists:get_value(missing, PL),
     P = #c_pieces{ id = Id, missing = Missing},
 
-    gen_server:call(?SERVER, {new, Id, T, P}).
+    gen_server:call(?SERVER, {insert, Id, T, P}).
 
 
 %% @doc Return all torrents, sorted by Id
@@ -207,9 +206,9 @@ is_private(Id) ->
 %% @private
 init([]) ->
     _ = ets:new(?TAB, [protected, named_table,
-                                   {keypos, 2}]),
+                                   {keypos, #torrent.id}]),
     _ = ets:new(etorrent_c_pieces, [protected, named_table,
-                                    {keypos, 2}]),
+                                    {keypos, #c_pieces.id}]),
     erlang:send_after(timer:seconds(60),
 		      self(),
 		      rate_sparkline_update),
@@ -218,13 +217,20 @@ init([]) ->
 
 %% @private
 %% @todo Avoid downs. Let the called process die.
-handle_call({new, Id, T=#torrent{}, P=#c_pieces{}},  {Pid, _Tag},  S) ->
-    true = ets:insert_new(?TAB, T),
-    true = ets:insert_new(etorrent_c_pieces,  P),
+handle_call({insert, Id, T=#torrent{}, P=#c_pieces{}},  {Pid, _Tag},  S) ->
+    case ets:member(?TAB, Id) of
+        false ->
+            true = ets:insert_new(?TAB, T),
+            true = ets:insert_new(etorrent_c_pieces,  P),
 
-    R = erlang:monitor(process, Pid),
-    NS = S#state { monitoring = dict:store(R, Id, S#state.monitoring) },
-    {reply, ok, NS};
+            R = erlang:monitor(process, Pid),
+            NS = S#state { monitoring = dict:store(R, Id, S#state.monitoring) },
+            {reply, ok, NS};
+        true  ->
+            true = ets:insert(?TAB, T),
+            true = ets:insert(etorrent_c_pieces,  P),
+            {reply, ok, S}
+    end;
 
 handle_call(all, _F, S) ->
     Q = all(#torrent.id),

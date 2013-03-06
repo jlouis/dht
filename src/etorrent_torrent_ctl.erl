@@ -104,7 +104,6 @@
     parent_pid  :: pid(),
     tracker_pid :: pid(),
     progress    :: pid(),
-    pending     :: pid(),
     wishes = [] :: [#wish{}],
     interval    :: timer:interval(),
     mode = progress :: 'progress' | 'endgame' | atom()
@@ -462,18 +461,34 @@ init([Parent, Id, {Torrent, TorrentFile, TorrentIH}, PeerId]) ->
     {ok, initializing, InitState, 0}.
 
 %% @private
-initializing(timeout, #state{id=Id} = S0) ->
-    Pending  = etorrent_pending:await_server(Id),
-    S = S0#state{pending=Pending},
-
+initializing(timeout, #state{id=Id, parent_pid=Sup} = S) ->
+    lager:info("Initialize torrent #~p.", [Id]),
     case etorrent_table:acquire_check_token(Id) of
         false ->
             {next_state, initializing, S, ?CHECK_WAIT_TIME};
         true ->
-            %% Reset a parent supervisor to a default state.
-            %% It is required, if the process was restarted.
-            ok = etorrent_torrent_sup:pause(S0#state.parent_pid),
-            do_registration(S)
+
+            %% Read the torrent, check its contents for what we are missing
+            FastResumePL = etorrent_fast_resume:query_state(Id),
+            TState = proplists:get_value(state, FastResumePL, unknown),
+            case TState of
+                paused ->
+                    %% Reset a parent supervisor to a default state.
+                    %% It is required, if the process was restarted.
+                    ok = etorrent_torrent_sup:pause(Sup),
+                    etorrent_table:statechange_torrent(Id, stopped),
+                    etorrent_event:stopped_torrent(Id),
+                    %% Register with disabled IO
+                    S1 = registration(S, false, FastResumePL),
+                    {next_state, paused, S1};
+                _ ->
+                    S1 = start_io(S),
+                    %% Checking the torrent, using IO, set the `valid' field.
+                    S2 = registration(S1, true, FastResumePL),
+                    %% Networking will use the `valid' field.
+                    S3 = start_networking(S2),
+                    {next_state, started, S3}
+            end
     end.
 
 
@@ -527,9 +542,12 @@ started(continue, S) ->
 
 
 paused(continue, #state{id=Id} = S) ->
-    Ret = do_start(S),
+    FastResumePL = etorrent_fast_resume:query_state(Id),
+    S1 = start_io(S),
+    S2 = registration(S1, true, FastResumePL),
+    S3 = start_networking(S2),
     ok = etorrent_torrent:statechange(Id, [continue]),
-    Ret;
+    {next_state, started, S3};
 paused(pause, S) ->
     {next_state, paused, S};
 
@@ -568,13 +586,10 @@ handle_event({set_peer_id, PeerId}, paused, S=#state{id=TorrentID}) ->
     ok = etorrent_torrent:statechange(TorrentID, [{set_peer_id, PeerId}]),
     {next_state, paused, S#state{peer_id=PeerId}};
 
-handle_event({set_peer_id, PeerId}, started, S=#state{parent_pid=SupPid, id=TorrentID}) ->
-    %% Restart communication processes.
-    ok = etorrent_torrent_sup:pause(SupPid),
-    %% Start then with a new peer id.
-    Res = do_start(S#state{peer_id=PeerId}),
+handle_event({set_peer_id, PeerId}, started, S=#state{id=TorrentID}) ->
+    S1 = restart_networking(S#state{peer_id=PeerId}),
     ok = etorrent_torrent:statechange(TorrentID, [{set_peer_id, PeerId}]),
-    Res;
+    {next_state, started, S1};
 
 handle_event(Msg, SN, S) ->
     lager:error("Problem: ~p~n", [Msg]),
@@ -729,16 +744,18 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 
 %% --------------------------------------------------------------------
 
-do_registration(S=#state{id=Id, torrent=Torrent, hashes=Hashes,
-                         peer_id=LocalPeerId}) ->
-    %% @todo: Try to coalesce some of these operations together.
-
-    %% Read the torrent, check its contents for what we are missing
-    FastResumePL = etorrent_fast_resume:query_state(Id),
-
-    etorrent_table:statechange_torrent(Id, checking),
-    etorrent_event:checking_torrent(Id),
-    ValidPieces = read_and_check_torrent(Id, Hashes, FastResumePL),
+%% Read information and calculate a set of metrics.
+registration(S=#state{id=Id, torrent=Torrent, hashes=Hashes,
+                      peer_id=LocalPeerId}, UseIO, FastResumePL) ->
+    case UseIO of
+        true ->
+            %% Read the torrent, check its contents for what we are missing
+            etorrent_table:statechange_torrent(Id, checking),
+            etorrent_event:checking_torrent(Id);
+        false ->
+            ok
+    end,
+    ValidPieces = read_and_check_torrent(Id, Hashes, FastResumePL, UseIO),
     UnwantedFiles0 = proplists:get_value(unwanted_files, FastResumePL, []),
     %% Get a list of file ids.
     UnwantedFiles = ordsets:from_list(UnwantedFiles0),
@@ -761,7 +778,7 @@ do_registration(S=#state{id=Id, torrent=Torrent, hashes=Hashes,
 
     %% Add a torrent entry for this torrent.
     %% @todo Minimize calculation in `etorrent_torrent' module.
-    ok = etorrent_torrent:new(
+    ok = etorrent_torrent:insert(
            Id,
            case PeerId of undefined -> []; _ -> [{peer_id, PeerId}] end ++
            [{display_name, list_to_binary(etorrent_metainfo:get_name(Torrent))},
@@ -783,32 +800,33 @@ do_registration(S=#state{id=Id, torrent=Torrent, hashes=Hashes,
                     [Reason]),
         []
     end,
-    NewState = S#state{valid=ValidPieces,
-                       unwanted=UnwantedPieces,
-                       wishes=WishRecordSet,
-                       unwanted_files=UnwantedFiles,
-                       peer_id=case PeerId of undefined -> LocalPeerId;
-                                              _         -> PeerId end
-                      },
-
-    case TState of
-        paused ->
-            etorrent_table:statechange_torrent(Id, stopped),
-            etorrent_event:stopped_torrent(Id),
-            {next_state, paused, NewState};
-        _ -> 
-        do_start(NewState)
-    end.
+    S#state{valid=ValidPieces,
+            unwanted=UnwantedPieces,
+            wishes=WishRecordSet,
+            unwanted_files=UnwantedFiles,
+            peer_id=case PeerId of undefined -> LocalPeerId;
+                                   _         -> PeerId end
+           }.
 
 
-do_start(S=#state{id=Id, torrent=Torrent, valid=ValidPieces, wishes=Wishes,
-                  unwanted=UnwantedPieces}) ->
+start_io(S=#state{id=Id, torrent=Torrent, parent_pid=Sup}) ->
+    lager:info("Start IO sub-system for #~p.", [Id]),
+    etorrent_torrent_sup:start_io_sup(Sup, Id, Torrent),
+    etorrent_torrent_sup:start_pending(Sup, Id),
+    etorrent_torrent_sup:start_scarcity(Sup, Id, Torrent),
+    S.
+
+
+%% Run this function only when IO-subsystem is active.
+start_networking(S=#state{id=Id, torrent=Torrent, valid=ValidPieces, wishes=Wishes,
+                          unwanted=UnwantedPieces, parent_pid=Sup}) ->
+    lager:info("Start IO networking-system for #~p.", [Id]),
     Masks = wishes_to_masks(Wishes),
 
     %% Start the progress manager
     {ok, ProgressPid} =
     case etorrent_torrent_sup:start_progress(
-          S#state.parent_pid,
+          Sup,
           Id,
           Torrent,
           ValidPieces,
@@ -847,11 +865,18 @@ do_start(S=#state{id=Id, torrent=Torrent, valid=ValidPieces, wishes=Wishes,
 
     {ok, Timer} = timer:send_interval(10000, check_completed),
 
-    NewState = S#state{tracker_pid = TrackerPid,
-                          progress = ProgressPid,
-                          interval = Timer },
+    S#state{tracker_pid = TrackerPid,
+               progress = ProgressPid,
+               interval = Timer }.
 
-    {next_state, started, NewState}.
+
+stop_networking(S=#state{parent_pid=SupPid}) ->
+    ok = etorrent_torrent_sup:stop_networking(SupPid),
+    S.
+
+
+restart_networking(S) ->
+    start_networking(stop_networking(S)).
 
 
 %% @todo run this when starting:
@@ -863,10 +888,7 @@ calculate_amount_left(TorrentID, Valid, Unwanted, Torrent) ->
     Total          = etorrent_metainfo:get_length(Torrent),
     ValidOrSkipped = etorrent_pieceset:union(Valid, Unwanted),
     Indexes        = etorrent_pieceset:to_list(ValidOrSkipped),
-    Sizes = [begin
-        {ok, Size} = etorrent_io:piece_size(TorrentID, I),
-        Size
-    end || I <- Indexes],
+    Sizes = [etorrent_info:piece_size(TorrentID, I) || I <- Indexes],
     Downloaded = lists:sum(Sizes),
     Total - Downloaded.
 
@@ -877,8 +899,9 @@ calculate_amount_left(TorrentID, Valid, Unwanted, Torrent) ->
 %   system knows what is going on, use that information. Otherwise, form all possible
 %   pieces, but filter them through a correctness checker.</p>
 % @end
--spec read_and_check_torrent(integer(), binary(), [{atom(), term()}]) -> pieceset().
-read_and_check_torrent(TorrentID, Hashes, PL) ->
+-spec read_and_check_torrent(integer(), binary(), [{atom(), term()}],
+                             UseIO::boolean()) -> pieceset().
+read_and_check_torrent(TorrentID, Hashes, PL, true) ->
     ok = etorrent_io:allocate(TorrentID),
     Numpieces = num_hashes(Hashes),
     Stage = to_stage(PL),
@@ -886,6 +909,18 @@ read_and_check_torrent(TorrentID, Hashes, PL) ->
         unknown -> 
             All  = etorrent_pieceset:full(Numpieces),
             filter_pieces(TorrentID, All, Hashes);
+        completed -> 
+            etorrent_pieceset:full(Numpieces);
+        incompleted ->
+            Bin = proplists:get_value(bitfield, PL),
+            etorrent_pieceset:from_binary(Bin, Numpieces)
+    end;
+read_and_check_torrent(_TorrentID, Hashes, PL, false) ->
+    Numpieces = num_hashes(Hashes),
+    Stage = to_stage(PL),
+    case Stage of
+        unknown -> 
+            etorrent_pieceset:empty(Numpieces);
         completed -> 
             etorrent_pieceset:full(Numpieces);
         incompleted ->

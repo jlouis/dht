@@ -114,7 +114,7 @@ handle_cast({stop, F}, S) ->
 
 %% @private
 handle_call({start, F, CallBack}, _From, S) ->
-    lager:info("Starting torrent in file ~s", [F]),
+    lager:info("Starting torrent from file ~s", [F]),
     case load_torrent(F) of
         duplicate -> {reply, duplicate, S};
         {ok, Torrent} ->

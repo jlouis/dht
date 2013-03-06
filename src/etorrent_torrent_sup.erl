@@ -13,7 +13,11 @@
          start_progress/6,
          start_endgame/2,
          start_peer_sup/2,
+         start_io_sup/3,
+         start_pending/2,
+         start_scarcity/3,
          stop_assignor/1,
+         stop_networking/1,
          pause/1]).
 
 %% Supervisor callbacks
@@ -72,15 +76,41 @@ start_peer_sup(Pid, TorrentID) ->
     Spec = peer_pool_spec(TorrentID),
     supervisor:start_child(Pid, Spec).
 
-pause(Pid) ->
+
+start_io_sup(Pid, TorrentID, Torrent) ->
+    Spec = io_sup_spec(TorrentID, Torrent),
+    supervisor:start_child(Pid, Spec).
+
+start_pending(Pid, TorrentID) ->
+    Spec = pending_spec(TorrentID),
+    supervisor:start_child(Pid, Spec).
+
+
+start_scarcity(Pid, TorrentID, Torrent) ->
+    Spec = scarcity_manager_spec(TorrentID, Torrent),
+    supervisor:start_child(Pid, Spec).
+
+
+stop_networking(Pid) ->
     supervisor:terminate_child(Pid, peer_pool_sup),
     supervisor:delete_child(Pid, peer_pool_sup),
     supervisor:terminate_child(Pid, tracker_communication),
     supervisor:delete_child(Pid, tracker_communication),
+    ok.
+
+pause(Pid) ->
+    stop_networking(Pid),
     supervisor:terminate_child(Pid, chunk_mgr),
     supervisor:delete_child(Pid, chunk_mgr),
     supervisor:terminate_child(Pid, endgame),
     supervisor:delete_child(Pid, endgame),
+    supervisor:terminate_child(Pid, scarcity_mgr),
+    supervisor:delete_child(Pid, scarcity_mgr),
+    supervisor:terminate_child(Pid, pending),
+    supervisor:delete_child(Pid, pending),
+    %% io_sup
+    supervisor:terminate_child(Pid, fs_pool),
+    supervisor:delete_child(Pid, fs_pool),
     ok.
 
 
@@ -94,12 +124,9 @@ stop_assignor(Pid) ->
 
 %% @private
 init([{Torrent, TorrentPath, TorrentIH}, PeerID, TorrentID]) ->
-    lager:debug("Init ~p torrent supervisor.", [TorrentID]),
+    lager:debug("Init torrent supervisor #~p.", [TorrentID]),
     Children = [
         info_spec(TorrentID, Torrent),
-        io_sup_spec(TorrentID, Torrent),
-        pending_spec(TorrentID),
-        scarcity_manager_spec(TorrentID, Torrent),
         torrent_control_spec(TorrentID, Torrent, TorrentPath, TorrentIH, PeerID)],
     {ok, {{one_for_all, 1, 60}, Children}}.
 

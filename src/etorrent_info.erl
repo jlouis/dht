@@ -30,10 +30,11 @@
          file_name/2,
          full_file_name/2,
          file_position/2,
-         file_size/2,         %
-         piece_size/1,        %
-         piece_count/1,       %
-         chunk_size/1,        %
+         file_size/2,
+         piece_size/1,
+         piece_size/2,
+         piece_count/1,
+         chunk_size/1,
          is_private/1
         ]).
 
@@ -175,6 +176,11 @@ mask_to_size(TorrentID, Mask) ->
 piece_size(TorrentID) when is_integer(TorrentID) ->
     DirPid = await_server(TorrentID),
     {ok, Size} = gen_server:call(DirPid, piece_size),
+    Size.
+
+piece_size(TorrentID, PieceNum) when is_integer(TorrentID), is_integer(PieceNum) ->
+    DirPid = await_server(TorrentID),
+    {ok, Size} = gen_server:call(DirPid, {piece_size, PieceNum}),
     Size.
 
 
@@ -362,6 +368,11 @@ handle_call(chunk_size, _, State=#state{chunk_size=S}) ->
 
 handle_call(piece_size, _, State=#state{piece_size=S}) ->
     {reply, {ok, S}, State};
+
+handle_call({piece_size, PieceNum}, _, State=#state{
+        piece_size=PieceSize, total_size=TotalSize, piece_count=PieceCount}) ->
+    Size = calc_piece_size(PieceNum, PieceSize, TotalSize, PieceCount),
+    {reply, {ok, Size}, State};
 
 handle_call(piece_count, _, State=#state{piece_count=C}) ->
     {reply, {ok, C}, State};
@@ -1253,6 +1264,40 @@ byte_ranges_to_mask_test_() ->
     %% Set:    |---x|xxxx|xxx-|
      ?_assertEqual(<<2#011:3>>, byte_ranges_to_mask([{3,8}], 0, 4, 11,
                                                     false, <<>>))
+    ].
+
+-endif.
+
+
+calc_piece_size(PieceNum, PieceSize, TotalSize, PieceCount)
+        when (PieceNum + 1) =:= PieceCount ->
+    %% Last piece
+    case TotalSize rem PieceSize of
+        0 -> PieceSize;
+        Size -> Size
+    end;
+calc_piece_size(PieceNum, PieceSize, _, PieceCount)
+        when PieceNum < PieceCount, PieceNum >= 0 ->
+    %% Common size
+    PieceSize.
+
+-ifdef(TEST).
+
+calc_piece_size_test_() ->
+    %% PieceNum, PieceSize, TotalSize, PieceCount
+    %% Bytes:  |0123|4567|89AB|
+    %% Pieces: |0   |1   |2   |
+    [?_assertEqual(4, calc_piece_size(0, 4, 12, 3)),
+     ?_assertEqual(4, calc_piece_size(1, 4, 12, 3)),
+     ?_assertEqual(4, calc_piece_size(2, 4, 12, 3)),
+     ?_assertError(function_clause, calc_piece_size(3, 4, 12, 3)),
+     ?_assertError(function_clause, calc_piece_size(-1, 4, 12, 3)),
+
+    %% Bytes:  |0123|4567|89A-|
+    %% Pieces: |0   |1   |2   |
+     ?_assertEqual(4, calc_piece_size(0, 4, 11, 3)),
+     ?_assertEqual(4, calc_piece_size(1, 4, 11, 3)),
+     ?_assertEqual(3, calc_piece_size(2, 4, 11, 3))
     ].
 
 -endif.
