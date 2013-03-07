@@ -7,7 +7,7 @@
 -behaviour(supervisor).
 
 %% API
--export([start_link/3,
+-export([start_link/4,
 
          start_child_tracker/5,
          start_progress/6,
@@ -31,10 +31,10 @@
 
 %% @doc Start up the supervisor
 %% @end
--spec start_link({bcode(), string(), binary()}, binary(), integer()) ->
+-spec start_link({bcode(), string(), binary()}, binary(), integer(), list()) ->
                 {ok, pid()} | ignore | {error, term()}.
-start_link({Torrent, TorrentFile, TorrentIH}, Local_PeerId, Id) ->
-    supervisor:start_link(?MODULE, [{Torrent, TorrentFile, TorrentIH}, Local_PeerId, Id]).
+start_link({Torrent, TorrentFile, TorrentIH}, Local_PeerId, Id, Options) ->
+    supervisor:start_link(?MODULE, [{Torrent, TorrentFile, TorrentIH}, Local_PeerId, Id, Options]).
 
 %% @doc start a child process of a tracker type.
 %% <p>We do this after-the-fact as we like to make sure how complete the torrent
@@ -123,11 +123,11 @@ stop_assignor(Pid) ->
 %% ====================================================================
 
 %% @private
-init([{Torrent, TorrentPath, TorrentIH}, PeerID, TorrentID]) ->
+init([{Torrent, TorrentPath, TorrentIH}, PeerID, TorrentID, Options]) ->
     lager:debug("Init torrent supervisor #~p.", [TorrentID]),
     Children = [
         info_spec(TorrentID, Torrent),
-        torrent_control_spec(TorrentID, Torrent, TorrentPath, TorrentIH, PeerID)],
+        torrent_control_spec(TorrentID, Torrent, TorrentPath, TorrentIH, PeerID, Options)],
     {ok, {{one_for_all, 1, 60}, Children}}.
 
 pending_spec(TorrentID) ->
@@ -155,10 +155,10 @@ endgame_spec(TorrentID) ->
         {etorrent_endgame, start_link, [TorrentID]},
         transient, 5000, worker, [etorrent_endgame]}.
 
-torrent_control_spec(TorrentID, Torrent, TorrentFile, TorrentIH, PeerID) ->
+torrent_control_spec(TorrentID, Torrent, TorrentFile, TorrentIH, PeerID, Options) ->
     {control,
         {etorrent_torrent_ctl, start_link,
-         [TorrentID, {Torrent, TorrentFile, TorrentIH}, PeerID]},
+         [TorrentID, {Torrent, TorrentFile, TorrentIH}, PeerID, Options]},
         permanent, 5000, worker, [etorrent_torrent_ctl]}.
 
 io_sup_spec(TorrentID, Torrent) ->

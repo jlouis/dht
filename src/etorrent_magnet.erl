@@ -34,7 +34,7 @@
 
 %% @doc Parse a magnet link into a tuple "{Infohash, Description, Trackers}".
 -spec parse_url(Url) -> {XT, DN, [TR]} when
-    Url :: string() | binary(),
+    Url :: string(),
     XT :: non_neg_integer(),
     DN :: string() | undefined,
     TR :: string().
@@ -78,13 +78,22 @@ xt_to_integer(<<"urn:btih:", Base32:32/binary>>) ->
 -type portnum() :: etorrent_types:portnum().
 -type bcode() :: etorrent_types:bcode().
 
-download({infohash, Hash}) ->
+download({address, Address}) ->
+    case iolist_to_binary(Address) of
+        <<"magnet:", _/binary>> = Bin ->
+            download({magnet_link, binary_to_list(Bin)});
+        <<Base16:40/binary>> ->
+            download({infohash, list_to_integer(binary_to_list(Base16), 16)});
+        <<Base32:32/binary>> ->
+            download({infohash, etorrent_utils:base32_binary_to_integer(Base32)})
+    end;
+download({infohash, Hash}) when is_integer(Hash) ->
     LocalPeerId = etorrent_ctl:local_peer_id(),
     {ok, Info} = download_meta_info(LocalPeerId, Hash),
     {ok, DecodedInfo} = etorrent_bcoding:decode(Info),
     {ok, Torrent} = build_torrent(DecodedInfo, []),
     write_torrent(Torrent);
-download({magnet_link, Link}) ->
+download({magnet_link, Link}) when is_list(Link) ->
     LocalPeerId = etorrent_ctl:local_peer_id(),
     {Hash, _, Trackers} = parse_url(Link),
     {ok, Info} = download_meta_info(LocalPeerId, Hash),
@@ -250,6 +259,7 @@ download_metadata(Socket, MetadataExtId, LeftSize, MetadataSize, PieceNum, Data)
     {RespondMsg, Piece} = etorrent_bcoding2:decode(RespondMsgBin),
     case decode_metadata_respond(RespondMsg) of
         {data, PieceNum, TotalSize} ->
+            lager:debug("Metadata piece #~p was downloaded.", [PieceNum]),
             PieceSize = byte_size(Piece),
             assert_total_size(MetadataSize, TotalSize),
             assert_piece_size(LeftSize, PieceSize),

@@ -182,6 +182,8 @@ has_incoming_requests(Pid) ->
 %% @private
 init([TrackerUrl, LocalPeerID, RemotePeerID,
       InfoHash, TorrentID, {IP, Port}, Caps, Socket]) ->
+    lager:info("New peer ~p:~p is known as ~p for #~p.",
+               [IP, Port, RemotePeerID, TorrentID]),
     random:seed(now()),
     %% Use socket handle as remote peer-id.
     register_server(TorrentID, Socket),

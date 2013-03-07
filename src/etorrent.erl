@@ -50,13 +50,13 @@ start(Filename) when is_list(Filename) ->
 %% @end
 start(Filename, {Ref, Pid})
   when is_list(Filename), is_reference(Ref), is_pid(Pid) ->
-    start(Filename,
-          fun() ->
-                  lager:info("Completing torrent callback: ~s", [Filename]),
-                  Pid ! {Ref, done}
-          end);
+    Callback = fun() ->
+          lager:info("Completing torrent callback: ~s", [Filename]),
+          Pid ! {Ref, done}
+      end,
+    start(Filename, {callback, Callback});
 start(Filename, CallBack) when is_list(Filename), is_function(CallBack, 0) ->
-    etorrent_ctl:start(Filename, CallBack).
+    etorrent_ctl:start(Filename, {callback, CallBack}).
 
 %% @doc List currently active torrents.
 %% <p>This function will list the torrent files which are currently in

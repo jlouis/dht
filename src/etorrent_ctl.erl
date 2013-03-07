@@ -40,15 +40,18 @@ start_link(PeerId) when is_binary(PeerId) ->
 % @end
 -spec start(string()) -> ok | {error, term()}.
 start(File) ->
-    start(File, none).
+    start(File, []).
 
 %% @doc Ask the manager to start a new torrent, given in File
 %% Upon completion the given CallBack function is executed in a separate
 %% process.
 %% @end
--spec start(string(), none | fun (() -> any())) -> ok | {error, term()}.
-start(File, CallBack) ->
-    gen_server:call(?SERVER, {start, File, CallBack}, infinity).
+-spec start(string(), [Option]) -> {ok, TorrentID} | {error, term()} when
+    Option :: {callback, Callback} | paused,
+    Callback :: fun (() -> any()),
+    TorrentID :: non_neg_integer().
+start(File, Options) ->
+    gen_server:call(?SERVER, {start, File, Options}, infinity).
 
 % @doc Check a torrents contents
 % @end
@@ -113,19 +116,25 @@ handle_cast({stop, F}, S) ->
     {noreply, S}.
 
 %% @private
-handle_call({start, F, CallBack}, _From, S) ->
-    lager:info("Starting torrent from file ~s", [F]),
-    case load_torrent(F) of
+handle_call({start, FileName, Options}, _From, S) ->
+    lager:info("Starting torrent from file ~s", [FileName]),
+    case load_torrent(FileName) of
         duplicate -> {reply, duplicate, S};
         {ok, Torrent} ->
             TorrentIH = etorrent_metainfo:get_infohash(Torrent),
+            TorrentID = etorrent_counters:next(torrent),
             case etorrent_torrent_pool:start_child(
-                   {Torrent, F, TorrentIH},
+                   {Torrent, FileName, TorrentIH},
                    S#state.local_peer_id,
-                   etorrent_counters:next(torrent)) of
+                   TorrentID,
+                   Options) of
                 {ok, TorrentPid} ->
-                    install_callback(TorrentPid, TorrentIH, CallBack),
-                    {reply, ok, S};
+                    case proplists:get_value(callback, Options) of
+                        undefined -> ok;
+                        Callback ->
+                            install_callback(TorrentPid, TorrentIH, Callback)
+                    end,
+                    {reply, {ok, TorrentID}, S};
                 {error, {already_started, _Pid}} = Err ->
                     lager:error("Cannot load the torrent ~p twice.", [TorrentIH]),
                     {reply, Err, S};
@@ -134,8 +143,8 @@ handle_call({start, F, CallBack}, _From, S) ->
                     {reply, Err, S}
             end;
         {error, Reason} ->
-            lager:info("Malformed torrent file ~s, error: ~p", [F, Reason]),
-            etorrent_event:notify({malformed_torrent_file, F}),
+            lager:info("Malformed torrent file ~s, error: ~p", [FileName, Reason]),
+            etorrent_event:notify({malformed_torrent_file, FileName}),
             {reply, {error, Reason}, S}
     end;
 handle_call(stop_all, _From, S) ->
@@ -194,7 +203,5 @@ load_torrent_internal(F) ->
     P = filename:join([Workdir, F]),
     etorrent_bcoding:parse_file(P).
 
-install_callback(_TorrentPid, _InfoHash, none) ->
-    ok;
 install_callback(TorrentPid, InfoHash, Fun) ->
     ok = etorrent_callback_handler:install_callback(TorrentPid, InfoHash, Fun).

@@ -15,7 +15,7 @@
 
 
 %% API
--export([start_link/3,
+-export([start_link/4,
          completed/1,
          pause_torrent/1,
          continue_torrent/1,
@@ -106,7 +106,10 @@
     progress    :: pid(),
     wishes = [] :: [#wish{}],
     interval    :: timer:interval(),
-    mode = progress :: 'progress' | 'endgame' | atom()
+    mode = progress :: 'progress' | 'endgame' | atom(),
+    %% This field is for passing `paused' flag beetween
+    %% the `init' and `initializing' functions.
+    state       :: unknown | paused
     }).
 
 
@@ -127,10 +130,11 @@ server_name(TorrentID) ->
     {etorrent, TorrentID, control}.
 
 %% @doc Start the server process
--spec start_link(integer(), {bcode(), string(), binary()}, binary()) ->
+-spec start_link(integer(), {bcode(), string(), binary()}, binary(), list()) ->
         {ok, pid()} | ignore | {error, term()}.
-start_link(Id, {Torrent, TorrentFile, TorrentIH}, PeerId) ->
-    gen_fsm:start_link(?MODULE, [self(), Id, {Torrent, TorrentFile, TorrentIH}, PeerId], []).
+start_link(Id, {Torrent, TorrentFile, TorrentIH}, PeerId, Options) ->
+    Params = [self(), Id, {Torrent, TorrentFile, TorrentIH}, PeerId, Options],
+    gen_fsm:start_link(?MODULE, Params, []).
 
 %% @doc Request that the given torrent is checked (eventually again)
 %% @end
@@ -445,11 +449,16 @@ search_wish(_El, []) ->
 %% ====================================================================
 
 %% @private
-init([Parent, Id, {Torrent, TorrentFile, TorrentIH}, PeerId]) ->
+init([Parent, Id, {Torrent, TorrentFile, TorrentIH}, PeerId, Options]) ->
     register_server(Id),
     etorrent_table:new_torrent(TorrentFile, TorrentIH, Parent, Id),
     HashList = etorrent_metainfo:get_pieces(Torrent),
     Hashes   = hashes_to_binary(HashList),
+    %% Initial (non in fast resume) state of the torrent:
+    TState   = case proplists:get_bool(paused, Options) of
+                   true -> paused;
+                   false -> unknown
+               end,
     InitState = #state{
         id=Id,
         torrent=Torrent,
@@ -457,7 +466,8 @@ init([Parent, Id, {Torrent, TorrentFile, TorrentIH}, PeerId]) ->
         peer_id=PeerId,
         default_peer_id=PeerId,
         parent_pid=Parent,
-        hashes=Hashes},
+        hashes=Hashes,
+        state=TState},
     {ok, initializing, InitState, 0}.
 
 %% @private
@@ -470,7 +480,9 @@ initializing(timeout, #state{id=Id, parent_pid=Sup} = S) ->
 
             %% Read the torrent, check its contents for what we are missing
             FastResumePL = etorrent_fast_resume:query_state(Id),
-            TState = proplists:get_value(state, FastResumePL, unknown),
+            [lager:debug("Fast resume entry for #~p is empty.", [Id])
+             || FastResumePL =:= []],
+            TState = proplists:get_value(state, FastResumePL, S#state.state),
             case TState of
                 paused ->
                     %% Reset a parent supervisor to a default state.
