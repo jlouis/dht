@@ -23,6 +23,7 @@
          mask_to_filelist/2,
          mask_to_size/2,
          tree_children/2,
+         file_diff/2,
          minimize_filelist/2]).
 
 %% Info API
@@ -243,19 +244,72 @@ tree_children(TorrentID, FileID) when is_integer(TorrentID), is_integer(FileID) 
             ,{size, X#file_info.size}
             ,{capacity, X#file_info.capacity}
             ,{is_leaf, (X#file_info.children == [])}
+%           ,{is_downloaded, (ValidSizeFP =:= SizeFP)}
             ,{mode, atom_to_binary(file_mode(SizeCheckFP, UnwantedSizeFP), utf8)}
             ,{progress, ValidSizeFP / SizeFP}
             ]
         end, Records).
+
+
+%% Example:
+%%
+%% ```
+%% FilePLs = etorrent_info:tree_children(1, 0),
+%% {FileDiffPLs, NewFilePLs}   = etorrent_info:file_diff(TorrentID, FilePLs),
+%% {FileDiffPLs2, NewFilePLs2} = etorrent_info:file_diff(TorrentID, NewFilePLs).
+%% '''
+%%
+%% where `NewFilePLs' is an updated and minimized version of `FilePLs',
+%% `FilePLs' is either value from `tree_children' or `NewFilePLs'.
+-spec file_diff(TorrentID, FilePLs) -> {FileDiffPLs, NewFilePLs} when
+    TorrentID :: torrent_id(),
+    FilePLs     :: [{term(), term()}],
+    NewFilePLs  :: [{term(), term()}],
+    FileDiffPLs :: [{term(), term()}].
+             
+file_diff(TorrentID, FilePLs) when is_integer(TorrentID) ->
+    DirPid = await_server(TorrentID),
+    FileIDs = [pl_fetch_value(id, FilePL) || FilePL <- FilePLs],
+    {ok, Records} = gen_server:call(DirPid, {files, FileIDs}),
+    FileID_PL_Recs = lists:zip3(FileIDs, FilePLs, Records),
+
+    %% get valid pieceset
+    CtlPid = etorrent_torrent_ctl:lookup_server(TorrentID),    
+    {ok, Valid}    = etorrent_torrent_ctl:valid_pieces(CtlPid),
+    traverse_files(Valid, FileID_PL_Recs, [], []).
+
+
+traverse_files(Valid, [{FileID, FilePL, Record}|Xs], Zs, Ys) ->
+    Pieces         = Record#file_info.pieces,
+    SizeFP         = etorrent_pieceset:size(Pieces),
+    ValidFP        = etorrent_pieceset:intersection(Pieces, Valid),
+    ValidSizeFP    = etorrent_pieceset:size(ValidFP),
+    NewProgress    = ValidSizeFP / SizeFP, %% 0.0 .. 1.0
+    OldProgress    = proplists:get_value(progress, FilePL),
+    IsProgressChanged = not compare_floats(NewProgress, OldProgress),
+    IsDownloaded      = compare_floats(NewProgress, 1.0),
+    PL = [{id, FileID}, {progress, NewProgress}],
+    if IsProgressChanged ->
+        if IsDownloaded -> traverse_files(Valid, Xs, [PL|Zs], Ys);
+                   true -> traverse_files(Valid, Xs, [PL|Zs], [FilePL|Ys])
+        end;
+        true ->
+        if IsDownloaded -> traverse_files(Valid, Xs, Zs, Ys);
+                   true -> traverse_files(Valid, Xs, Zs, [FilePL|Ys])
+        end
+    end;
+traverse_files(_Valid, [], Zs, Ys) ->
+    {lists:reverse(Zs), lists:reverse(Ys)}.
+
 
 -spec file_mode(SizeCheckFP, UnwantedSizeFP) -> Mode when
     SizeCheckFP :: non_neg_integer(),
     UnwantedSizeFP :: non_neg_integer(),
     Mode :: partial | skip | download.
 
-file_mode(_, 0) -> download;
-file_mode(X, X) -> skip;
-file_mode(_, _) -> partial.
+file_mode(_, 0) -> download; %% a whole file will be downloaded.
+file_mode(X, X) -> skip;     %% nothing from the file will be downloaded.
+file_mode(_, _) -> partial.  %% something from the directory will be downloaded.
     
 
 %% @doc Form minimal version of the filelist with the same pieceset.
@@ -447,6 +501,10 @@ handle_call({tree_children, FileID}, _, State) ->
             Children = [array:get(Id, Arr) || Id <- Ids],
             {reply, {ok, Children}, State}
     end;
+handle_call({files, FileIDs}, _, State) ->
+    #state{static_file_info=Arr} = State,
+    Nodes = [array:get(Id, Arr) || Id <- FileIDs],
+    {reply, {ok, Nodes}, State};
 handle_call(metadata_size, _, State) ->
     #state{metadata_size=MetadataSize} = State,
     {reply, {ok, MetadataSize}, State};
@@ -1301,3 +1359,14 @@ calc_piece_size_test_() ->
     ].
 
 -endif.
+
+%% For small X and Y.
+compare_floats(X, Y) ->
+    abs(X - Y) < 0.0001.
+
+
+pl_fetch_value(K, PL) ->
+    case proplists:get_value(K, PL) of
+        undefined -> error({bad_key, K, PL});
+        V -> V
+    end.

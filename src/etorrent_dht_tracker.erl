@@ -221,10 +221,11 @@ handle_info({timeout, _, announce}, State) ->
     NextTrackers = cut_list(16, AllNodes),
     NewTrackers  = [{IP, Port} || {_, IP, Port} <- NextTrackers,
                     not lists:member({IP, Port}, TrackerAddrs)],
-    _ = [begin
-            {_, Token, _, _} = ?dht_net:get_peers(IP, Port, InfoHash),
-            _ = ?dht_net:announce(IP, Port, InfoHash, Token, BTPort)
-         end || {IP, Port} <- NewTrackers],
+    [case ?dht_net:get_peers(IP, Port, InfoHash) of
+         {error, timeout} -> ok;
+         {_, Token, _, _} ->
+            ?dht_net:announce(IP, Port, InfoHash, Token, BTPort)
+     end || {IP, Port} <- NewTrackers],
 
     lager:debug("Adding peers ~p.", [Peers]),
     ok = etorrent_peer_mgr:add_peers(TorrentID, Peers),

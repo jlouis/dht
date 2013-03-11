@@ -934,7 +934,8 @@ safe_insert_node(NodeAddr) ->
 safe_insert_node_oneof([{IP, Port}|Addrs]) ->
     case safe_insert_node(IP, Port) of
         true -> true;
-        false -> safe_insert_node_oneof(Addrs)
+        false -> safe_insert_node_oneof(Addrs);
+        {error, timeout} -> safe_insert_node_oneof(Addrs)
     end;
 safe_insert_node_oneof([]) ->
     false.
