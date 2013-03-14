@@ -13,7 +13,6 @@
 
 -behaviour(gen_server).
 
--include("rate_mgr.hrl").
 
 %% API
 -export([start_link/0, perform_rechoke/0, monitor/1]).

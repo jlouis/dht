@@ -19,6 +19,7 @@
 %% Peer information
 -export([get_peer/1,
          all_peers/0,
+         all_tid_and_pids/0,
          connected_peer/3,
          foreach_peer/2,
          foreach_peer_of_tracker/2,
@@ -108,6 +109,10 @@ all_torrents() ->
 all_peers() ->
     Objs = ets:match_object(peers, '_'),
     [proplistify_peer(O) || O <- Objs].
+
+all_tid_and_pids() ->
+    R = ets:match(peers, #peer { torrent_id = '$1', pid = '$2', _ = '_' }),
+    {value, [{Tid, Pid} || [Tid, Pid] <- R]}.
 
 %% @doc Alter the state of the Tracking map identified by Id
 %%   <p>by What (see alter_map/2).</p>
@@ -214,6 +219,7 @@ get_peer_info(Pid) when is_pid(Pid) ->
     [] -> not_found;
     [PR] -> {peer_info, PR#peer.state, PR#peer.torrent_id}
     end.
+
 
 %% @doc Return all peer pids with a given torrentId
 %% @end
