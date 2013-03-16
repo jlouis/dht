@@ -8,7 +8,7 @@
 %% back to the client. So the clients request goes through the
 %% tracker_mgr process and ends up here. When we have data, they get
 %% sent back via a gen_server:reply. Also note that protocol decoding
-%% is separately handled by the trakcer_proto process. The proto looks
+%% is separately handled by the tracker_proto process. The proto looks
 %% up the relevant recipient - a gen_server from this module and sends
 %% the message to it.</p>
 %% <p>The API is mostly internal, assumed to be used with the other
@@ -26,20 +26,28 @@
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-	 terminate/2, code_change/3]).
+     terminate/2, code_change/3]).
 
 -type ipaddr() :: etorrent_types:ipaddr().
 -type portnum() :: etorrent_types:portnum().
 -type from_tag() :: etorrent_types:from_tag().
 -type tracker_id() :: {ipaddr(), portnum()}.
 -type conn_id() :: integer().
--record(state, { try_count = -1 :: integer(),
-	         tracker        :: tracker_id(),
-		 ty             :: announce | connid_gather,
-		 connid = none  :: none | integer(),
-		 reply = none   :: none | from_tag(),
-		 properties = [] :: [{term(), term()}], % Proplist
-	         tid = none      :: none | binary() }).
+-type property_name() :: info_hash | peer_id | down | left | up | event | key | port.
+-record(state, {
+        try_count = -1 :: integer(),
+        %% Tracker IP address and port.
+        tracker        :: tracker_id(),
+        %% TYpe of this server.
+        ty             :: announce | connid_gather,
+        connid = none  :: none | integer(),
+        %% Result destination in the form of `{FromPid, FromRef}'.
+        reply = none   :: none | from_tag(),
+        % Proplist, to send to the tracker.
+        properties = [] :: [{property_name(), term()}],
+        %% Unique transaction id.
+        tid = none      :: none | binary()
+}).
 
 -define(CONNID_TIMEOUT, timer:seconds(60)).
 
@@ -53,7 +61,7 @@
 %%   The given N is used as a retry-count
 %% @end
 -spec start_link('requestor', tracker_id(), integer()) ->
-			{ok, pid()} | {error, term()}.
+            {ok, pid()} | {error, term()}.
 start_link(requestor, Tracker, N) ->
     gen_server:start_link(?MODULE, [{connid_gather, Tracker, N}], []).
 
@@ -62,7 +70,7 @@ start_link(requestor, Tracker, N) ->
 %%   to call up, and a list of properties to send forth.
 %% @end
 -spec start_link('announce',from_tag(),tracker_id(),_) ->
-			'ignore' | {'error',_} | {'ok',pid()}.
+            'ignore' | {'error',_} | {'ok',pid()}.
 start_link(announce, From, Tracker, PL) ->
     gen_server:start_link(?MODULE, [{announce, From, Tracker, PL}], []).
 
@@ -174,13 +182,13 @@ code_change(_OldVsn, State, _Extra) ->
 
 announce_request({IP, Port}, ConnID, PropL, N) ->
     [IH, PeerId, Down, Left, Up, Event, Key, Port] =
-	[proplists:get_value(K, PropL)
-	 || K <- [info_hash, peer_id, down, left, up, event, key, port]],
+    [proplists:get_value(K, PropL)
+     || K <- [info_hash, peer_id, down, left, up, event, key, port]],
     Tid = etorrent_udp_tracker_proto:new_tid(),
     etorrent_udp_tracker_mgr:reg_tr_id(Tid),
     erlang:send_after(expire_time(N), self(), timeout),
     Msg = {announce_request, ConnID, Tid, IH, PeerId, {Down, Left, Up}, Event, Key,
-	   Port},
+       Port},
     etorrent_udp_tracker_mgr:msg({IP, Port}, Msg),
     Tid.
 
@@ -193,12 +201,10 @@ request_connid({IP, Port}, N) ->
     Tid.
 
 expire_time(N) ->
-    timer:seconds(
-      15 * trunc(math:pow(2,N))).
+    timer:seconds(15 * trunc(math:pow(2,N))).
 
 announce_reply(From, Peers, Status) ->
     gen_server:reply(From, {announce, Peers, Status}).
 
 inc(8) -> 8;
-inc(N) when is_integer(N), N < 8 ->
-    N+1.
+inc(N) when is_integer(N), N < 8 -> N+1.
