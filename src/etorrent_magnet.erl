@@ -95,11 +95,16 @@ download({infohash, Hash}) when is_integer(Hash) ->
     write_torrent(Torrent);
 download({magnet_link, Link}) when is_list(Link) ->
     LocalPeerId = etorrent_ctl:local_peer_id(),
-    {Hash, _, Trackers} = parse_url(Link),
-    {ok, Info} = download_meta_info(LocalPeerId, Hash),
-    {ok, DecodedInfo} = etorrent_bcoding:decode(Info),
-    {ok, Torrent} = build_torrent(DecodedInfo, Trackers),
-    write_torrent(Torrent).
+    {IntIH, _, Trackers} = parse_url(Link),
+    BinIH = <<IntIH:160>>,
+    UrlTiers = [Trackers],
+    TorrentId = etorrent_counters:next(torrent),
+    etorrent_magnet_sup:start_link(BinIH, LocalPeerId, TorrentId, UrlTiers, []),
+    receive ok -> ok end.
+%   {ok, Info} = download_meta_info(LocalPeerId, Hash),
+%   {ok, DecodedInfo} = etorrent_bcoding:decode(Info),
+%   {ok, Torrent} = build_torrent(DecodedInfo, Trackers),
+%   write_torrent(Torrent).
 
 
 

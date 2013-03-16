@@ -31,7 +31,11 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
+-type ipaddr() :: etorrent_types:ipaddr().
+-type portnum() :: etorrent_types:portnum().
+
 -record(state, { socket :: inet:socket() }). % Might not be needed at all
+
 
 -define(SERVER, ?MODULE).
 -define(TAB, etorrent_udp_transact).
@@ -56,6 +60,11 @@ announce(Tr, PL) ->
 %%   <p>The will block the caller</p>
 %% @end
 %% @todo Describe the announce data
+-spec announce({ipaddr(), portnum()}, [{atom(), term()}], timeout()) ->
+    {ok, Peers, Status} when
+    Peers :: [{ipaddr(), portnum()}],
+    Status :: [{StatusKey, non_neg_integer()}],
+    StatusKey :: interval | leechers | seeders.
 announce({IP, Port}, PropList, Timeout) ->
     case catch gen_server:call(?MODULE, {announce, {IP, Port}, PropList}, Timeout) of
 	{'EXIT', {timeout, _}} ->
@@ -119,6 +128,7 @@ init([]) ->
 
 %% @private
 handle_call({announce, Tracker, PL}, From, S) ->
+    %% The result will be sent from `etorrent_udp_tracker:announce_reply/3'.
     case ets:lookup(?TAB, {conn_id, Tracker}) of
         [] ->
             spawn_announce(From, Tracker, PL),

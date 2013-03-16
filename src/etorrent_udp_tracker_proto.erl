@@ -176,6 +176,8 @@ encode_event(Event) ->
     end.
 
 decode_action(I) ->
+    %% CRASH REPORT Process etorrent_udp_tracker_proto with 0 neighbours exited with reason: no case clause matching 50331648 in etorrent
+    %% etorrent_udp_tracker_proto:decode_action/1 
     case I of
 	?CONNECT -> connect;
 	?ANNOUNCE -> announce;

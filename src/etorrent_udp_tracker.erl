@@ -33,7 +33,8 @@
 -type from_tag() :: etorrent_types:from_tag().
 -type tracker_id() :: {ipaddr(), portnum()}.
 -type conn_id() :: integer().
--type property_name() :: info_hash | peer_id | down | left | up | event | key | port.
+-type property_name() :: info_hash | peer_id | down | left
+                       | up | event | key | port.
 -record(state, {
         try_count = -1 :: integer(),
         %% Tracker IP address and port.

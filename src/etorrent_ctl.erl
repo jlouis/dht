@@ -50,7 +50,7 @@ start(File) ->
     Option :: {callback, Callback} | paused,
     Callback :: fun (() -> any()),
     TorrentID :: non_neg_integer().
-start(File, Options) ->
+start(File, Options) when is_list(File) ->
     gen_server:call(?SERVER, {start, File, Options}, infinity).
 
 % @doc Check a torrents contents

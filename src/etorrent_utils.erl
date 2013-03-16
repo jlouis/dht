@@ -84,6 +84,7 @@ date_str({{Y, Mo, D}, {H, Mi, S}}) ->
 
 %% @doc Decode the IP response from the tracker
 %% @end
+-spec decode_ips(binary()) -> [{etorrent_types:ipaddr(), etorrent_types:portnum()}].
 decode_ips(D) ->
     decode_ips(D, []).
 
