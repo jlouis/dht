@@ -191,7 +191,7 @@ unsafe_insert_nodes(NodeInfos) ->
 %
 
 -spec is_interesting(nodeid(), ipaddr(), portnum()) -> boolean().
-is_interesting(ID, IP, Port) ->
+is_interesting(ID, IP, Port) when is_integer(ID) ->
     gen_server:call(srv_name(), {is_interesting, ID, IP, Port}).
 
 -spec closest_to(nodeid()) -> list(nodeinfo()).

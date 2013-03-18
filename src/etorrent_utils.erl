@@ -70,7 +70,7 @@ queue_remove(Item, Q) ->
 %% @end
 -spec list_shuffle([term()]) -> [term()].
 list_shuffle(List) ->
-    Randomized = lists:sort([{random:uniform(), Item} || Item <- List]),
+    Randomized = lists:keysort(1, [{random:uniform(), Item} || Item <- List]),
     [Value || {_, Value} <- Randomized].
 
 %% @doc A Date formatter for {{Y, Mo, D}, {H, Mi, S}}.

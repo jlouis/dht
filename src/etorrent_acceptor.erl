@@ -112,9 +112,9 @@ check_infohash(InfoHash) ->
     end.
 
 handover_control(Socket, RPid, CPid) ->
-    case gen_tcp:controlling_process(Socket, RPid) of
-        ok -> etorrent_peer_control:initialize(CPid, incoming),
-              ok;
+    etorrent_peer_control:initialize(CPid, incoming),
+    case etorrent_peer_recv:forward_control(Socket, RPid) of
+        ok -> ok;
         {error, enotconn} ->
             etorrent_peer_control:stop(CPid),
             throw({error, enotconn})

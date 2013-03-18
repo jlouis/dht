@@ -5,7 +5,10 @@
 -behaviour(supervisor).
 
 %% API
--export([start_link/0, start_child/4, terminate_child/1]).
+-export([start_link/0,
+         start_child/4,
+         terminate_child/1,
+         start_magnet_child/5]).
 
 %% Supervisor callbacks
 -export([init/1]).
@@ -31,6 +34,15 @@ start_child({Torrent, TorrentFile, TorrentIH}, Local_PeerId, Id, Options) ->
 		 [{Torrent, TorrentFile, TorrentIH}, Local_PeerId, Id, Options]},
 		 transient, infinity, supervisor, [etorrent_torrent_sup]},
     supervisor:start_child(?SERVER, ChildSpec).
+
+
+start_magnet_child(BinIH, LocalPeerId, TorrentId, UrlTiers, Options) ->
+    ChildSpec = {BinIH,
+		 {etorrent_magnet_sup, start_link,
+		 [BinIH, LocalPeerId, TorrentId, UrlTiers, Options]},
+		 transient, infinity, supervisor, [etorrent_magnet_sup]},
+    supervisor:start_child(?SERVER, ChildSpec).
+
 
 % @doc Ask to stop the torrent represented by its info_hash.
 % @end

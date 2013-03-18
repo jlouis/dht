@@ -34,8 +34,7 @@ start_link(Id) -> supervisor:start_link(?MODULE, [Id]).
                   {ipaddr(), portnum()}, [capabilities()], port()) ->
         {ok, pid(), pid()} | {error, term()}.
 start_child(LocalPeerId, RemotePeerId, InfoHash, TorrentId,
-            {IP, Port}, Capabilities, Socket)
-        when is_integer(TorrentId) ->
+            {IP, Port}, Capabilities, Socket) ->
     start_child("no_tracker_url", LocalPeerId, RemotePeerId, InfoHash,
                 TorrentId, {IP, Port}, Capabilities, Socket).
 
@@ -43,8 +42,10 @@ start_child(LocalPeerId, RemotePeerId, InfoHash, TorrentId,
                   {ipaddr(), portnum()}, [capabilities()], port()) ->
                          {ok, pid(), pid()} | {error, term()}.
 start_child(TrackerUrl, LocalPeerId, RemotePeerId, InfoHash, TorrentId,
-            {IP, Port}, Capabilities, Socket) ->
+            {IP, Port}, Capabilities, Socket)
+        when is_integer(TorrentId) ->
     GroupPid = gproc:lookup_local_name({torrent, TorrentId, peer_pool_sup}),
+    is_pid(GroupPid) orelse error({dead_pool, GroupPid, TorrentId}),
     Params = [TrackerUrl, LocalPeerId, RemotePeerId, InfoHash,
               TorrentId, {IP, Port}, Capabilities, Socket],
     case supervisor:start_child(GroupPid, Params) of

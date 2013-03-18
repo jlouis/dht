@@ -401,23 +401,24 @@ update_sparkline(NR, L) ->
 
 %% Change the state of the torrent with Id, altering it by the "What" part.
 %% Precondition: Torrent exists in the ETS table.
-state_change(Id, List) ->
-    %% @todo Be more protective here
-    [T] = ets:lookup(?TAB, Id),
-    NewT = do_state_change(List, T),
-    ets:insert(?TAB, NewT),
+state_change(Id, List) when is_integer(Id) ->
+    case ets:lookup(?TAB, Id) of
+        [T] ->
+            NewT = do_state_change(List, T),
+            ets:insert(?TAB, NewT),
 
-    case {T#torrent.state, NewT#torrent.state} of
-        {leeching, seeding} ->
-            etorrent_event:seeding_torrent(Id),
-            ok;
-        _ ->
-            ok
+            case {T#torrent.state, NewT#torrent.state} of
+                {leeching, seeding} ->
+                    etorrent_event:seeding_torrent(Id),
+                    ok;
+                _ ->
+                    ok
+            end;
+        []   ->
+            %% This is protection against bad torrent ids.
+            lager:error("Not found ~p, skip.", [Id]),
+            {error, not_found}
     end.
-
-
-
-
 
 
 do_state_change([unknown | Rem], T) ->
