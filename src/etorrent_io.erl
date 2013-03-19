@@ -485,10 +485,10 @@ handle_cast({schedule_operation, RelPath}, State) ->
                 rel_path=RelPath,
                 process=NewPid,
                 monitor=NewMon,
-                accessed=now()},
+                accessed=os:timestamp()},
             [NewFile|OpenAfterClose];
         _ ->
-            UpdatedFile = FileInfo#io_file{accessed=now()},
+            UpdatedFile = FileInfo#io_file{accessed=os:timestamp()},
             lists:keyreplace(RelPath, #io_file.rel_path, OpenAfterClose, UpdatedFile)
     end,
     NewState = State#state{files_open=WithNewFile},

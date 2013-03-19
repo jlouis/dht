@@ -188,16 +188,18 @@ get_recv_rate(Id, Pid) -> fetch_rate(etorrent_recv_state, Id, Pid).
     none | undefined | float().
 get_send_rate(Id, Pid) -> fetch_rate(etorrent_send_state, Id, Pid).
 
-%% @doc Set the receive rate of the peer
+%% @doc Set the receive rate of the peer.
+%% Pid is a pid of the peer control process.
 %% @end
 -spec set_recv_rate(integer(), pid(), float(), normal | snubbed) -> ok.
-set_recv_rate(Id, Pid, Rate, SnubState) ->
+set_recv_rate(Id, Pid, Rate, SnubState) when is_integer(Id), is_float(Rate) ->
     alter_state(recv_rate, Id, Pid, Rate, SnubState).
 
-%% @doc Set the send rate of the peer
+%% @doc Set the send rate of the peer.
+%% Pid is a pid of the peer control process.
 %% @end
 -spec set_send_rate(integer(), pid(), float()) -> ok.
-set_send_rate(Id, Pid, Rate) ->
+set_send_rate(Id, Pid, Rate) when is_integer(Id), is_float(Rate) ->
     alter_state(send_rate, Id, Pid, Rate, unchanged).
 
 %% @doc Get the rate of a given Torrent

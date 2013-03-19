@@ -34,7 +34,9 @@
 % @end
 -spec start_link(binary()) -> {ok, pid()} | ignore | {error, term()}.
 start_link(PeerId) when is_binary(PeerId) ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [PeerId], []).
+    SOpts = [{fullsweep_after, 0}],
+    Opts = [{spawn_opt, SOpts}],
+    gen_server:start_link({local, ?SERVER}, ?MODULE, [PeerId], Opts).
 
 % @doc Ask the manager process to start a new torrent, given in File.
 % @end

@@ -111,11 +111,11 @@ incoming_packet(none, <<0:32/big-integer, Rest/binary>>) ->
 incoming_packet(none, <<Left:32/big-integer, Rest/binary>>) ->
     incoming_packet({partial, {Left, []}}, Rest);
 
-incoming_packet({partial, Data}, <<More/binary>>) when is_binary(Data) ->
-    incoming_packet(none, <<Data/binary, More/binary>>);
-
 incoming_packet(none, Packet) when byte_size(Packet) < 4 ->
     {partial, Packet};
+
+incoming_packet({partial, Data}, <<More/binary>>) when is_binary(Data) ->
+    incoming_packet(none, <<Data/binary, More/binary>>);
 
 incoming_packet({partial, {Left, IOL}}, Packet)
         when byte_size(Packet) >= Left, is_integer(Left) ->

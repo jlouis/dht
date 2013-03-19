@@ -137,7 +137,7 @@ poller_key() ->
 
 
 random_peer() ->
-    random:seed(now()),
+    random:seed(os:timestamp()),
     random:uniform(max_per_torrent()).
 
 init(Args) ->

@@ -385,7 +385,8 @@ init([TorrentID, Torrent]) ->
         metadata_pieces = list_to_tuple(metadata_pieces(TorrentBin, 0, MetadataSize)),
         is_private=etorrent_metainfo:is_private(Torrent)
     },
-    {ok, InitState}.
+    %% GC
+    {ok, InitState, hibernate}.
 
 
 %% @private

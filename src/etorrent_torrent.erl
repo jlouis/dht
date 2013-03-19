@@ -119,7 +119,7 @@ insert(Id, PL) ->
 %% @end
 -spec all() -> [[{term(), term()}]].
 all() ->
-    gen_server:call(?SERVER, all).
+    all(#torrent.id).
 
 %% @doc Request a change of state for the torrent
 %% <p>The specific What part is documented as the alteration() type
@@ -205,8 +205,7 @@ is_private(Id) ->
 
 %% @private
 init([]) ->
-    _ = ets:new(?TAB, [protected, named_table,
-                                   {keypos, #torrent.id}]),
+    _ = ets:new(?TAB, [protected, named_table, {keypos, #torrent.id}]),
     _ = ets:new(etorrent_c_pieces, [protected, named_table,
                                     {keypos, #c_pieces.id}]),
     erlang:send_after(timer:seconds(60),
@@ -231,10 +230,6 @@ handle_call({insert, Id, T=#torrent{}, P=#c_pieces{}},  {Pid, _Tag},  S) ->
             true = ets:insert(etorrent_c_pieces,  P),
             {reply, ok, S}
     end;
-
-handle_call(all, _F, S) ->
-    Q = all(#torrent.id),
-    {reply, Q, S};
 
 handle_call({num_pieces, Id}, _F, S) ->
     Reply = case ets:lookup(?TAB, Id) of

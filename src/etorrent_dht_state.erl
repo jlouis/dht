@@ -326,7 +326,7 @@ unreachable_tab() ->
     etorrent_dht_unreachable_cache_tab.
 
 random_node_tag() ->
-    random:seed(now()),
+    random:seed(os:timestamp()),
     random:uniform(max_unreachable()).
 
 %% @private
@@ -358,7 +358,7 @@ init([StateFile, BootstapNodes]) ->
         node_timeout=NTimeout,
         buck_timeout=BTimeout} = #state{},
 
-    Now = now(),
+    Now = os:timestamp(),
     BTimers = lists:foldl(fun(Range, Acc) ->
         BTimer = bucket_timer_from(Now, NTimeout, Now, BTimeout, Range),
         add_timer(Range, Now, BTimer, Acc)
@@ -394,7 +394,7 @@ handle_call({is_interesting, InputID, IP, Port}, _From, State) ->
 
 handle_call({insert_node, InputID, IP, Port}, _From, State) ->
     ID   = ensure_int_id(InputID),
-    Now  = now(),
+    Now  = os:timestamp(),
     Node = {ID, IP, Port},
     #state{
         node_id=Self,
@@ -501,7 +501,7 @@ handle_call({closest_to, InputID, NumNodes}, _, State) ->
 handle_call({request_timeout, InputID, IP, Port}, _, State) ->
     ID   = ensure_int_id(InputID),
     Node = {ID, IP, Port},
-    Now  = now(),
+    Now  = os:timestamp(),
     #state{
         buckets=Buckets,
         node_timeout=NTimeout,
@@ -521,7 +521,7 @@ handle_call({request_timeout, InputID, IP, Port}, _, State) ->
 
 handle_call({request_success, InputID, IP, Port}, _, State) ->
     ID   = ensure_int_id(InputID),
-    Now  = now(),
+    Now  = os:timestamp(),
     Node = {ID, IP, Port},
     #state{
         buckets=Buckets,
@@ -584,7 +584,7 @@ handle_cast(_, State) ->
 %% @private
 handle_info({inactive_node, InputID, IP, Port}, State) ->
     ID = ensure_int_id(InputID),
-    Now = now(),
+    Now = os:timestamp(),
     Node = {ID, IP, Port},
     #state{
         buckets=Buckets,
@@ -614,7 +614,7 @@ handle_info({inactive_node, InputID, IP, Port}, State) ->
     {noreply, NewState};
 
 handle_info({inactive_bucket, Range}, State) ->
-    Now = now(),
+    Now = os:timestamp(),
     #state{
         buckets=Buckets,
         node_timers=NTimers,
@@ -859,7 +859,7 @@ timer_from(Time, Timeout, Msg) ->
     erlang:send_after(Interval, self(), Msg).
 
 ms_since(Time) ->
-    timer:now_diff(Time, now()) div 1000.
+    timer:now_diff(Time, os:timestamp()) div 1000.
 
 ms_between(Time, Timeout) ->
     MS = Timeout - ms_since(Time),
@@ -872,7 +872,7 @@ has_timed_out(Item, Timeout, Times) ->
     ms_since(LastActive) > Timeout.
 
 least_recent([], _) ->
-    now();
+    os:timestamp();
 least_recent(Items, Times) ->
     ATimes = [element(1, get_timer(I, Times)) || I <- Items],
     lists:min(ATimes).

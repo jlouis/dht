@@ -62,12 +62,11 @@ update(#peer_rate {rate = Rate,
                          total = Total + Amount,
                          %% We expect the next data-block at the minimum of 5 secs or
                          %%   when Amount bytes has been fetched at the current rate.
-                         next_expected =
-                           T + lists:min([5, Amount / lists:max([R, 0.0001])]),
+                         next_expected = T + min(5, Amount / max(R, 0.0001)),
                          last = T,
                          %% RateSince is manipulated so it does not go beyond
                          %% ?MAX_RATE_PERIOD
-                         rate_since = lists:max([RateSince, T - ?MAX_RATE_PERIOD])}
+                         rate_since = max(RateSince, T - ?MAX_RATE_PERIOD)}
     end.
 
 %% @doc Calculate estimated time of arrival.
@@ -100,5 +99,6 @@ format_eta(Left, DownloadRate) ->
 % @end
 -spec now_secs() -> integer().
 now_secs() ->
-    calendar:datetime_to_gregorian_seconds(
-     calendar:local_time()).
+    {Mega, Sec, _Micro} = os:timestamp(),
+    Mega * 1000000 + Sec.
+%   calendar:datetime_to_gregorian_seconds(calendar:local_time()).

@@ -6,7 +6,8 @@
 %% API Function Exports
 %% ------------------------------------------------------------------
 
--export([start_link/0]).
+-export([start_link/0,
+         set_enabled/1]).
 
 %% ------------------------------------------------------------------
 %% gen_server Function Exports
@@ -47,9 +48,9 @@
 }).
 
 -record(state, {
-    timer :: reference(),
+    update_tref :: timer:tref(),
     torrents :: [#torrent{}],
-    tick :: integer()
+    update_timeout :: integer()
 }).
 
 
@@ -58,8 +59,10 @@
 %% ------------------------------------------------------------------
 
 start_link() ->
-    Args = [2000],
-    gen_server:start_link({local, ?SERVER}, ?MODULE, Args, []).
+    gen_server:start_link({local, ?SERVER}, ?MODULE, [2000], []).
+
+set_enabled(IsEnabled) when is_boolean(IsEnabled) ->
+    gen_server:call(?SERVER, {set_enabled, IsEnabled}).
 
 
 %% ------------------------------------------------------------------
@@ -67,21 +70,35 @@ start_link() ->
 %% ------------------------------------------------------------------
 
 init([Timeout]) ->
-    timer:send_interval(Timeout, update),
+    {ok, TRef} = timer:send_interval(Timeout, update_timeout),
     SD = #state{
-        tick = Timeout,
-        torrents=[]
+        update_timeout = Timeout,
+        torrents=[],
+        update_tref=TRef
     },
     {ok, SD}.
 
-handle_call(_Mess, _From, SD) ->
+handle_call({set_enabled, false}, _From, SD=#state{update_tref=undefined}) ->
+    %% Do nothing, because it is already disabled.
+    {reply, ok, SD};
+handle_call({set_enabled, false}, _From, SD=#state{update_tref=TRef}) ->
+    {ok, cancel} = timer:cancel(TRef),
+    %% Disable this server.
+    {reply, ok, SD#state{update_tref=undefined, torrents=[]}};
+handle_call({set_enabled, true}, _From, SD=#state{update_tref=undefined,
+                                                  update_timeout=Timeout}) ->
+    {ok, TRef} = timer:send_interval(Timeout, update_timeout),
+    %% Enable this server.
+    {reply, ok, SD#state{update_tref=TRef}};
+handle_call({set_enabled, true}, _From, SD=#state{}) ->
+    %% Do nothing, because it is already enabled.
     {reply, ok, SD}.
 
 handle_cast(_Mess, SD) ->
     {noreply, SD}.
 
 
-handle_info(update, SD=#state{torrents=OldTorrents, tick=Timeout}) ->
+handle_info(update_timeout, SD=#state{torrents=OldTorrents, update_timeout=Timeout}) ->
     % proplists from etorrent.
     PLs = query_torrent_list(),
     UnsortedNewTorrents = lists:map(fun to_record/1, PLs),

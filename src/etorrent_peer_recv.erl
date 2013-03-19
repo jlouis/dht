@@ -138,12 +138,13 @@ handle_info({rlimit, continue}, State) ->
     end;
 
 handle_info(rate_update, State) ->
-    #state{id=TorrentID, rate=Rate, last_piece_msg_count=PieceCount} = State,
+    #state{id=TorrentID, rate=Rate, last_piece_msg_count=PieceCount,
+           controller=CPid} = State,
     NewRate = etorrent_rate:update(Rate, 0),
     erlang:send_after(?RATE_UPDATE, self(), rate_update),
     SnubState = is_snubbing_us(State),
     ok = etorrent_peer_states:set_recv_rate(
-            TorrentID, self(), NewRate#peer_rate.rate, SnubState),
+            TorrentID, CPid, NewRate#peer_rate.rate, SnubState),
     NewState = State#state{rate=NewRate, last_piece_msg_count=PieceCount+1},
     {noreply, NewState};
 

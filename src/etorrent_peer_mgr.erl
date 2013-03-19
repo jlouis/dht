@@ -76,7 +76,7 @@ is_bad_peer(IP, Port) ->
 %% ====================================================================
 
 init([LocalPeerId]) ->
-    random:seed(now()), %% Seed RNG
+    random:seed(os:timestamp()), %% Seed RNG
     erlang:send_after(?CHECK_TIME, self(), cleanup_table),
     _Tid = ets:new(etorrent_bad_peer, [protected, named_table,
                                        {keypos, #bad_peer.ipport}]),
@@ -97,19 +97,19 @@ handle_cast({enter_bad_peer, IP, Port, PeerId}, S) ->
                        #bad_peer { ipport = {IP, Port},
                                    peerid = PeerId,
                                    offenses = 1,
-                                   last_offense = now() });
+                                   last_offense = os:timestamp() });
         [P] ->
             ets:insert(etorrent_bad_peer,
                        P#bad_peer { offenses = P#bad_peer.offenses + 1,
                                     peerid = PeerId,
-                                    last_offense = now() })
+                                    last_offense = os:timestamp() })
     end,
     {noreply, S};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info(cleanup_table, S) ->
-    Bound = etorrent_utils:now_subtract_seconds(now(), ?GRACE_TIME),
+    Bound = etorrent_utils:now_subtract_seconds(os:timestamp(), ?GRACE_TIME),
     _N = ets:select_delete(etorrent_bad_peer,
                            [{#bad_peer { last_offense = '$1', _='_'},
                              [{'<','$1',{Bound}}],
