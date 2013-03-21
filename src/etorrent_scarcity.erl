@@ -283,14 +283,8 @@ handle_call({watch, Pid, Interval, Tag, Pieceset}, _, State) ->
     {reply, {ok, MRef, Pieceorder}, NewState};
 
 handle_call({unwatch, MRef}, _, State) ->
-    #state{timeserver=Time, watchers=Watchers} = State,
     erlang:demonitor(MRef),
-    Watcher = lists:keyfind(MRef, #watcher.ref, Watchers),
-    #watcher{timer_ref=TRef} = Watcher,
-    case TRef of none -> ok; _ -> etorrent_timer:cancel(Time, TRef) end,
-    NewWatchers = lists:keydelete(MRef, #watcher.ref, Watchers),
-    NewState = State#state{watchers=NewWatchers},
-    {reply, ok, NewState}.
+    {reply, ok, delete_watcher(MRef, State)}.
 
 
 %% @private
@@ -322,11 +316,7 @@ handle_info({'DOWN', MRef, process, Pid, _}, State) ->
                 watchers=NewWatchers},
             INewState;
         false ->
-            Watcher = lists:keyfind(MRef, #watcher.ref, Watchers),
-            #watcher{timer_ref=TRef} = Watcher,
-            case TRef of none -> ok; _ -> erlang:cancel_timer(TRef) end,
-            NewWatchers = lists:keydelete(MRef, #watcher.ref, Watchers),
-            State#state{watchers=NewWatchers}
+            delete_watcher(MRef, State)
     end,
     {noreply, NewState};
 
@@ -610,3 +600,12 @@ local_unwatch_case({N, Time, Pid}) ->
     end.
 
 -endif.
+
+
+delete_watcher(MRef, State) ->
+    #state{timeserver=Time, watchers=Watchers} = State,
+    Watcher = lists:keyfind(MRef, #watcher.ref, Watchers),
+    #watcher{timer_ref=TRef} = Watcher,
+    case TRef of none -> ok; _ -> etorrent_timer:cancel(Time, TRef, [flush]) end,
+    NewWatchers = lists:keydelete(MRef, #watcher.ref, Watchers),
+    State#state{watchers=NewWatchers}.
