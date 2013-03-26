@@ -203,7 +203,8 @@ spawn_peer(TrackerUrl, LocalPeerId, PL, TorrentId, IP, Port) ->
 		      ok = etorrent_peer_recv:forward_control(Socket, RecvPid),
 		      ok;
           {error, Reason} ->
-              lager:debug("Outgoing handshake failed with reason ~p.", [Reason]),
+              lager:debug("Outgoing handshake with ~p:~p failed with reason ~p.",
+                          [IP, Port, Reason]),
               ok
 	      end;
 	  {error, _Reason} -> ok

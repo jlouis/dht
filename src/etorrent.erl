@@ -48,15 +48,22 @@ start(Filename) when is_list(Filename) ->
 %% eventual exception/exit handler on its execution so it can be
 %% caught.
 %% @end
+-spec start(Filename, {reference(), pid()} | {callback, Callback}) -> 
+    {ok, TorrentId} | {error, Reason} when
+    TorrentId :: etorrent_types:torrent_id(),
+    Filename :: file:filename(),
+    Reason :: term(),
+    Callback :: fun(() -> term()).
+
 start(Filename, {Ref, Pid})
   when is_list(Filename), is_reference(Ref), is_pid(Pid) ->
-    Callback = fun() ->
+    CallBack = fun() ->
           lager:info("Completing torrent callback: ~s", [Filename]),
           Pid ! {Ref, done}
       end,
-    start(Filename, {callback, Callback});
-start(Filename, CallBack) when is_list(Filename), is_function(CallBack, 0) ->
-    etorrent_ctl:start(Filename, {callback, CallBack}).
+    etorrent_ctl:start(Filename, [{callback, CallBack}]);
+start(Filename, {callback, CallBack}) when is_list(Filename), is_function(CallBack, 0) ->
+    etorrent_ctl:start(Filename, [{callback, CallBack}]).
 
 %% @doc List currently active torrents.
 %% <p>This function will list the torrent files which are currently in

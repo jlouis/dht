@@ -13,7 +13,9 @@
 %% the message to it.</p>
 %% <p>The API is mostly internal, assumed to be used with the other
 %% udp_tracker processes.</p>
-%%@end
+%% @end
+%%
+%% TODO: split this module into two ones.
 -module(etorrent_udp_tracker).
 
 -behaviour(gen_server).
@@ -22,7 +24,10 @@
 -export([start_link/3, start_link/4]).
 
 %% Internally used calls
--export([msg/2, connid/2, cancel/1, cancel_connid/2]).
+-export([dispatch_incoming_message/2,
+         forward_connid/2,
+         cancel/1,
+         cancel_connid/2]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -39,8 +44,8 @@
         try_count = -1 :: integer(),
         %% Tracker IP address and port.
         tracker        :: tracker_id(),
-        %% TYpe of this server.
-        ty             :: announce | connid_gather,
+        %% Type of this server.
+        worker_type    :: announce | connid_gather,
         connid = none  :: none | integer(),
         %% Result destination in the form of `{FromPid, FromRef}'.
         reply = none   :: none | from_tag(),
@@ -70,6 +75,7 @@ start_link(requestor, Tracker, N) ->
 %%   We are given to whom we should reply back in From, what Tracker
 %%   to call up, and a list of properties to send forth.
 %% @end
+%% @see etorrent_udp_pool_sup.erl:start_announce/3
 -spec start_link('announce',from_tag(),tracker_id(),_) ->
             'ignore' | {'error',_} | {'ok',pid()}.
 start_link(announce, From, Tracker, PL) ->
@@ -77,9 +83,9 @@ start_link(announce, From, Tracker, PL) ->
 
 %% This internal function is used to forward a working connid to an announcer
 %% @private
--spec connid(pid(),conn_id()) -> 'ok'.
-connid(Pid, ConnID) ->
-    gen_server:cast(Pid, {connid, ConnID}).
+-spec forward_connid(pid(), conn_id()) -> 'ok'.
+forward_connid(Pid, ConnID) ->
+    gen_server:cast(Pid, {forward_connid, ConnID}).
 
 %% @doc Cancel a request event process
 %% @end
@@ -96,19 +102,23 @@ cancel_connid(Pid, ConnID) ->
 %% Used internally for the proto_decoder to inject a message to an
 %% event handler process
 %% @private
--spec msg(pid(), term()) -> 'ok'. %% @todo Strengthen 'term()'
-msg(Pid, M) ->
+%% @todo Strengthen 'term()'
+-spec dispatch_incoming_message(pid(), term()) -> 'ok'.
+dispatch_incoming_message(Pid, M) ->
     gen_server:cast(Pid, {msg, M}).
 
 %%====================================================================
 
 %% @private
 init([{announce, From, Tracker, PL}]) ->
-    etorrent_udp_tracker_mgr:reg_announce(Tracker, PL),
-    {ok, #state { tracker = Tracker, ty = announce, reply = From, properties = PL }};
+    etorrent_udp_tracker_mgr:register_announce(Tracker, PL),
+    S = #state { tracker = Tracker, worker_type = announce,
+                 reply = From, properties = PL },
+    {ok, S};
 init([{connid_gather, Tracker, N}]) ->
-    etorrent_udp_tracker_mgr:reg_connid_gather(Tracker),
-    {ok, #state { tracker = Tracker, ty = connid_gather, try_count = N}, 0}.
+    etorrent_udp_tracker_mgr:register_connid_gather(Tracker),
+    S = #state { tracker = Tracker, worker_type = connid_gather, try_count = N},
+    {ok, S, 0}.
 
 %% @private
 handle_call(_Request, _From, State) ->
@@ -118,23 +128,24 @@ handle_call(_Request, _From, State) ->
 %% @private
 handle_cast(cancel, S) ->
     {stop, normal, S};
-handle_cast({connid, ConnID}, #state { ty = announce,
-                                       properties = PL,
-                                       tracker = Tracker } = S) ->
+handle_cast({forward_connid, ConnID}, #state { worker_type = announce,
+                                               properties = PL,
+                                               tracker = Tracker } = S) ->
     Tid = announce_request(Tracker, ConnID, PL, 0),
     {noreply, S#state { connid = ConnID, try_count = 0, tid = Tid }};
 handle_cast({cancel_connid, ConnID}, #state { connid = ConnID} = S) ->
     {noreply, S#state { connid = none }};
 handle_cast({msg, {Tid, {announce_response, Peers, Status}}},
-            #state { reply = R, ty = announce, tid = Tid } = S) ->
-    etorrent_udp_tracker_mgr:unreg_tr_id(Tid),
+            #state { reply = R, worker_type = announce, tid = Tid } = S) ->
+    etorrent_udp_tracker_mgr:unregister_transaction_id(Tid),
     announce_reply(R, Peers, Status),
     {stop, normal, S};
 handle_cast({msg, {Tid, {conn_response, ConnID}}},
             #state { tracker = Tracker, tid = Tid } = S) ->
-    etorrent_udp_tracker_mgr:unreg_tr_id(Tid),
-    erlang:send_after(?CONNID_TIMEOUT, etorrent_udp_tracker_mgr, {remove_connid, Tracker, ConnID}),
-    etorrent_udp_tracker_mgr:reg_connid(Tracker, ConnID),
+    etorrent_udp_tracker_mgr:unregister_transaction_id(Tid),
+    erlang:send_after(?CONNID_TIMEOUT, etorrent_udp_tracker_mgr,
+                      {remove_connid, Tracker, ConnID}),
+    etorrent_udp_tracker_mgr:register_connid(Tracker, ConnID),
     etorrent_udp_tracker_mgr:distribute_connid(Tracker, ConnID),
     {stop, normal, S};
 handle_cast(Msg, State) ->
@@ -144,12 +155,13 @@ handle_cast(Msg, State) ->
 %% @private
 handle_info(timeout, #state { tracker=Tracker,
                               try_count=N,
-                              ty = announce,
+                              worker_type = announce,
                               tid = OldTid,
                               connid = ConnID } = S) ->
     case OldTid of
         none -> ignore;
-        T when is_binary(T) -> etorrent_udp_tracker_mgr:unreg_tr_id(OldTid)
+        T when is_binary(T) ->
+            etorrent_udp_tracker_mgr:unregister_transaction_id(OldTid)
     end,
     case ConnID of
         none ->
@@ -160,10 +172,11 @@ handle_info(timeout, #state { tracker=Tracker,
             {noreply, S#state { tid = Tid, try_count = inc(N)}}
     end;
 handle_info(timeout, #state { tracker=Tracker, try_count=N,
-                              ty = connid_gather, tid = OldTid } = S) ->
+                              worker_type = connid_gather, tid = OldTid } = S) ->
     case OldTid of
         none -> ignore;
-        T when is_binary(T) -> etorrent_udp_tracker_mgr:unreg_tr_id(OldTid)
+        T when is_binary(T) ->
+            etorrent_udp_tracker_mgr:unregister_transaction_id(OldTid)
     end,
     Tid = request_connid(Tracker, inc(N)),
     {noreply, S#state { tid = Tid, try_count = inc(N) }};
@@ -181,24 +194,24 @@ code_change(_OldVsn, State, _Extra) ->
 
 %%--------------------------------------------------------------------
 
-announce_request({IP, Port}, ConnID, PropL, N) ->
-    [IH, PeerId, Down, Left, Up, Event, Key, Port] =
+announce_request(TrackerAddr, ConnID, PropL, N) ->
+    [IH, PeerId, Down, Left, Up, Event, Key, ListenedPort] =
     [proplists:get_value(K, PropL)
      || K <- [info_hash, peer_id, down, left, up, event, key, port]],
-    Tid = etorrent_udp_tracker_proto:new_tid(),
-    etorrent_udp_tracker_mgr:reg_tr_id(Tid),
+    Tid = etorrent_udp_tracker_proto:new_transaction_id(),
+    etorrent_udp_tracker_mgr:register_transaction_id(Tid),
     erlang:send_after(expire_time(N), self(), timeout),
-    Msg = {announce_request, ConnID, Tid, IH, PeerId, {Down, Left, Up}, Event, Key,
-       Port},
-    etorrent_udp_tracker_mgr:msg({IP, Port}, Msg),
+    Msg = {announce_request, ConnID, Tid, IH, PeerId,
+           {Down, Left, Up}, Event, Key, ListenedPort},
+    etorrent_udp_tracker_mgr:dispatch_outgoing_message(TrackerAddr, Msg),
     Tid.
 
-request_connid({IP, Port}, N) ->
-    Tid = etorrent_udp_tracker_proto:new_tid(),
-    etorrent_udp_tracker_mgr:reg_tr_id(Tid),
+request_connid(TrackerAddr, N) ->
+    Tid = etorrent_udp_tracker_proto:new_transaction_id(),
+    etorrent_udp_tracker_mgr:register_transaction_id(Tid),
     erlang:send_after(expire_time(N), self(), timeout),
     Msg = {conn_request, Tid},
-    etorrent_udp_tracker_mgr:msg({IP, Port}, Msg),
+    etorrent_udp_tracker_mgr:dispatch_outgoing_message(TrackerAddr, Msg),
     Tid.
 
 expire_time(N) ->

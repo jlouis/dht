@@ -194,8 +194,10 @@ contact_tracker_tier([], _Event, _S, _Acc) ->
 contact_tracker_tier([Url | Next], Event, S, Acc) ->
     case
         case identify_url_type(Url) of
-            http -> contact_tracker_http(Url, Event, S);
-            {udp, IP, Port}  -> contact_tracker_udp(Url, IP, Port, Event, S)
+            http ->
+                contact_tracker_http(Url, Event, S);
+            {udp, TrackerIP, TrackerPort}  ->
+                contact_tracker_udp(Url, TrackerIP, TrackerPort, Event, S)
         end
     of
         {ok, NS} ->
@@ -264,7 +266,7 @@ format_ipv6_address(Tuple) ->
       io_lib:format(
         string:join(["~4.16.0B" || _ <- lists:seq(1, 8)], ":"), tuple_to_list(Tuple))).
 
-contact_tracker_udp(Url, IP, Port, Event,
+contact_tracker_udp(Url, TrackerIP, TrackerPort, Event,
                     #state { torrent_id = Id,
                              info_hash = InfoHash,
                              peer_id = PeerId } = S) ->
@@ -273,12 +275,13 @@ contact_tracker_udp(Url, IP, Port, Event,
     Downloaded = proplists:get_value(downloaded, PL),
     %% Ignore the fact, that this torrent can be partial.
     Left       = proplists:get_value(left_or_skipped, PL),
+    MyBTPort   = etorrent_config:listen_port(),
     PropList = [{info_hash, InfoHash},
                 {peer_id, PeerId},
                 {up, Uploaded},
                 {down, Downloaded},
                 {left, Left},
-                {port, Port},
+                {port, MyBTPort},
                 case ifaddrs() of
                     {ok, Addr} ->
                         {ipv6, format_ipv6_address(Addr)};
@@ -291,9 +294,8 @@ contact_tracker_udp(Url, IP, Port, Event,
                 {event, Event}],
     lager:debug("Announcing via UDP"),
     case etorrent_udp_tracker_mgr:announce(
-           {IP, Port},
-           [X || {_, _} = X <- PropList],
-           timer:seconds(60)) of
+           {TrackerIP, TrackerPort},
+           [X || {_, _} = X <- PropList]) of
         {ok, {announce, Peers, Status}} ->
             lager:debug("UDP reply handled"),
             {I, MI} = handle_udp_response(Url, Id, Peers, Status),
@@ -405,8 +407,8 @@ build_tracker_url(Url, Event,
     Uploaded   = proplists:get_value(uploaded, PL),
     Downloaded = proplists:get_value(downloaded, PL),
     Left       = proplists:get_value(left, PL),
-    Port = etorrent_config:listen_port(),
-%   Ip   = etorrent_config:listen_ip(),
+    MyBTPort   = etorrent_config:listen_port(),
+%   MyIp       = etorrent_config:listen_ip(),
     Request = [{"info_hash",
                 etorrent_http:build_encoded_form_rfc1738(InfoHash)},
                {"peer_id",
@@ -414,10 +416,10 @@ build_tracker_url(Url, Event,
                {"uploaded", Uploaded},
                {"downloaded", Downloaded},
                {"left", Left},
-               {"port", Port},
+               {"port", MyBTPort},
                {"compact", 1}],
-    %% It is optional, even more, everybody just ignores this.
-%             ++ case Ip of all -> []; _ -> [{"ip", stringify_ip(Ip)}] end,
+               %% It is optional, even more, everybody just ignores this.
+%             ++ case MyIp of all -> []; _ -> [{"ip", stringify_ip(MyIp)}] end,
     EReq = case Event of
                none -> Request;
                started -> [{"event", "started"} | Request];
@@ -549,5 +551,5 @@ eqc_test() ->
 
 
 
-stringify_ip({A,B,C,D}) ->
-    binary_to_list(iolist_to_binary(io_lib:format("~B.~B.~B.~B", [A,B,C,D]))).
+%stringify_ip({A,B,C,D}) ->
+%    binary_to_list(iolist_to_binary(io_lib:format("~B.~B.~B.~B", [A,B,C,D]))).

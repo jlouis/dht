@@ -56,7 +56,7 @@ read_and_hash(Arg) ->
 	true -> filelib:fold_files(Arg, ".*", true, hash_file(Arg), Empty);
 	false ->
 	    true = filelib:is_regular(Arg),
-            hash_file(filename:basename(Arg), Empty, "")
+        hash_file(Arg, Empty, Arg)
     end,
     {Keys, FIs} = finish_hash(PH),
     {iolist_to_binary([rpc:yield(K) || K <- Keys]), FIs}.
@@ -97,6 +97,7 @@ write_torrent_file(Out, Data) ->
     Encoded = etorrent_bcoding:encode(Data),
     file:write_file(Out, Encoded).
 
+%% If AnnounceURL == undefined, then the torrent is trackerless.
 torrent_file(FileName, AnnounceURL, PieceHashes, FileInfo, Comment) ->
     InfoDict = case FileInfo of
 		   [{_Name, #file_info { size = Sz }}] ->
@@ -104,8 +105,8 @@ torrent_file(FileName, AnnounceURL, PieceHashes, FileInfo, Comment) ->
 		   L when is_list(L) ->
 		       mk_infodict_multi(PieceHashes, FileName, L)
 	       end,
-    [{<<"announce">>, list_to_binary(AnnounceURL)},
-     {<<"info">>, InfoDict}] ++ mk_comment(Comment).
+    [{<<"announce">>, list_to_binary(AnnounceURL)} || is_list(AnnounceURL)]
+    ++ [{<<"info">>, InfoDict}] ++ mk_comment(Comment).
 
 %% @doc Convert an absolute path to relative path.
 relative_path(Prefix, File) ->

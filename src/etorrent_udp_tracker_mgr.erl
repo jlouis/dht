@@ -23,9 +23,15 @@
 -export([start_link/0, announce/2, announce/3]).
 
 %% Internal API
--export([msg/2, reg_connid_gather/1, reg_tr_id/1, unreg_tr_id/1,
-         lookup_transaction/1, distribute_connid/2, reg_announce/2,
-         need_requestor/2, reg_connid/2]).
+-export([dispatch_outgoing_message/2,
+         register_connid_gather/1,
+         register_transaction_id/1,
+         unregister_transaction_id/1,
+         lookup_transaction/1,
+         distribute_connid/2,
+         register_announce/2,
+         need_requestor/2,
+         register_connid/2]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -60,15 +66,17 @@ announce(Tr, PL) ->
 %%   <p>The will block the caller</p>
 %% @end
 %% @todo Describe the announce data
--spec announce({ipaddr(), portnum()}, [{atom(), term()}], timeout()) ->
+-spec announce(TrackerAddr, [{atom(), term()}], timeout()) ->
     {ok, Peers, Status} when
+    TrackerAddr :: {ipaddr(), portnum()},
     Peers :: [{ipaddr(), portnum()}],
     Status :: [{StatusKey, non_neg_integer()}],
     StatusKey :: interval | leechers | seeders.
-announce({IP, Port}, PropList, Timeout) ->
-    case catch gen_server:call(?MODULE, {announce, {IP, Port}, PropList}, Timeout) of
+announce(TrackerAddr, PropList, Timeout) ->
+    case catch gen_server:call(?MODULE, {announce, TrackerAddr, PropList},
+                               Timeout) of
 	{'EXIT', {timeout, _}} ->
-	    gen_server:cast(?MODULE, {announce_cancel, {IP, Port}, PropList}),
+	    gen_server:cast(?MODULE, {announce_cancel, TrackerAddr, PropList}),
 	    timeout;
 	Response -> {ok, Response}
     end.
@@ -91,31 +99,31 @@ lookup_transaction(Tid) ->
     end.
 
 %% @private
-reg_connid_gather(Tracker) ->
+register_connid_gather(Tracker) ->
     ets:insert(?TAB, [{{conn_id_req, Tracker}, self()},
 		      {self(), {conn_id_req, Tracker}}]).
 
 %% @private
-reg_tr_id(Tid) ->
+register_transaction_id(Tid) ->
     true = ets:insert(?TAB, [{Tid, self()}, {self(), Tid}]).
 
 %% @private
-unreg_tr_id(Tid) ->
+unregister_transaction_id(Tid) ->
     [true] = delete_object(?TAB, [{Tid, self()}, {self(), Tid}]).
 
 %% @private
-reg_announce(Tracker, PL) ->
+register_announce(Tracker, PL) ->
     true = ets:insert(?TAB, [{{announce, Tracker}, self()},
 			     {{Tracker, PL}, self()},
 			     {self(), {Tracker, PL}}]).
 
 %% @private
-reg_connid(Tracker, ConnID) ->
+register_connid(Tracker, ConnID) ->
     ets:insert(?TAB, [{{conn_id, Tracker}, ConnID}]).
 
 %% @private
-msg(Tr, M) ->
-    gen_server:cast(?MODULE, {msg, Tr, M}).
+dispatch_outgoing_message(TrackerAddr, Mess) ->
+    gen_server:cast(?MODULE, {msg, TrackerAddr, Mess}).
 
 %%====================================================================
 
@@ -123,7 +131,10 @@ msg(Tr, M) ->
 init([]) ->
     ets:new(?TAB, [named_table, public, {keypos, 1}, bag]),
     Port = etorrent_config:udp_port(),
-    {ok, Socket} = gen_udp:open(Port, [binary, {active, true}, inet, inet6]),
+    Ip = etorrent_config:listen_ip(),
+    Options = case Ip of all -> []; _ -> [{ip, Ip}] end
+            ++ [binary, {active, true}, inet, inet6],
+    {ok, Socket} = gen_udp:open(Port, Options),
     {ok, #state{ socket = Socket }}.
 
 %% @private
@@ -136,21 +147,18 @@ handle_call({announce, Tracker, PL}, From, S) ->
             {noreply, S};
         [{_Key, ConnId}] ->
             {ok, Pid} = spawn_announce(From, Tracker, PL),
-            etorrent_udp_tracker:connid(Pid, ConnId),
+            etorrent_udp_tracker:forward_connid(Pid, ConnId),
             {noreply, S}
     end;
 handle_call(Request, _From, State) ->
     lager:error("Unknown handle_call ~p", [Request]),
-    Reply = ok,
-    {reply, Reply, State}.
+    {reply, ok, State}.
 
 %% @private
 handle_cast({need_requestor, Tracker, N}, S) ->
     case ets:lookup(?TAB, {conn_id_req, Tracker}) of
-        [] ->
-            spawn_requestor(Tracker, N);
-        [_|_] ->
-            ignore
+        []    -> spawn_requestor(Tracker, N);
+        [_|_] -> ignore
     end,
     {noreply, S};
 handle_cast({announce_cancel, Tracker, PL}, S) ->
@@ -164,7 +172,7 @@ handle_cast({announce_cancel, Tracker, PL}, S) ->
     end;
 handle_cast({distribute_connid, Tracker, ConnID}, S) ->
     Pids = ets:lookup(?TAB, {announce, Tracker}),
-    [etorrent_udp_tracker:connid(P, ConnID) || {_, P} <- Pids],
+    [etorrent_udp_tracker:forward_connid(P, ConnID) || {_, P} <- Pids],
     {noreply, S};
 handle_cast({msg, {IP, Port}, M}, S) ->
     Encoded = etorrent_udp_tracker_proto:encode(M),

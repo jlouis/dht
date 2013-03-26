@@ -95,12 +95,14 @@ download({address, Address}, Options) ->
             IH = etorrent_utils:base32_binary_to_integer(Base32),
             download({infohash, IH}, Options)
     end;
-%download({infohash, Hash}) when is_integer(Hash) ->
-%    LocalPeerId = etorrent_ctl:local_peer_id(),
-%    {ok, Info} = download_meta_info(LocalPeerId, Hash),
-%    {ok, DecodedInfo} = etorrent_bcoding:decode(Info),
-%    {ok, Torrent} = build_torrent(DecodedInfo, []),
-%    write_torrent(Torrent);
+download({infohash, IntIH}, Options) when is_integer(IntIH) ->
+    LocalPeerId = etorrent_ctl:local_peer_id(),
+    BinIH = <<IntIH:160>>,
+    UrlTiers = [],
+    TorrentId = etorrent_counters:next(torrent),
+    etorrent_torrent_pool:
+    start_magnet_child(BinIH, LocalPeerId, TorrentId, UrlTiers, Options),
+    {ok, TorrentId};
 download({magnet_link, Link}, Options) when is_list(Link) ->
     LocalPeerId = etorrent_ctl:local_peer_id(),
     {IntIH, _, Trackers} = parse_url(Link),

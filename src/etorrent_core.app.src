@@ -35,7 +35,6 @@
         stdlib,
         syntax_tools, compiler, lager,
         crypto, public_key, ssl,
-        sasl,
         gproc,
         rlimit,
         ranch,

@@ -46,6 +46,7 @@
 % Set the threshold to be 30 seconds by dividing the count with the rate update
 % interval
 -define(LAST_PIECE_COUNT_THRESHOLD, ((30*1000) / (?RATE_UPDATE))).
+-define(NORMAL_EXIT, begin lager:info("Normal exit"), normal end).
 
 %% =======================================================================
 
@@ -121,15 +122,15 @@ handle_info({rlimit, continue}, State) ->
     #state{socket=Socket} = State,
     case gen_tcp:recv(Socket, 0) of
         {error, closed} ->
-            {stop, normal, State};
+            {stop, ?NORMAL_EXIT, State};
         {error, ebadf} ->
-            {stop, normal, State};
+            {stop, ?NORMAL_EXIT, State};
         {error, einval} ->
-            {stop, normal, State};
+            {stop, ?NORMAL_EXIT, State};
         {error, ehostunreach} ->
-            {stop, normal, State};
+            {stop, ?NORMAL_EXIT, State};
         {error, etimedout} ->
-            {stop, normal, State};
+            {stop, ?NORMAL_EXIT, State};
         {ok, Packet} ->
             PacketSize = byte_size(Packet),
             etorrent_rlimit:recv(PacketSize),
@@ -149,7 +150,7 @@ handle_info(rate_update, State) ->
     {noreply, NewState};
 
 handle_info({tcp_closed, _}, State) ->
-    {stop, normal, State};
+    {stop, ?NORMAL_EXIT, State};
 
 handle_info(Msg, State) ->
     {stop, Msg, State}.
