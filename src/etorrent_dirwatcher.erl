@@ -82,6 +82,7 @@ init([]) ->
     Dir = etorrent_config:work_dir(),
     IntervalS = etorrent_config:dirwatch_interval(),
     Interval = timer:seconds(IntervalS),
+    lager:info("Watching ~ts for new torrents.", [Dir]),
     _Tid = ets:new(etorrent_dirwatcher, [named_table, private]),
     {ok, #state{dir = Dir, interval = Interval}, 0}.
 

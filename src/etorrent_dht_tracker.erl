@@ -7,7 +7,7 @@
 -define(dht_state, etorrent_dht_state).
 
 %% API.
--export([start_link/0,
+-export([create_common_resources/0,
          start_link/2,
          announce/1,
          tab_name/0,
@@ -74,7 +74,7 @@ tab_name() ->
 max_per_torrent() ->
     32.
 
-start_link() ->
+create_common_resources() ->
     _ = case ets:info(tab_name()) of
         undefined -> ets:new(tab_name(), [named_table, public, bag]);
         _ -> ok
@@ -96,7 +96,8 @@ announce(TrackerPid) ->
 % deleted.
 %
 -spec announce(infohash(), ipaddr(), portnum()) -> 'true'.
-announce(InfoHash, {_,_,_,_}=IP, Port) when is_integer(InfoHash), is_integer(Port) ->
+announce(InfoHash, {_,_,_,_}=IP, Port)
+    when is_integer(InfoHash), is_integer(Port) ->
     % Always delete a random peer when inserting a new
     % peer into the table. If limit is not reached yet, the
     % chances of deleting a peer for no good reason are lower.
@@ -144,11 +145,11 @@ init(Args) ->
     InfoHash  = proplists:get_value(infohash, Args),
     TorrentID = proplists:get_value(torrent_id, Args),
     BTPortNum = etorrent_config:listen_port(),
+    lager:debug("Starting DHT tracker for ~p (~p).", [TorrentID, InfoHash]),
     true = gproc:reg(poller_key(), TorrentID),
     register_server(TorrentID),
     _ = gen_server:cast(self(), init_nodes),
     _ = self() ! {timeout, undefined, announce},
-    lager:debug("Starting DHT tracker for ~p (~p).", [TorrentID, InfoHash]),
     InitState = #state{
         infohash=InfoHash,
         torrent_id=TorrentID,

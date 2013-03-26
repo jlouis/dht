@@ -115,11 +115,16 @@ download({magnet_link, Link}, Options) when is_list(Link) ->
 
 %% ------------------------------------------------------------------
 
-handle_completion(_RequiredIH, _TorrentID, Info, UrlTiers, Options) ->
+handle_completion(RequiredIH, TorrentID, Info, UrlTiers, Options) ->
     {ok, DecodedInfo} = etorrent_bcoding:decode(Info),
     {ok, Torrent} = build_torrent(DecodedInfo, UrlTiers),
     {ok, FileName} = write_torrent(Torrent),
-    etorrent_ctl:start(FileName, Options).
+    case etorrent_ctl:start(FileName, Options) of
+        {ok, Tid} ->
+            lager:info("Changed the torrent id ~p => ~p.", [TorrentID, Tid]);
+        {error, Reason} ->
+            lager:error("Cannot start ~p, reason is ~p.", [RequiredIH, Reason])
+    end.
 
 
 -spec write_torrent(Torrent::bcode()) -> {ok, Out} | {error, term()} when

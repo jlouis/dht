@@ -34,7 +34,8 @@
 -spec start_link({bcode(), string(), binary()}, binary(), integer(), list()) ->
                 {ok, pid()} | ignore | {error, term()}.
 start_link({Torrent, TorrentFile, TorrentIH}, Local_PeerId, Id, Options) ->
-    supervisor:start_link(?MODULE, [{Torrent, TorrentFile, TorrentIH}, Local_PeerId, Id, Options]).
+    supervisor:start_link(?MODULE, [{Torrent, TorrentFile, TorrentIH},
+                                    Local_PeerId, Id, Options]).
 
 %% @doc start a child process of a tracker type.
 %% <p>We do this after-the-fact as we like to make sure how complete the torrent
@@ -43,18 +44,19 @@ start_link({Torrent, TorrentFile, TorrentIH}, Local_PeerId, Id, Options) ->
 %% @end
 -spec start_child_tracker(pid(), [tier()], binary(), binary(), integer()) ->
                 {ok, pid()} | {ok, pid(), term()} | {error, term()}.
-start_child_tracker(Pid, UrlTiers, InfoHash, Local_Peer_Id, TorrentId) ->
+start_child_tracker(Pid, UrlTiers, <<IntIH:160>> = BinIH,
+                    Local_Peer_Id, TorrentId) ->
     %% BEP 27 Private Torrent spec does not say this explicitly, but
     %% Azureus wiki does mention a bittorrent client that conforms to
     %% BEP 27 should behave like a classic one, i.e. no PEX or DHT.
     %% So only enable DHT support for non-private torrent here.
-    case etorrent_torrent:is_private(TorrentId) of
-        false -> _ = etorrent_dht:add_torrent(InfoHash, TorrentId);
-        true -> ok
-    end,
+    IsPrivate = etorrent_torrent:is_private(TorrentId),
+    DhtEnabled = etorrent_config:dht(),
+    [start_child_dht_tracker(Pid, IntIH, TorrentId)
+     || not IsPrivate, DhtEnabled],
     Tracker = {tracker_communication,
                {etorrent_tracker_communication, start_link,
-                [self(), UrlTiers, InfoHash, Local_Peer_Id, TorrentId]},
+                [self(), UrlTiers, BinIH, Local_Peer_Id, TorrentId]},
                transient, 15000, worker, [etorrent_tracker_communication]},
     supervisor:start_child(Pid, Tracker).
 
@@ -175,3 +177,9 @@ peer_pool_spec(TorrentID) ->
     {peer_pool_sup,
         {etorrent_peer_pool, start_link, [TorrentID]},
         transient, 5000, supervisor, [etorrent_peer_pool]}.
+
+start_child_dht_tracker(Pid, InfoHash, TorrentID) ->
+    Tracker = {{tracker, InfoHash},
+                {etorrent_dht_tracker, start_link, [InfoHash, TorrentID]},
+                permanent, 5000, worker, dynamic},
+    supervisor:start_child(Pid, Tracker).

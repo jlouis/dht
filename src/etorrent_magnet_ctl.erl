@@ -126,7 +126,8 @@ integer_hash_to_literal(InfoHashInt) when is_integer(InfoHashInt) ->
     iolist_to_binary(io_lib:format("~40.16.0B", [InfoHashInt])).
 
 handle_completion(RequiredIH, TorrentID, Data, UrlTiers, Options) ->
-    spawn(fun() ->
+    proc_lib:spawn(fun() ->
+        lager:info("Terminate metadata-downloader ~p.", [RequiredIH]),
         etorrent_torrent_pool:terminate_child(RequiredIH),
         etorrent_magnet:handle_completion(RequiredIH, TorrentID, Data,
                                           UrlTiers, Options)

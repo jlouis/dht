@@ -27,13 +27,12 @@ start_link(TorrentIH, LocalPeerID, TorrentID, UrlTiers, Options)
 %% ====================================================================
 
 %% @private
-init([TorrentIH, LocalPeerID, TorrentID, UrlTiers, Options]) ->
+init([<<IntIH:160>> = BinIH, LocalPeerID, TorrentID, UrlTiers, Options]) ->
     lager:debug("Init torrent magnet supervisor #~p.", [TorrentID]),
-    etorrent_dht:add_torrent(TorrentIH, TorrentID),
     Control =
         {control,
             {etorrent_magnet_ctl, start_link,
-             [TorrentIH, LocalPeerID, TorrentID, UrlTiers, Options]},
+             [BinIH, LocalPeerID, TorrentID, UrlTiers, Options]},
             permanent, 5000, worker, [etorrent_magnet_ctl]},
     PeerPool =
         {peer_pool_sup,
@@ -42,7 +41,11 @@ init([TorrentIH, LocalPeerID, TorrentID, UrlTiers, Options]) ->
     Tracker =
     {tracker_communication,
      {etorrent_tracker_communication, start_link,
-      [self(), UrlTiers, TorrentIH, LocalPeerID, TorrentID]},
+      [self(), UrlTiers, BinIH, LocalPeerID, TorrentID]},
      transient, 15000, worker, [etorrent_tracker_communication]},
-    {ok, {{one_for_all, 1, 60}, [Control, PeerPool, Tracker]}}.
+    DhtEnabled = etorrent_config:dht(),
+    DhtTracker = [{dht_tracker,
+                {etorrent_dht_tracker, start_link, [IntIH, TorrentID]},
+                permanent, 5000, worker, dynamic} || DhtEnabled],
+    {ok, {{one_for_all, 1, 60}, [Control, PeerPool, Tracker] ++ DhtTracker}}.
 

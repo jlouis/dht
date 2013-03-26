@@ -67,8 +67,8 @@ init([PeerId]) ->
         false -> [];
         true ->
             [{dht_sup,
-                {etorrent_dht, start_link, []},
-                permanent, infinity, supervisor, [etorrent_dht]}]
+                {etorrent_dht_sup, start_link, []},
+                permanent, infinity, supervisor, [etorrent_dht_sup]}]
     end,
 
     %% UPnP subsystemm is optional.

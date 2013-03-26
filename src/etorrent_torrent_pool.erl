@@ -28,15 +28,17 @@ start_link() -> supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 % @end
 -spec start_child({bcode(), string(), binary()}, binary(), integer(), list()) ->
     {ok, pid()} | {ok, pid(), term()} | {error, term()}.
-start_child({Torrent, TorrentFile, TorrentIH}, Local_PeerId, Id, Options) ->
-    ChildSpec = {TorrentIH,
+start_child({Torrent, TorrentFile, BinIH}, Local_PeerId, Id, Options)
+    when is_binary(BinIH) ->
+    ChildSpec = {BinIH,
 		 {etorrent_torrent_sup, start_link,
-		 [{Torrent, TorrentFile, TorrentIH}, Local_PeerId, Id, Options]},
+		 [{Torrent, TorrentFile, BinIH}, Local_PeerId, Id, Options]},
 		 transient, infinity, supervisor, [etorrent_torrent_sup]},
     supervisor:start_child(?SERVER, ChildSpec).
 
 
-start_magnet_child(BinIH, LocalPeerId, TorrentId, UrlTiers, Options) ->
+start_magnet_child(BinIH, LocalPeerId, TorrentId, UrlTiers, Options) 
+    when is_binary(BinIH) ->
     ChildSpec = {BinIH,
 		 {etorrent_magnet_sup, start_link,
 		 [BinIH, LocalPeerId, TorrentId, UrlTiers, Options]},
@@ -47,9 +49,10 @@ start_magnet_child(BinIH, LocalPeerId, TorrentId, UrlTiers, Options) ->
 % @doc Ask to stop the torrent represented by its info_hash.
 % @end
 -spec terminate_child(binary()) -> ok.
-terminate_child(TorrentIH) ->
-    supervisor:terminate_child(?SERVER, TorrentIH),
-    supervisor:delete_child(?SERVER, TorrentIH).
+terminate_child(BinIH) 
+    when is_binary(BinIH) ->
+    ok = supervisor:terminate_child(?SERVER, BinIH),
+    ok = supervisor:delete_child(?SERVER, BinIH).
 
 %% ====================================================================
 
