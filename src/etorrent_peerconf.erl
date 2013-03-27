@@ -12,7 +12,9 @@
 -record(peerconf, {
     localid  = exit(required) :: none | <<_:160>>,
     remoteid = exit(required) :: none | <<_:160>>,
+    %% Is Extension Protocol (BEP-10) supported?
     extended = exit(required) :: boolean(),
+    %% Is fast extention (BEP-6) supported by both of peers?
     fast = exit(required) :: boolean()}).
 
 -opaque peerconf() :: #peerconf{}.

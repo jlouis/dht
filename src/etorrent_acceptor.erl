@@ -96,8 +96,10 @@ handshake(Socket, LocalPeerId) ->
     end.
 
 receive_handshake(Socket) ->
-    case etorrent_proto_wire:receive_handshake(Socket) of
-        {ok, Caps, InfoHash, RemotePeerId} ->
+    LocalCaps = etorrent_proto_wire:local_capabilities(),
+    case etorrent_proto_wire:receive_handshake(Socket, LocalCaps) of
+        {ok, RemoteCaps, InfoHash, RemotePeerId} ->
+             Caps = etorrent_proto_wire:negotiate_capabilities(RemoteCaps, LocalCaps),
             {ok, Caps, InfoHash, RemotePeerId};
         {error, Reason} ->
             throw({error, Reason})

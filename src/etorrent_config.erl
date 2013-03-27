@@ -9,35 +9,37 @@
 -behaviour(gen_server).
 
 -export([dht/0,
-	 dht_port/0,
-	 dht_state_file/0,
-	 dht_bootstrap_nodes/0,
+         dht_port/0,
+         dht_state_file/0,
+         dht_bootstrap_nodes/0,
          dotdir/0,
-	 dirwatch_interval/0,
-	 download_dir/0,
-	 fast_resume_file/0,
-	 listen_port/0,
-	 listen_ip/0,
-	 logger_dir/0,
-	 logger_file/0,
-	 log_settings/0,
-	 max_files/0,
-	 max_peers/0,
-	 max_upload_rate/0,
-	 max_download_rate/0,
-	 max_upload_slots/0,
-	 optimistic_slots/0,
-	 profiling/0,
-	 udp_port/0,
-     use_upnp/0,
-	 work_dir/0]).
+         dirwatch_interval/0,
+         download_dir/0,
+         fast_resume_file/0,
+         listen_port/0,
+         listen_ip/0,
+         logger_dir/0,
+         logger_file/0,
+         log_settings/0,
+         max_files/0,
+         max_peers/0,
+         max_upload_rate/0,
+         max_download_rate/0,
+         max_upload_slots/0,
+         optimistic_slots/0,
+         profiling/0,
+         udp_port/0,
+         use_upnp/0,
+         work_dir/0,
+         fast_extension/0,
+         extension_protocol/0]).
 
 %% API
 -export([start_link/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-	 terminate/2, code_change/3]).
+     terminate/2, code_change/3]).
 
 -type file_path() :: etorrent_types:file_path().
 -record(state, { conf :: [{atom(), term()}]}).
@@ -62,7 +64,9 @@ configuration_specification() ->
      optional(dht_state, "etorrent_dht_state"),
      optional(dht_bootstrap_nodes, ["router.utorrent.com:6881",
                                     "router.bittorrent.com:6881"]),
-     optional(log_settings, [])].
+     optional(log_settings, []),
+     optional(extension_protocol, true),
+     optional(fast_extension, true)].
 
 %%====================================================================
 
@@ -73,17 +77,15 @@ start_link() ->
 
 call(Key) ->
     case gen_server:call(?MODULE, {get_param, Key}) of
-	undefined ->
-	   exit({no_such_application_config_value, Key});
-	V -> V
+    undefined -> exit({no_such_application_config_value, Key});
+    V -> V
     end.
 
 -spec work_dir() -> file_path().
 work_dir() -> call(dir).
 
 -spec dotdir() -> file_path().
-dotdir() ->
-    call(dotdir).
+dotdir() -> call(dotdir).
 
 -spec download_dir() -> file_path().
 download_dir() -> call(download_dir).
@@ -155,6 +157,13 @@ dht_bootstrap_nodes() -> call(dht_bootstrap_nodes).
 % @todo fix this return value
 log_settings() -> call(log_settings).
 
+%% BEP-6
+fast_extension() -> call(fast_extension).
+
+%% BEP-10
+extension_protocol() -> call(extension_protocol).
+
+
 %%====================================================================
 
 %% @private
@@ -187,46 +196,37 @@ code_change(_OldVsn, State, _Extra) ->
 %% Search the configuation and if does not have a value, search the key
 required(Key) ->
     fun(Config) ->
-	    case proplists:get_value(Key, Config) of
-		    undefined ->
-			case application:get_env(etorrent_core, Key) of
-			    {ok, Value} -> {Key, Value};
-			    undefined -> {Key, undefined}
-			end;
-		    Value ->
-			{Key, Value}
-		end
+        case proplists:get_value(Key, Config) of
+            undefined ->
+            case application:get_env(etorrent_core, Key) of
+                {ok, Value} -> {Key, Value};
+                undefined -> {Key, undefined}
+            end;
+            Value ->
+            {Key, Value}
+        end
     end.
 
 optional(Key, Default) ->
     fun(Config) ->
-	    case proplists:get_value(Key, Config) of
-		    undefined ->
-			case application:get_env(etorrent_core, Key) of
-			    {ok, Value} ->
-				{Key, Value};
-			    undefined when is_function(Default) ->
-				{_, Value} = Default(Config),
+        case proplists:get_value(Key, Config) of
+            undefined ->
+            case application:get_env(etorrent_core, Key) of
+                {ok, Value} ->
                 {Key, Value};
-			    undefined ->
-				{Key, Default}
-			end;
-		    Value ->
-			{Key, Value}
-		end
+                undefined when is_function(Default) ->
+                {_, Value} = Default(Config),
+                {Key, Value};
+                undefined ->
+                {Key, Default}
+            end;
+            Value ->
+            {Key, Value}
+        end
     end.
 
 
 read_config(Config) ->
     [F(Config) || F <- configuration_specification()].
-
-
-
-
-
-
-
-
-
 
 

@@ -175,7 +175,7 @@ spawn_peer(TrackerUrl, LocalPeerId, PL, TorrentId, IP, Port) ->
       {value, PL2} = etorrent_torrent:lookup(TorrentId),
       %% Get the rewritten peer id (if defined).
       LocalPeerId2 = proplists:get_value(peer_id, PL2, LocalPeerId),
-
+      LocalCaps = etorrent_proto_wire:local_capabilities(),
       LocalIP = etorrent_config:listen_ip(),
       Options = case LocalIP of all -> []; _ -> [{ip, LocalIP}] end
                 ++ [binary, {active, false}],
@@ -184,7 +184,8 @@ spawn_peer(TrackerUrl, LocalPeerId, PL, TorrentId, IP, Port) ->
 	      case etorrent_proto_wire:initiate_handshake(
 		     Socket,
 		     LocalPeerId2, %% local peer id as a binary, comes from init/1.
-		     proplists:get_value(info_hash, PL)) of
+		     proplists:get_value(info_hash, PL),
+             LocalCaps) of
           %% Connected to the local node.
 		  {ok, _Capabilities, LocalPeerId} -> ok;
 		  {ok, _Capabilities, LocalPeerId2} -> ok;
@@ -197,7 +198,7 @@ spawn_peer(TrackerUrl, LocalPeerId, PL, TorrentId, IP, Port) ->
                 proplists:get_value(info_hash, PL),
 			    TorrentId,
 			    {IP, Port},
-			    Capabilities,
+			    etorrent_proto_wire:negotiate_capabilities(Capabilities, LocalCaps),
 			    Socket),
 		      etorrent_peer_control:initialize(ControlPid, outgoing),
 		      ok = etorrent_peer_recv:forward_control(Socket, RecvPid),

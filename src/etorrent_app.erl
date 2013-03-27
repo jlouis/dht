@@ -22,7 +22,9 @@ start() ->
     start([]).
 
 start(Config) ->
-    load_config(Config),
+    %% Reverse proplist to follow the same mechanism of duplicate key handling,
+    %% as in the proplist module.
+    load_config(lists:reverse(Config)),
     % Load app file.
     application:load(?APP),
     {ok, Deps} = application:get_key(?APP, applications),
@@ -36,6 +38,9 @@ load_config([]) ->
     ok;
 load_config([{Key, Val} | Next]) ->
     application:set_env(?APP, Key, Val),
+    load_config(Next);
+load_config([Key | Next]) ->
+    application:set_env(?APP, Key, true),
     load_config(Next).
 
 %% @private

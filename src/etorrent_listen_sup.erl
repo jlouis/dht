@@ -29,6 +29,7 @@ start_child() ->
 init([PeerId]) when is_binary(PeerId) ->
     Port = etorrent_config:listen_port(),
     Ip   = etorrent_config:listen_ip(),
+    lager:info("Listening on ~p:~p for BT-connections.", [Ip, Port]),
     ListenOpts = [binary, inet, {active, false}, {reuseaddr, true}]
                  ++ case Ip of all -> []; _ -> [{ip, Ip}] end,
     case gen_tcp:listen(Port, ListenOpts) of

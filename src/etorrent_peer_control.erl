@@ -61,6 +61,7 @@
     remote = exit(required) :: peerstate(),
     local  = exit(required) :: peerstate(),
     config = exit(required) :: peerconf(),
+
     extensions :: term(),
     reject_after_choke_tref
     }).
