@@ -24,12 +24,10 @@
 
 %% Internal API
 -export([dispatch_outgoing_message/2,
-         register_connid_gather/1,
          register_transaction_id/1,
          unregister_transaction_id/1,
          lookup_transaction/1,
          distribute_connid/2,
-         register_announce/2,
          need_requestor/2,
          register_connid/2]).
 
@@ -77,6 +75,7 @@ announce(TrackerAddr, PropList, Timeout) ->
                                Timeout) of
 	{'EXIT', {timeout, _}} ->
 	    gen_server:cast(?MODULE, {announce_cancel, TrackerAddr, PropList}),
+        lager:error("UDP-tracker ~p does not respond.", [TrackerAddr]),
 	    timeout;
 	Response -> {ok, Response}
     end.
@@ -99,9 +98,10 @@ lookup_transaction(Tid) ->
     end.
 
 %% @private
-register_connid_gather(Tracker) ->
-    ets:insert(?TAB, [{{conn_id_req, Tracker}, self()},
-		      {self(), {conn_id_req, Tracker}}]).
+%% Register etorrent_udp_tracker.
+register_connid_gather(Tracker, ServerPid) ->
+    ets:insert(?TAB, [{{conn_id_req, Tracker}, ServerPid},
+		              {ServerPid, {conn_id_req, Tracker}}]).
 
 %% @private
 register_transaction_id(Tid) ->
@@ -112,10 +112,10 @@ unregister_transaction_id(Tid) ->
     [true] = delete_object(?TAB, [{Tid, self()}, {self(), Tid}]).
 
 %% @private
-register_announce(Tracker, PL) ->
-    true = ets:insert(?TAB, [{{announce, Tracker}, self()},
-			     {{Tracker, PL}, self()},
-			     {self(), {Tracker, PL}}]).
+register_announce(Tracker, PL, ServerPid) ->
+    true = ets:insert(?TAB, [{{announce, Tracker}, ServerPid},
+                             {{Tracker, PL}, ServerPid},
+                             {ServerPid, {Tracker, PL}}]).
 
 %% @private
 register_connid(Tracker, ConnID) ->
@@ -142,8 +142,11 @@ handle_call({announce, Tracker, PL}, From, S) ->
     %% The result will be sent from `etorrent_udp_tracker:announce_reply/3'.
     case ets:lookup(?TAB, {conn_id, Tracker}) of
         [] ->
+            case ets:lookup(?TAB, {conn_id_req, Tracker}) of
+            []    -> spawn_requestor(Tracker); 
+            [_|_] -> ignore
+            end,
             spawn_announce(From, Tracker, PL),
-            spawn_requestor(Tracker),
             {noreply, S};
         [{_Key, ConnId}] ->
             {ok, Pid} = spawn_announce(From, Tracker, PL),
@@ -176,7 +179,12 @@ handle_cast({distribute_connid, Tracker, ConnID}, S) ->
     {noreply, S};
 handle_cast({msg, {IP, Port}, M}, S) ->
     Encoded = etorrent_udp_tracker_proto:encode(M),
-    ok = gen_udp:send(S#state.socket, IP, Port, Encoded),
+    case gen_udp:send(S#state.socket, IP, Port, Encoded) of
+        ok -> ok;
+        {error, Reason} ->
+            lager:error("Cannot write to socket, because of ~p. ~n"
+                        "Check your network connection.", [Reason])
+    end,
     {noreply, S};
 handle_cast(Msg, State) ->
     lager:error("Unknown handle_case ~p", [Msg]),
@@ -233,14 +241,20 @@ spawn_requestor(Tr) ->
 spawn_requestor(Tr, N) ->
     {ok, Pid} = etorrent_udp_pool_sup:start_requestor(Tr, N),
     erlang:monitor(process, Pid),
+    register_connid_gather(Tr, Pid),
     {ok, Pid}.
 
 spawn_announce(From, Tr, PL) ->
     {ok, Pid} = etorrent_udp_pool_sup:start_announce(From, Tr, PL),
     erlang:monitor(process, Pid),
+    register_announce(Tr, PL, Pid),
     {ok, Pid}.
 
 cancel_conn_id_req(Tr) ->
+    %% no case clause matching
+    %% [{{conn_id_req,{"tracker.openbittorrent.com",80}},<0.968.0>},
+    %%  {{conn_id_req,{"tracker.openbittorrent.com",80}},<0.976.0>}]
+    %% Few torrents are from the same tracker.
     case ets:lookup(?TAB, {conn_id_req, Tr}) of
 	[] ->
 	    ignore;

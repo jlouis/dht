@@ -111,12 +111,10 @@ dispatch_incoming_message(Pid, M) ->
 
 %% @private
 init([{announce, From, Tracker, PL}]) ->
-    etorrent_udp_tracker_mgr:register_announce(Tracker, PL),
     S = #state { tracker = Tracker, worker_type = announce,
                  reply = From, properties = PL },
     {ok, S};
 init([{connid_gather, Tracker, N}]) ->
-    etorrent_udp_tracker_mgr:register_connid_gather(Tracker),
     S = #state { tracker = Tracker, worker_type = connid_gather, try_count = N},
     {ok, S, 0}.
 

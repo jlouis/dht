@@ -41,7 +41,7 @@ init([<<IntIH:160>> = BinIH, LocalPeerID, TorrentID, UrlTiers, Options]) ->
     Tracker =
     {tracker_communication,
      {etorrent_tracker_communication, start_link,
-      [self(), UrlTiers, BinIH, LocalPeerID, TorrentID]},
+      [self(), UrlTiers, BinIH, LocalPeerID, TorrentID, Options]},
      transient, 15000, worker, [etorrent_tracker_communication]},
     DhtEnabled = etorrent_config:dht(),
     DhtTracker = [{dht_tracker,

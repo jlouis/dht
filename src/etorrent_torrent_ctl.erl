@@ -109,7 +109,8 @@
     mode = progress :: 'progress' | 'endgame' | atom(),
     %% This field is for passing `paused' flag beetween
     %% the `init' and `initializing' functions.
-    state       :: unknown | paused
+    state       :: unknown | paused,
+    options
     }).
 
 
@@ -467,7 +468,8 @@ init([Parent, Id, {Torrent, TorrentFile, TorrentIH}, PeerId, Options]) ->
         default_peer_id=PeerId,
         parent_pid=Parent,
         hashes=Hashes,
-        state=TState},
+        state=TState,
+        options=Options},
     {ok, initializing, InitState, 0}.
 
 %% @private
@@ -866,7 +868,8 @@ start_networking(S=#state{id=Id, torrent=Torrent, valid=ValidPieces, wishes=Wish
           etorrent_metainfo:get_url(Torrent),
           S#state.info_hash,
           S#state.peer_id,
-          Id) of
+          Id,
+          S#state.options) of
         {ok, Pid1} ->
             {ok, Pid1}; 
         {error, {already_started, Pid1}} ->

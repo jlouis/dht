@@ -38,7 +38,7 @@
 -endif.
 
 %% API
--export([start_link/5, completed/1]).
+-export([start_link/6, completed/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -56,7 +56,8 @@
                 info_hash      :: binary(),
                 peer_id        :: binary(),
                 control_pid    :: pid(),
-                torrent_id     :: integer() }).
+                torrent_id     :: integer(),
+                udp_tracker_connection_timeout :: timeout()}).
 
 -define(DEFAULT_CONNECTION_TIMEOUT_INTERVAL, 1800).
 -define(DEFAULT_CONNECTION_TIMEOUT_MIN_INTERVAL, 60).
@@ -72,13 +73,13 @@
 %% parameter and finally the `TorrentId': the identifier of the torrent.</p>
 %% @end
 %% @todo What module, precisely do the control pid come from?
--spec start_link(pid(), [tier()], binary(), binary(), integer()) ->
+-spec start_link(pid(), [tier()], binary(), binary(), integer(), list()) ->
                         ignore | {ok, pid()} | {error, term()}.
-start_link(ControlPid, UrlTiers, InfoHash, PeerId, TorrentId)
+start_link(ControlPid, UrlTiers, InfoHash, PeerId, TorrentId, Options)
   when is_binary(PeerId) ->
     gen_server:start_link(?MODULE,
                           [ControlPid,
-                           UrlTiers, InfoHash, PeerId, TorrentId],
+                           UrlTiers, InfoHash, PeerId, TorrentId, Options],
                           []).
 
 %% @doc Prod the tracker and tell it we completed to torrent
@@ -92,7 +93,7 @@ completed(Pid) ->
 %%====================================================================
 
 %% @private
-init([ControlPid, UrlTiers, InfoHash, PeerId, TorrentId]) ->
+init([ControlPid, UrlTiers, InfoHash, PeerId, TorrentId, Options]) ->
     process_flag(trap_exit, true),
     random:seed(os:timestamp()),
     HardRef = erlang:send_after(0, self(), hard_timeout),
@@ -101,6 +102,8 @@ init([ControlPid, UrlTiers, InfoHash, PeerId, TorrentId]) ->
                 self(),
                 soft_timeout),
     Url = swap_urls(shuffle_tiers(UrlTiers)),
+    UdpTimeout = proplists:get_value(udp_tracker_connection_timeout, Options,
+                                     timer:seconds(60)),
     {ok, #state{control_pid = ControlPid,
                 torrent_id = TorrentId,
                 url = Url,
@@ -110,7 +113,8 @@ init([ControlPid, UrlTiers, InfoHash, PeerId, TorrentId]) ->
                 soft_timer = SoftRef,
                 hard_timer = HardRef,
 
-                queued_message = started}}.
+                queued_message = started,
+                udp_tracker_connection_timeout=UdpTimeout}}.
 
 
 %% @private
@@ -269,7 +273,8 @@ format_ipv6_address(Tuple) ->
 contact_tracker_udp(Url, TrackerIP, TrackerPort, Event,
                     #state { torrent_id = Id,
                              info_hash = InfoHash,
-                             peer_id = PeerId } = S) ->
+                             peer_id = PeerId,
+                             udp_tracker_connection_timeout = Timeout} = S) ->
     {value, PL} = etorrent_torrent:lookup(Id),
     Uploaded   = proplists:get_value(uploaded, PL),
     Downloaded = proplists:get_value(downloaded, PL),
@@ -295,7 +300,8 @@ contact_tracker_udp(Url, TrackerIP, TrackerPort, Event,
     lager:debug("Announcing via UDP"),
     case etorrent_udp_tracker_mgr:announce(
            {TrackerIP, TrackerPort},
-           [X || {_, _} = X <- PropList]) of
+           [X || {_, _} = X <- PropList],
+           Timeout) of
         {ok, {announce, Peers, Status}} ->
             lager:debug("UDP reply handled"),
             {I, MI} = handle_udp_response(Url, Id, Peers, Status),
