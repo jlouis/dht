@@ -58,7 +58,7 @@ start(Filename) when is_list(Filename) ->
 start(Filename, {Ref, Pid})
   when is_list(Filename), is_reference(Ref), is_pid(Pid) ->
     CallBack = fun() ->
-          lager:info("Completing torrent callback: ~s", [Filename]),
+          lager:info("Completing torrent callback: ~ts", [Filename]),
           Pid ! {Ref, done}
       end,
     etorrent_ctl:start(Filename, [{callback, CallBack}]);

@@ -37,6 +37,7 @@ init([PeerId]) ->
     Conf         = ?CHILD(etorrent_config),
     Tables       = ?CHILD(etorrent_table),
     Torrent      = ?CHILD(etorrent_torrent),
+    Tracker      = ?CHILD(etorrent_tracker),
     Counters     = ?CHILD(etorrent_counters),
     EventManager = ?CHILD(etorrent_event),
     PeerMgr      = ?CHILDP(etorrent_peer_mgr, [PeerId]),
@@ -81,7 +82,7 @@ init([PeerId]) ->
     end,
 
     {ok, {{one_for_all, 3, 60},
-          [Conf, Tables, Torrent,
+          [Conf, Tables, Torrent, Tracker,
            Counters, EventManager, PeerMgr,
            FastResume, PeerStates,
            Choker, Listener,
