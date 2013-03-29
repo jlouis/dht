@@ -246,6 +246,7 @@ handle_cast({incoming_msg, Msg}, S) ->
 
 %% Block the remote node (send from etorrent_choker).
 handle_cast(choke, State) ->
+    lager:info("Choked."),
     #state{
         torrent_id=TorrentID, send_pid=SendPid,
         remote=Remote, config=Config} = State,
@@ -280,6 +281,7 @@ handle_cast(choke, State) ->
     end;
 
 handle_cast(unchoke, State) ->
+    lager:info("Unchoked."),
     #state{torrent_id=TorrentID, send_pid=SendPid, remote=Remote,
            reject_after_choke_tref=RejectTRef} = State,
     [timer:cancel(RejectTRef) || RejectTRef =/= undefined],

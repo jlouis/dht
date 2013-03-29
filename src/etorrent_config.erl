@@ -34,6 +34,7 @@
          fast_extension/0,
          extension_protocol/0]).
 
+
 %% API
 -export([start_link/0]).
 
@@ -53,7 +54,7 @@ configuration_specification() ->
      optional(max_peers, 40),
      optional(fs_watermark_high, 128),
      optional(max_upload_slots, auto),
-     required(min_upload),
+     optional(optimistic_slots, 1), %% min_upload
      optional(max_upload_rate, infinity),
      optional(max_download_rate, infinity),
      required(port),
@@ -80,6 +81,10 @@ call(Key) ->
     undefined -> exit({no_such_application_config_value, Key});
     V -> V
     end.
+
+%call(Key, Value) ->
+%    gen_server:call(?MODULE, {set_param, Key, Value}).
+
 
 -spec work_dir() -> file_path().
 work_dir() -> call(dir).
@@ -119,7 +124,7 @@ max_files() -> call(fs_watermark_high).
 max_upload_slots() -> call(max_upload_slots).
 
 -spec optimistic_slots() -> pos_integer().
-optimistic_slots() -> call(min_upload).
+optimistic_slots() -> call(optimistic_slots).
 
 -spec max_upload_rate() -> pos_integer() | infinity.
 max_upload_rate() -> call(max_upload_rate).
@@ -168,12 +173,15 @@ extension_protocol() -> call(extension_protocol).
 
 %% @private
 init([]) ->
-    {ok, #state{ conf = read_config([]) }}.
+    {ok, #state{ conf = dict:from_list(read_config([])) }}.
 
 %% @private
 handle_call({get_param, P}, _From, #state { conf = Conf } = State) ->
-    Reply = proplists:get_value(P, Conf),
-    {reply, Reply, State}.
+    Reply = dict:fetch(P, Conf),
+    {reply, Reply, State};
+handle_call({set_param, K, V}, _From, #state { conf = Conf } = State) ->
+    Conf2 = dict:store(K, V, Conf),
+    {reply, ok, State#state{ conf = Conf2 }}.
 
 %% @private
 handle_cast(_Msg, State) ->

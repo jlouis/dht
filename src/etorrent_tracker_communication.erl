@@ -302,10 +302,12 @@ contact_tracker_udp(Url, TrackerIP, TrackerPort, Event,
            {TrackerIP, TrackerPort},
            [X || {_, _} = X <- PropList],
            Timeout) of
-        {ok, {announce, Peers, Status}} ->
+        {ok, Peers, Status} ->
             lager:debug("UDP reply handled"),
-            {I, MI} = handle_udp_response(Url, Id, Peers, Status),
-            {ok, handle_timeout(I, MI, S)};
+            {Interval, MinInterval} = handle_udp_response(Url, Id, Peers, Status),
+            {ok, handle_timeout(Interval, MinInterval, S)};
+        {error, _Reason} ->
+            error;
         timeout ->
             error
     end.

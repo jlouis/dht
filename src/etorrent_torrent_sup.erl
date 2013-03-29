@@ -127,6 +127,8 @@ stop_assignor(Pid) ->
 %% @private
 init([{Torrent, TorrentPath, TorrentIH}, PeerID, TorrentID, Options]) ->
     lager:debug("Init torrent supervisor #~p.", [TorrentID]),
+    UrlTiers = etorrent_metainfo:get_url(Torrent),
+    etorrent_tracker:register_torrent(TorrentID, UrlTiers, self()),
     Children = [
         info_spec(TorrentID, Torrent),
         torrent_control_spec(TorrentID, Torrent, TorrentPath, TorrentIH, PeerID, Options)],

@@ -77,7 +77,8 @@ announce(TrackerAddr, PropList, Timeout) ->
 	    gen_server:cast(?MODULE, {announce_cancel, TrackerAddr, PropList}),
         lager:error("UDP-tracker ~p does not respond.", [TrackerAddr]),
 	    timeout;
-	Response -> {ok, Response}
+    {announce_result, Peers, Status} -> {ok, Peers, Status};
+    {announce_error, Reason} -> {error, Reason}
     end.
 
 %% @private

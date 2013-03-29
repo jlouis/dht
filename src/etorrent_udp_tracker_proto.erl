@@ -45,8 +45,8 @@
 	| {announce_response, pos_integer(), [{ipaddr(), portnum()}],
 	                                     [announce_opt()]}
 	| {scrape_request, pos_integer(), binary(), [binary()]}
-	| {scrape_response, pos_integer(), [scrape_opt()]}
-	| {error_response, pos_integer(), string()}.
+	| {scrape_response, [scrape_opt()]}
+	| {error_response, string()}.
 
 -export_type([t_udp_packet/0]).
 -define(SERVER, ?MODULE).
@@ -155,7 +155,7 @@ decode(Packet) ->
         scrape ->
             {TID, {scrape_response, decode_scrape(Rest)}};
         error ->
-            {TID, {error_response, TID, binary_to_list(Rest)}}
+            {TID, {error_response, binary_to_list(Rest)}}
     end.
 
 dispatch({TransId, Msg}) ->

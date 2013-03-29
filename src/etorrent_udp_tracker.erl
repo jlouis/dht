@@ -138,6 +138,11 @@ handle_cast({msg, {Tid, {announce_response, Peers, Status}}},
     etorrent_udp_tracker_mgr:unregister_transaction_id(Tid),
     announce_reply(R, Peers, Status),
     {stop, normal, S};
+handle_cast({msg, {Tid, {error_response, Reason}}},
+            #state { reply = R, worker_type = announce, tid = Tid } = S) ->
+    etorrent_udp_tracker_mgr:unregister_transaction_id(Tid),
+    announce_reply_error(R, Reason),
+    {stop, normal, S};
 handle_cast({msg, {Tid, {conn_response, ConnID}}},
             #state { tracker = Tracker, tid = Tid } = S) ->
     etorrent_udp_tracker_mgr:unregister_transaction_id(Tid),
@@ -216,7 +221,10 @@ expire_time(N) ->
     timer:seconds(15 * trunc(math:pow(2,N))).
 
 announce_reply(From, Peers, Status) ->
-    gen_server:reply(From, {announce, Peers, Status}).
+    gen_server:reply(From, {announce_result, Peers, Status}).
+
+announce_reply_error(From, Reason) ->
+    gen_server:reply(From, {announce_error, Reason}).
 
 inc(8) -> 8;
 inc(N) when is_integer(N), N < 8 -> N+1.

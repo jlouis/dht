@@ -3,8 +3,7 @@
 -behaviour(gen_server).
 %% API
 -export([start_link/0,
-         register_handler/0,
-         insert_tracker/1,
+         register_torrent/3,
          statechange/2,
          all/0,
          lookup/1]).
@@ -14,10 +13,11 @@
 
 -record(tracker, { 
         id :: non_neg_integer() | undefined,
-        handler_pid :: pid(),
+        sup_pid :: pid(),
         torrent_id :: non_neg_integer(),
         tracker_url :: string(),
         tier_num :: non_neg_integer(),
+        %% Time of previous announce try (it can fail or not).
         last_announced :: erlang:timestamp() | undefined,
         timeout :: non_neg_integer() | undefined}).
 
@@ -36,13 +36,8 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 %% @doc Called from tracker communication server per torrent.
-register_handler() ->
-    gen_server:cast(?SERVER, {register_handler, self()}).
-
--spec insert_tracker([{atom(), term()}]) -> ok.
-insert_tracker(PL) ->
-    T = props_to_record(PL),
-    gen_server:call(?SERVER, {insert_tracker, T}).
+register_torrent(TorrentId, UrlTiers, SupPid) ->
+    gen_server:cast(?SERVER, {register_torrent, TorrentId, UrlTiers, SupPid}).
 
 
 %% @doc Return all torrents, sorted by Id
@@ -80,24 +75,23 @@ init([]) ->
     {ok, #state{ }}.
 
 %% @private
-%% @todo Avoid downs. Let the called process die.
-handle_call({insert_tracker, T=#tracker{id=undefined}}, _, S=#state{next_id=NextId}) ->
-    ets:insert_new(?TAB, T#tracker{id=NextId}),
-    {reply, {ok, NextId}, S#state{next_id=NextId+1}}.
+handle_call(_,_,_) ->
+    {stop, badmsg}.
+
+handle_cast({register_torrent, TorrentId, UrlTiers, SupPid}, S=#state{next_id=NextId}) ->
+    {NextId2, Trackers} = create_tracker_records(TorrentId, UrlTiers, NextId, SupPid),
+    ets:insert_new(?TAB, Trackers),
+    monitor(process, SupPid),
+    {noreply, S#state{next_id=NextId2}};
 
 %% @private
-handle_cast({register_handler, Pid}, S) ->
-    monitor(process, Pid),
-    {noreply, S};
 handle_cast({statechange, Id, What}, S) ->
     state_change(Id, What),
-    {noreply, S};
-handle_cast(_Msg, S) ->
     {noreply, S}.
 
 %% @private
 handle_info({'DOWN', _Ref, process, Pid, _}, S) ->
-    ets:match_delete(?TAB, #tracker{_='_', handler_pid=Pid}),
+    ets:match_delete(?TAB, #tracker{_='_', sup_pid=Pid}),
     {noreply, S}.
 
 %% @private
@@ -109,14 +103,6 @@ terminate(_Reason, _S) ->
     ok.
 
 %% -----------------------------------------------------------------------
-
-props_to_record(PL) ->
-    #tracker { 
-        id = proplists:get_value(id, PL),
-        handler_pid = proplists:get_value(handler_pid, PL),
-        tracker_url = proplists:get_value(tracker_url, PL),
-        tier_num = proplists:get_value(tier_num, PL)
-        }.
 
 
 %%--------------------------------------------------------------------
@@ -149,3 +135,19 @@ do_state_change([announced | Rem], T) ->
     do_state_change(Rem, T#tracker{last_announced = os:timestamp()});
 do_state_change([], T) ->
     T.
+
+
+create_tracker_records(TorrentId, UrlTiers, NextId, SupPid) ->
+    per_pier(TorrentId, UrlTiers, 1, NextId, SupPid, []).
+
+per_pier(TorrentId, [UrlTier|UrlTiers], TierNum, NextId, SupPid, Acc) ->
+    {NextId2, Acc2} = per_url(TorrentId, UrlTier, TierNum, NextId, SupPid, Acc),
+    per_pier(TorrentId, UrlTiers, TierNum+1, NextId2, SupPid, Acc2);
+per_pier(_TorrentId, [], _TierNum, NextId, _SupPid, Acc) ->
+    {NextId, Acc}.
+
+per_url(TorrentId, [Url|Urls], TierNum, NextId, SupPid, Acc) ->
+    T = #tracker{id=NextId, torrent_id=TorrentId, tracker_url=Url, tier_num=TierNum},
+    per_url(TorrentId, Urls, TierNum, NextId+1, SupPid, [T|Acc]);
+per_url(_TorrentId, [], _TierNum, NextId, _SupPid, Acc) ->
+    {NextId, Acc}.

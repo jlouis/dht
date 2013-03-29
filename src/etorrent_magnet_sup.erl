@@ -29,6 +29,7 @@ start_link(TorrentIH, LocalPeerID, TorrentID, UrlTiers, Options)
 %% @private
 init([<<IntIH:160>> = BinIH, LocalPeerID, TorrentID, UrlTiers, Options]) ->
     lager:debug("Init torrent magnet supervisor #~p.", [TorrentID]),
+    etorrent_tracker:register_torrent(TorrentID, UrlTiers, self()),
     Control =
         {control,
             {etorrent_magnet_ctl, start_link,
