@@ -9,7 +9,7 @@
 %% API
 -export([start_link/4,
 
-         start_child_tracker/6,
+         start_child_tracker/5,
          start_progress/6,
          start_endgame/2,
          start_peer_sup/2,
@@ -24,7 +24,6 @@
 -export([init/1]).
 
 -type bcode() :: etorrent_types:bcode().
--type tier() :: etorrent_types:tier().
 
 
 %% =======================================================================
@@ -42,9 +41,9 @@ start_link({Torrent, TorrentFile, TorrentIH}, Local_PeerId, Id, Options) ->
 %% is before telling the tracker we are serving it. In fact, we can't accurately
 %% report the "left" part to the tracker if it is not the case.</p>
 %% @end
--spec start_child_tracker(pid(), [tier()], binary(), binary(), integer(), list()) ->
+-spec start_child_tracker(pid(), binary(), binary(), integer(), list()) ->
                 {ok, pid()} | {ok, pid(), term()} | {error, term()}.
-start_child_tracker(Pid, UrlTiers, <<IntIH:160>> = BinIH,
+start_child_tracker(Pid, <<IntIH:160>> = BinIH,
                     Local_Peer_Id, TorrentId, Options) ->
     %% BEP 27 Private Torrent spec does not say this explicitly, but
     %% Azureus wiki does mention a bittorrent client that conforms to
@@ -56,7 +55,7 @@ start_child_tracker(Pid, UrlTiers, <<IntIH:160>> = BinIH,
      || not IsPrivate, DhtEnabled],
     Tracker = {tracker_communication,
                {etorrent_tracker_communication, start_link,
-                [self(), UrlTiers, BinIH, Local_Peer_Id, TorrentId, Options]},
+                [self(), BinIH, Local_Peer_Id, TorrentId, Options]},
                transient, 15000, worker, [etorrent_tracker_communication]},
     supervisor:start_child(Pid, Tracker).
 

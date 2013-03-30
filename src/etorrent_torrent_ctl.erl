@@ -865,7 +865,6 @@ start_networking(S=#state{id=Id, torrent=Torrent, valid=ValidPieces, wishes=Wish
     {ok, TrackerPid} =
     case etorrent_torrent_sup:start_child_tracker(
           S#state.parent_pid,
-          etorrent_metainfo:get_url(Torrent),
           S#state.info_hash,
           S#state.peer_id,
           Id,

@@ -101,12 +101,19 @@ announce(InfoHash, {_,_,_,_}=IP, Port)
     % Always delete a random peer when inserting a new
     % peer into the table. If limit is not reached yet, the
     % chances of deleting a peer for no good reason are lower.
-    RandPeer = random_peer(),
-    DelSpec  = [{{InfoHash,'$1','$2',RandPeer},[],[true]}],
-    _ = ets:select_delete(tab_name(), DelSpec),
-    lager:debug("Register ~p:~p as a peer for ~s.",
-                [IP, Port, integer_hash_to_literal(InfoHash)]),
-    ets:insert(tab_name(), {InfoHash, IP, Port, RandPeer}).
+    %% Do not let add duplicates.
+    case ets:match(tab_name(), {InfoHash, IP, '_', '_'}) of
+        [[]] ->
+            lager:info("Enforce one-peer-per-IP restriction for IP=~p, IH=~p.", [IP, InfoHash]),
+            true;
+        [] ->
+            RandPeerNum = random_peer(),
+            DelSpec  = [{{InfoHash,'$1','$2',RandPeerNum},[],[true]}],
+            _ = ets:select_delete(tab_name(), DelSpec),
+            lager:debug("Register ~p:~p as a peer for ~s.",
+                        [IP, Port, integer_hash_to_literal(InfoHash)]),
+            ets:insert(tab_name(), {InfoHash, IP, Port, RandPeerNum})
+    end.
 
 %
 % Get the peers that are registered as members of this swarm.

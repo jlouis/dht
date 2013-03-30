@@ -38,7 +38,7 @@
 -endif.
 
 %% API
--export([start_link/6, completed/1]).
+-export([start_link/5, completed/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -73,13 +73,12 @@
 %% parameter and finally the `TorrentId': the identifier of the torrent.</p>
 %% @end
 %% @todo What module, precisely do the control pid come from?
--spec start_link(pid(), [tier()], binary(), binary(), integer(), list()) ->
+-spec start_link(pid(), binary(), binary(), integer(), list()) ->
                         ignore | {ok, pid()} | {error, term()}.
-start_link(ControlPid, UrlTiers, InfoHash, PeerId, TorrentId, Options)
+start_link(ControlPid, InfoHash, PeerId, TorrentId, Options)
   when is_binary(PeerId) ->
     gen_server:start_link(?MODULE,
-                          [ControlPid,
-                           UrlTiers, InfoHash, PeerId, TorrentId, Options],
+                          [ControlPid, InfoHash, PeerId, TorrentId, Options],
                           []).
 
 %% @doc Prod the tracker and tell it we completed to torrent
@@ -93,7 +92,7 @@ completed(Pid) ->
 %%====================================================================
 
 %% @private
-init([ControlPid, UrlTiers, InfoHash, PeerId, TorrentId, Options]) ->
+init([ControlPid, InfoHash, PeerId, TorrentId, Options]) ->
     process_flag(trap_exit, true),
     random:seed(os:timestamp()),
     HardRef = erlang:send_after(0, self(), hard_timeout),
@@ -101,20 +100,26 @@ init([ControlPid, UrlTiers, InfoHash, PeerId, TorrentId, Options]) ->
                 timer:seconds(?DEFAULT_CONNECTION_TIMEOUT_INTERVAL),
                 self(),
                 soft_timeout),
-    Url = swap_urls(shuffle_tiers(UrlTiers)),
+    UrlTiers = etorrent_tracker:get_url_tiers(TorrentId),
+    Url = shuffle_tiers(UrlTiers),
     UdpTimeout = proplists:get_value(udp_tracker_connection_timeout, Options,
                                      timer:seconds(60)),
-    {ok, #state{control_pid = ControlPid,
-                torrent_id = TorrentId,
-                url = Url,
-                info_hash = InfoHash,
-                peer_id = PeerId,
+    case first_tracker_id(Url) of
+        undefined -> 
+            {stop, normal}; %% trackerless
+        _ ->
+            {ok, #state{control_pid = ControlPid,
+                        torrent_id = TorrentId,
+                        url = Url,
+                        info_hash = InfoHash,
+                        peer_id = PeerId,
 
-                soft_timer = SoftRef,
-                hard_timer = HardRef,
+                        soft_timer = SoftRef,
+                        hard_timer = HardRef,
 
-                queued_message = started,
-                udp_tracker_connection_timeout=UdpTimeout}}.
+                        queued_message = started,
+                        udp_tracker_connection_timeout=UdpTimeout}}
+    end.
 
 
 %% @private
@@ -178,14 +183,17 @@ contact_tracker(Event, #state { url = Tiers } = S) ->
     end.
 
 contact_tracker(Tiers, Event, S) ->
-    contact_tracker(Tiers, Event, S, []).
+    case contact_tracker(Tiers, Event, S, []) of
+        none -> {none, handle_timeout(first_tracker_id(Tiers), S)};
+        {ok, NS} -> {ok, NS}
+    end.
 
-contact_tracker([], _Event, S, _Acc) ->
-    {none, handle_timeout(S)};
+contact_tracker([], _Event, _S, _Acc) ->
+    none;
 contact_tracker([Tier | NextTier], Event, S, Acc) ->
     case contact_tracker_tier(Tier, Event, S) of
         {ok, NS, NewTier} ->
-            {ok, NS#state { url = lists:reverse(Acc) ++ [NewTier | NextTier] }};
+            {ok, NS#state { url = lists:reverse(Acc, [NewTier | NextTier]) }};
         none ->
             contact_tracker(NextTier, Event, S, [Tier | Acc])
     end.
@@ -195,17 +203,18 @@ contact_tracker_tier(Tier, S, Event) ->
 
 contact_tracker_tier([], _Event, _S, _Acc) ->
     none;
-contact_tracker_tier([Url | Next], Event, S, Acc) ->
+contact_tracker_tier([{TrackerID, Url} = Cur | Next], Event, S, Acc) ->
+    etorrent_tracker:statechange(TrackerID, [announced, {message, undefined}]),
     case
         case identify_url_type(Url) of
             http ->
-                contact_tracker_http(Url, Event, S);
+                contact_tracker_http(Url, TrackerID, Event, S);
             {udp, TrackerIP, TrackerPort}  ->
-                contact_tracker_udp(Url, TrackerIP, TrackerPort, Event, S)
+                contact_tracker_udp(Url, TrackerID, TrackerIP, TrackerPort, Event, S)
         end
     of
         {ok, NS} ->
-            {ok, NS, [Url] ++ lists:reverse(Acc) ++ Next};
+            {ok, NS, [Cur|lists:reverse(Acc, Next)]};
         error ->
             %% For private torrent (BEP 27), disconnect all peers coming
             %% from the tracker before switching to another one
@@ -213,7 +222,7 @@ contact_tracker_tier([Url | Next], Event, S, Acc) ->
                 true -> disconnect_tracker(Url);
                 _ -> ok
             end,
-            contact_tracker_tier(Next, Event, S, [Url | Acc])
+            contact_tracker_tier(Next, Event, S, [Cur | Acc])
     end.
 
 identify_url_type(Url) ->
@@ -270,7 +279,7 @@ format_ipv6_address(Tuple) ->
       io_lib:format(
         string:join(["~4.16.0B" || _ <- lists:seq(1, 8)], ":"), tuple_to_list(Tuple))).
 
-contact_tracker_udp(Url, TrackerIP, TrackerPort, Event,
+contact_tracker_udp(Url, TrackerID, TrackerIP, TrackerPort, Event,
                     #state { torrent_id = Id,
                              info_hash = InfoHash,
                              peer_id = PeerId,
@@ -305,15 +314,17 @@ contact_tracker_udp(Url, TrackerIP, TrackerPort, Event,
         {ok, Peers, Status} ->
             lager:debug("UDP reply handled"),
             {Interval, MinInterval} = handle_udp_response(Url, Id, Peers, Status),
-            {ok, handle_timeout(Interval, MinInterval, S)};
-        {error, _Reason} ->
+            {ok, handle_timeout(TrackerID, Interval, MinInterval, S)};
+        {error, Reason} ->
+            etorrent_tracker:statechange(TrackerID, [{message, error, Reason}]),
             error;
         timeout ->
+            etorrent_tracker:statechange(TrackerID, [{message, error, <<"Timeout.">>}]),
             error
     end.
 
 %% @todo: consider not passing around the state here!
-contact_tracker_http(Url, Event, S) ->
+contact_tracker_http(Url, TrackerID, Event, S) ->
     lager:debug("Send event ~p to ~p", [Event, Url]),
     RequestUrl = build_tracker_url(Url, Event, S),
     lager:debug("Request: ~p", [RequestUrl]),
@@ -321,43 +332,36 @@ contact_tracker_http(Url, Event, S) ->
         {ok, {200, _, Body}} ->
             lager:debug("Tracker returns~n~p", [Body]),
             case etorrent_bcoding:decode(Body) of
-                {ok, BC} -> {ok, handle_tracker_response(Url, BC, S)};
+                {ok, BC} -> {ok, handle_tracker_response(Url, TrackerID, BC, S)};
                 {error, _} ->
-                    etorrent_event:notify({malformed_tracker_response, Body}),
+                    etorrent_tracker:statechange(TrackerID, 
+                        [{message, error, <<"Malformed tracker response.">>}]),
                     error
             end;
         {error, Type} ->
+            Mess = iolist_to_binary(io_lib:format("Connection error ~p.", [Type])),
+            etorrent_tracker:statechange(TrackerID, [{message, error, Mess}]),
             case Type of
                 etimedout -> ignore;
                 econnrefused -> ignore;
                 session_remotly_closed -> ignore;
-                Err ->
-                    Msg = {error, [{contact_tracker, Err},
-                                   {id, S#state.torrent_id}]},
-                    etorrent_event:notify(Msg),
-                    lager:info("Contact Tracker Error: ~p", [Msg]),
-                    ignore
+                _ -> ignore
             end,
             error
     end.
 
-handle_tracker_response(Url, BC, S) ->
-    case etorrent_bcoding:get_string_value("failure reason", BC, none) of
+handle_tracker_response(Url, TrackerID, BC, S) ->
+    case etorrent_bcoding:get_binary_value("failure reason", BC, none) of
         none ->
-            report_warning(
-              S#state.torrent_id,
-              etorrent_bcoding:get_string_value("warning message", BC, none)),
-            handle_tracker_bcoding(Url, BC, S);
+            Mess = etorrent_bcoding:get_binary_value("warning message", BC, undefined),
+            etorrent_tracker:statechange(TrackerID, [{message, warning, Mess}]),
+            handle_tracker_bcoding(Url, TrackerID, BC, S);
         Err ->
-            etorrent_event:notify({tracker_error, S#state.torrent_id, Err}),
-            handle_timeout(BC, S)
+            etorrent_tracker:statechange(TrackerID, [{message, error, Err}]),
+            handle_timeout(TrackerID, BC, S)
     end.
 
-report_warning(_Id, none) -> ok;
-report_warning(Id, Warn) ->
-    etorrent_event:notify({tracker_warning, Id, Warn}).
-
-handle_tracker_bcoding(Url, BC, S) ->
+handle_tracker_bcoding(Url, TrackerID, BC, S) ->
     %% Add new peers
     lager:debug("Tracker Response: ~p", [BC]),
     etorrent_peer_mgr:add_peers(
@@ -371,7 +375,7 @@ handle_tracker_bcoding(Url, BC, S) ->
              etorrent_bcoding:get_value("complete", BC, 0),
              etorrent_bcoding:get_value("incomplete", BC, 0)}]),
     %% Timeout
-    handle_timeout(BC, S).
+    handle_timeout(TrackerID, BC, S).
 
 handle_udp_response(Url, Id, Peers, Status) ->
     etorrent_peer_mgr:add_peers(Url, Id, Peers),
@@ -382,21 +386,23 @@ handle_udp_response(Url, Id, Peers, Status) ->
     {proplists:get_value(interval, Status),
      ?DEFAULT_CONNECTION_TIMEOUT_MIN_INTERVAL}.
 
-handle_timeout(S) ->
+handle_timeout(TrackerID, S) ->
     Interval = ?DEFAULT_CONNECTION_TIMEOUT_INTERVAL,
     MinInterval = ?DEFAULT_CONNECTION_TIMEOUT_MIN_INTERVAL,
-    handle_timeout(Interval, MinInterval, S).
+    handle_timeout(TrackerID, Interval, MinInterval, S).
 
-handle_timeout(BC, S) ->
+handle_timeout(TrackerID, BC, S) ->
     Interval =
         etorrent_bcoding:get_value("interval", BC, ?DEFAULT_REQUEST_TIMEOUT),
     MinInterval = etorrent_bcoding:get_value("min interval", BC, none),
-    handle_timeout(Interval, MinInterval, S).
+    handle_timeout(TrackerID, Interval, MinInterval, S).
 
-handle_timeout(Interval, MinInterval, S) ->
+handle_timeout(TrackerID, Interval, MinInterval, S) ->
     cancel_timer(S#state.hard_timer),
     cancel_timer(S#state.soft_timer),
     TRef2 = erlang:send_after(timer:seconds(Interval), self(), soft_timeout),
+    NextAfter = min(Interval, MinInterval),
+    etorrent_tracker:statechange(TrackerID, [{set_timeout, NextAfter}]),
     S#state { soft_timer = TRef2,
               hard_timer = handle_min_interval(MinInterval) }.
 
@@ -467,97 +473,8 @@ response_ips_v6(BC) ->
 shuffle_tiers(Tiers) ->
     [etorrent_utils:list_shuffle(T) || T <- Tiers].
 
-splice(L) ->
-    {[length(T) || T <- L], lists:append(L)}.
-
-unsplice([], []) -> [];
-unsplice([K | KR], List) ->
-    {F, R} = lists:split(K, List),
-    [F | unsplice(KR, R)].
-
-swap_urls(Tiers) ->
-    {Breaks, CL} = splice(Tiers),
-    NCL = swap(CL),
-    unsplice(Breaks, NCL).
-
-swap([]) -> [];
-swap([Url | R]) ->
-    {H, T} = swap_in_tier(Url, R, []),
-    [H | swap(T)].
-
-swap_in_tier(Url, [], Acc) -> {Url, lists:reverse(Acc)};
-swap_in_tier(Url, [H | T], Acc) ->
-    case should_swap_for(Url, H) of
-        true ->
-            {H, lists:reverse(Acc) ++ [Url | T]};
-        false ->
-            swap_in_tier(Url, T, [H | Acc])
-    end.
-
-should_swap_for(Url1, Url2) ->
-    {S1, _UserInfo, Host1, _Port, _Path, _Query} =
-        etorrent_http_uri:parse(Url1),
-    {_S2, _, Host2, _, _, _} = etorrent_http_uri:parse(Url2),
-    Host1 == Host2 andalso S1 == http.
+first_tracker_id([[{TrackerID, _URL}|_]]) -> TrackerID;
+first_tracker_id([_]) -> undefined.
 
 %%% Test
 %%% ----------------------------------------------------------------------
--ifdef(EUNIT).
-
-tier() ->
-    [["http://one.com", "http://two.com", "udp://one.com"],
-     ["udp://four.com", "udp://two.com", "http://three.com"]].
-
-splice_test() ->
-    {L, Concat} = splice(tier()),
-    ?assertEqual({[3,3], lists:concat(tier())}, {L, Concat}).
-
-swap_test() ->
-    Swapped = swap(lists:concat(tier())),
-    ?assertEqual(["udp://one.com", "udp://two.com", "http://one.com",
-                  "udp://four.com", "http://two.com", "http://three.com"],
-                 Swapped).
-
-swap_urls_test() ->
-    Swapped = swap_urls(tier()),
-    ?assertEqual([["udp://one.com", "udp://two.com", "http://one.com"],
-                  ["udp://four.com", "http://two.com", "http://three.com"]],
-                 Swapped).
-
-should_swap_test() ->
-    ?assertEqual(true, should_swap_for("http://foo.com", "udp://foo.com")),
-    ?assertEqual(false, should_swap_for("http://foo.com", "udp://bar.com")),
-    ?assertEqual(true,
-                 should_swap_for("http://foo.com",
-                                 "udp://foo.com/something/more")).
-
--ifdef(PROPER).
-
-scheme() -> oneof([http, udp]).
-
-host() -> oneof(["one.com", "two.com", "three.com", "four.com", "five.com"]).
-
-url() ->
-    ?LET({Scheme, Host}, {scheme(), host()},
-         atom_to_list(Scheme) ++ "://" ++ Host).
-
-g_tier() -> list(url()).
-g_tiers() -> list(g_tier()).
-
-prop_splice_unsplice_inv() ->
-    ?FORALL(In, g_tiers(),
-            begin
-                {K, Spliced} = splice(In),
-                In =:= unsplice(K, Spliced)
-            end).
-
-eqc_test() ->
-    ?assert(proper:quickcheck(prop_splice_unsplice_inv())).
-
--endif.
--endif.
-
-
-
-%stringify_ip({A,B,C,D}) ->
-%    binary_to_list(iolist_to_binary(io_lib:format("~B.~B.~B.~B", [A,B,C,D]))).

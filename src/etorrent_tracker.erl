@@ -6,7 +6,8 @@
          register_torrent/3,
          statechange/2,
          all/0,
-         lookup/1]).
+         lookup/1,
+         get_url_tiers/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, code_change/3,
          handle_info/2, terminate/2]).
@@ -18,8 +19,13 @@
         tracker_url :: string(),
         tier_num :: non_neg_integer(),
         %% Time of previous announce try (it can fail or not).
+        %% It will changed befor connection.
         last_announced :: erlang:timestamp() | undefined,
-        timeout :: non_neg_integer() | undefined}).
+        message :: undefined | string(),
+        message_level = normal :: normal | warning | error,
+        %% in seconds.
+        timeout :: non_neg_integer() | undefined,
+        countdown_started :: erlang:timestamp() | undefined}).
 
 -define(SERVER, ?MODULE).
 -define(TAB, ?MODULE).
@@ -66,6 +72,13 @@ lookup(Id) ->
 	[M] -> {value, proplistify(M)}
     end.
 
+-spec get_url_tiers(TorrentId) -> [{TrackerId, AnnounceURL}] when
+    TorrentId :: non_neg_integer(),
+    TrackerId :: non_neg_integer(),
+    AnnounceURL :: string().
+get_url_tiers(TorrentId) ->
+    gen_server:call(?SERVER, {get_url_tiers, TorrentId}).
+
 
 %% =======================================================================
 
@@ -75,8 +88,13 @@ init([]) ->
     {ok, #state{ }}.
 
 %% @private
-handle_call(_,_,_) ->
-    {stop, badmsg}.
+handle_call({get_url_tiers, TorrentId},_,S) ->
+    UrlTiers = ets:match(?TAB, #tracker{_='_', torrent_id=TorrentId,
+                                        tier_num='$1',
+                                        id='$2',
+                                        tracker_url='$3'}),
+    UrlTiers2 = lists:sort(UrlTiers),
+    {reply, group_url_by_tiers(UrlTiers2), S}.
 
 handle_cast({register_torrent, TorrentId, UrlTiers, SupPid}, S=#state{next_id=NextId}) ->
     {NextId2, Trackers} = create_tracker_records(TorrentId, UrlTiers, NextId, SupPid),
@@ -133,6 +151,12 @@ state_change(Id, List) when is_integer(Id) ->
 
 do_state_change([announced | Rem], T) ->
     do_state_change(Rem, T#tracker{last_announced = os:timestamp()});
+do_state_change([{message, Level, Message} | Rem], T) ->
+    do_state_change(Rem, T#tracker{message=Message, message_level=Level});
+do_state_change([{message, Message} | Rem], T) ->
+    do_state_change(Rem, T#tracker{message=Message, message_level=normal});
+do_state_change([{set_timeout, Timeout} | Rem], T) ->
+    do_state_change(Rem, T#tracker{timeout=Timeout, countdown_started=os:timestamp()});
 do_state_change([], T) ->
     T.
 
@@ -151,3 +175,22 @@ per_url(TorrentId, [Url|Urls], TierNum, NextId, SupPid, Acc) ->
     per_url(TorrentId, Urls, TierNum, NextId+1, SupPid, [T|Acc]);
 per_url(_TorrentId, [], _TierNum, NextId, _SupPid, Acc) ->
     {NextId, Acc}.
+
+%% In:
+%% [[1, 10, "udp://tracker.example.com"], [1, 11, "udp://tracker2.example.com"],
+%%  [2, 12, "udp://backup.example.com"]]
+%%
+%% Out:
+%% [[{10, "udp://tracker.example.com"}, {11, "udp://tracker2.example.com"}],
+%%  [{12, "udp://backup.example.com"}]]
+group_url_by_tiers(List) ->
+    group_url_by_tiers(List, 1, [], []).
+
+group_url_by_tiers([[TierNum,Id,Url]|List], TierNum, UrlAcc, TierAcc) ->
+    group_url_by_tiers(List, TierNum, [{Id, Url}|UrlAcc], TierAcc);
+group_url_by_tiers([], _TierNum, UrlAcc, TierAcc) ->
+    Tier = lists:reverse(UrlAcc),
+    lists:reverse(TierAcc, [Tier]);
+group_url_by_tiers([_|_]=List, TierNum, UrlAcc, TierAcc) ->
+    Tier = lists:reverse(UrlAcc),
+    group_url_by_tiers(List, TierNum+1, [], [Tier|TierAcc]).
