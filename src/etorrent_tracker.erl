@@ -7,25 +7,25 @@
          statechange/2,
          all/0,
          lookup/1,
-         get_url_tiers/1]).
+         get_url_tiers/1,
+         all_torrent_and_tracker_ids/0]).
 
 -export([init/1, handle_call/3, handle_cast/2, code_change/3,
          handle_info/2, terminate/2]).
 
 -record(tracker, { 
-        id :: non_neg_integer() | undefined,
+        id :: pos_integer() | undefined,
         sup_pid :: pid(),
-        torrent_id :: non_neg_integer(),
+        torrent_id :: pos_integer(),
         tracker_url :: string(),
         tier_num :: non_neg_integer(),
         %% Time of previous announce try (it can fail or not).
-        %% It will changed befor connection.
+        %% It will be changed before connection.
+        last_attempted :: erlang:timestamp() | undefined,
+        %% It will be changed after success connection.
         last_announced :: erlang:timestamp() | undefined,
-        message :: undefined | string(),
-        message_level = normal :: normal | warning | error,
-        %% in seconds.
-        timeout :: non_neg_integer() | undefined,
-        countdown_started :: erlang:timestamp() | undefined}).
+        message :: undefined | binary(),
+        message_level = normal :: normal | warning | error}).
 
 -define(SERVER, ?MODULE).
 -define(TAB, ?MODULE).
@@ -64,8 +64,7 @@ statechange(Id, What) ->
 
 %% @doc Return a property list of the tracker identified by Id
 %% @end
--spec lookup(integer()) ->
-		    not_found | {value, [{term(), term()}]}.
+-spec lookup(integer()) -> not_found | {value, [{term(), term()}]}.
 lookup(Id) ->
     case ets:lookup(?TAB, Id) of
 	[] -> not_found;
@@ -78,6 +77,10 @@ lookup(Id) ->
     AnnounceURL :: string().
 get_url_tiers(TorrentId) ->
     gen_server:call(?SERVER, {get_url_tiers, TorrentId}).
+
+all_torrent_and_tracker_ids() ->
+    TTs = ets:match(?TAB, #tracker{_='_', torrent_id='$1', id='$2'}),
+    [{TorrentId, TrackerId} || [TorrentId, TrackerId] <- TTs].
 
 
 %% =======================================================================
@@ -134,7 +137,14 @@ all(Pos) ->
 
 proplistify(T) ->
     [{id,               T#tracker.id}
-    ,{torrent_id,       T#tracker.torrent_id}].
+    ,{torrent_id,       T#tracker.torrent_id}
+    ,{tracker_url,      T#tracker.tracker_url}
+    ,{tier_num,         T#tracker.tier_num}
+    ,{last_attempted,   T#tracker.last_attempted}
+    ,{last_announced,   T#tracker.last_announced}
+    ,{message,          T#tracker.message}
+    ,{message_level,    T#tracker.message_level}].
+
 
 %% Change the state of the tracker with Id, altering it by the "What" part.
 %% Precondition: Torrent exists in the ETS table.
@@ -149,14 +159,14 @@ state_change(Id, List) when is_integer(Id) ->
             {error, not_found}
     end.
 
+do_state_change([attempted | Rem], T) ->
+    do_state_change(Rem, T#tracker{last_attempted = os:timestamp()});
 do_state_change([announced | Rem], T) ->
     do_state_change(Rem, T#tracker{last_announced = os:timestamp()});
 do_state_change([{message, Level, Message} | Rem], T) ->
     do_state_change(Rem, T#tracker{message=Message, message_level=Level});
 do_state_change([{message, Message} | Rem], T) ->
     do_state_change(Rem, T#tracker{message=Message, message_level=normal});
-do_state_change([{set_timeout, Timeout} | Rem], T) ->
-    do_state_change(Rem, T#tracker{timeout=Timeout, countdown_started=os:timestamp()});
 do_state_change([], T) ->
     T.
 

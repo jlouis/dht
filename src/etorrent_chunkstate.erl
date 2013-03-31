@@ -26,7 +26,7 @@
          format_by_chunk/1]).
 
 
-%% @doc
+%% @doc Request chunks to download.
 %% @end
 request(Numchunks, Peerset, Srvpid) ->
     Call = {chunk, {request, Numchunks, Peerset, self()}},
