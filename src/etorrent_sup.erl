@@ -44,7 +44,6 @@ init([PeerId]) ->
     FastResume   = ?CHILD(etorrent_fast_resume),
     PeerStates   = ?CHILD(etorrent_peer_states),
     Choker       = ?CHILD(etorrent_choker),
-    Tasks        = ?CHILD(etorrent_tasks),
     Console      = ?CHILD(etorrent_console),
 
     Listener     = {etorrent_listen_sup,
@@ -87,7 +86,7 @@ init([PeerId]) ->
            FastResume, PeerStates,
            Choker, Listener,
            UdpTracking, TorrentPool, Ctl,
-           DirWatcherSup, Tasks, Console] ++ DHTSup ++ UPNPSup}}.
+           DirWatcherSup, Console] ++ DHTSup ++ UPNPSup}}.
 
 
 

@@ -20,7 +20,6 @@
         etorrent_peer_states,
         etorrent_sup,
         etorrent_table,
-        etorrent_tasks,
         etorrent_torrent,
         etorrent_torrent_pool,
         etorrent_udp_pool_sup,
