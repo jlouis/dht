@@ -55,9 +55,12 @@ start_child_tracker(Pid, <<IntIH:160>> = BinIH,
      || not IsPrivate, DhtEnabled],
     Tracker = {tracker_communication,
                {etorrent_tracker_communication, start_link,
-                [self(), BinIH, Local_Peer_Id, TorrentId, Options]},
+                [BinIH, Local_Peer_Id, TorrentId, Options]},
                transient, 15000, worker, [etorrent_tracker_communication]},
-    supervisor:start_child(Pid, Tracker).
+    case etorrent_tracker:is_trackerless(TorrentId) of
+        true -> {error, trackerless};
+        false -> supervisor:start_child(Pid, Tracker)
+    end.
 
 -spec start_progress(pid(), etorrent_types:torrent_id(),
                             etorrent_types:bcode(),

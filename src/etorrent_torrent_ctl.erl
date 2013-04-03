@@ -539,6 +539,7 @@ started(pause, #state{id=Id, interval=I} = SO) ->
 
 started(update_tracker, S=#state{id=TorrentID, tracker_pid=TrackerPid}) ->
     lager:debug("Forced tracker update."),
+    is_pid(TrackerPid) andalso
     etorrent_tracker_communication:update_tracker(TrackerPid),
     try
         etorrent_dht_tracker:lookup_server(TorrentID)
@@ -863,17 +864,19 @@ start_networking(S=#state{id=Id, torrent=Torrent, valid=ValidPieces, wishes=Wish
 
     %% Start the tracker
     {ok, TrackerPid} =
-    case etorrent_torrent_sup:start_child_tracker(
-          S#state.parent_pid,
-          S#state.info_hash,
-          S#state.peer_id,
-          Id,
-          S#state.options) of
-        {ok, Pid1} ->
-            {ok, Pid1}; 
-        {error, {already_started, Pid1}} ->
-            {ok, Pid1}
-    end,
+        case etorrent_torrent_sup:start_child_tracker(
+              S#state.parent_pid,
+              S#state.info_hash,
+              S#state.peer_id,
+              Id,
+              S#state.options) of
+            {ok, Pid1} ->
+                {ok, Pid1}; 
+            {error, {already_started, Pid1}} ->
+                {ok, Pid1};
+            {error, trackerless} ->
+                {ok, undefined}
+        end,
 
     etorrent_torrent_sup:start_peer_sup(S#state.parent_pid, Id),
 

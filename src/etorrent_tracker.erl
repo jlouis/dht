@@ -8,7 +8,8 @@
          all/0,
          lookup/1,
          get_url_tiers/1,
-         all_torrent_and_tracker_ids/0]).
+         all_torrent_and_tracker_ids/0,
+         is_trackerless/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, code_change/3,
          handle_info/2, terminate/2]).
@@ -82,6 +83,11 @@ all_torrent_and_tracker_ids() ->
     TTs = ets:match(?TAB, #tracker{_='_', torrent_id='$1', id='$2'}),
     [{TorrentId, TrackerId} || [TorrentId, TrackerId] <- TTs].
 
+
+-spec is_trackerless(TorrentId :: pos_integer()) -> boolean().
+is_trackerless(TorrentId) ->
+    Pattern = #tracker{_='_', torrent_id=TorrentId},
+    '$end_of_table' =:= ets:match(?TAB, Pattern, 1).
 
 %% =======================================================================
 

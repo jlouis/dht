@@ -40,13 +40,16 @@ init([<<IntIH:160>> = BinIH, LocalPeerID, TorrentID, UrlTiers, Options]) ->
             {etorrent_magnet_peer_pool, start_link, [TorrentID]},
             transient, 5000, supervisor, [etorrent_magnet_peer_pool]},
     Tracker =
-    {tracker_communication,
-     {etorrent_tracker_communication, start_link,
-      [self(), BinIH, LocalPeerID, TorrentID, Options]},
-     transient, 15000, worker, [etorrent_tracker_communication]},
+        [{tracker_communication,
+         {etorrent_tracker_communication, start_link,
+            [BinIH, LocalPeerID, TorrentID, Options]},
+         transient, 15000, worker, [etorrent_tracker_communication]}
+         || not etorrent_tracker:is_trackerless(TorrentID)],
     DhtEnabled = etorrent_config:dht(),
+    lager:info("DHT is ~s.", [case DhtEnabled of true -> "enabled";
+                                                false -> "disabled" end]),
     DhtTracker = [{dht_tracker,
                 {etorrent_dht_tracker, start_link, [IntIH, TorrentID]},
-                permanent, 5000, worker, dynamic} || DhtEnabled],
-    {ok, {{one_for_all, 1, 60}, [Control, PeerPool, Tracker] ++ DhtTracker}}.
+                transient, 5000, worker, dynamic} || DhtEnabled],
+    {ok, {{one_for_all, 1, 60}, [Control, PeerPool] ++ Tracker ++ DhtTracker}}.
 

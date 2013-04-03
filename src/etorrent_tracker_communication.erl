@@ -38,7 +38,7 @@
 -endif.
 
 %% API
--export([start_link/5, completed/1]).
+-export([start_link/4, completed/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -67,18 +67,17 @@
 
 %% @doc Start the server
 %% <p>Start the server. We are given a large amount of
-%% information. The `ControlPid' refers to the Pid of the controller
-%% process. The `UrlTiers' are a list of lists of string() parameters,
+%% information. The `UrlTiers' are a list of lists of string() parameters,
 %% each a URL. Next comes the `Infohash' as a binary(), the `PeerId'
 %% parameter and finally the `TorrentId': the identifier of the torrent.</p>
 %% @end
 %% @todo What module, precisely do the control pid come from?
--spec start_link(pid(), binary(), binary(), integer(), list()) ->
+-spec start_link(binary(), binary(), integer(), list()) ->
                         ignore | {ok, pid()} | {error, term()}.
-start_link(ControlPid, InfoHash, PeerId, TorrentId, Options)
+start_link(InfoHash, PeerId, TorrentId, Options)
   when is_binary(PeerId) ->
     gen_server:start_link(?MODULE,
-                          [ControlPid, InfoHash, PeerId, TorrentId, Options],
+                          [InfoHash, PeerId, TorrentId, Options],
                           []).
 
 %% @doc Prod the tracker and tell it we completed to torrent
@@ -92,7 +91,7 @@ completed(Pid) ->
 %%====================================================================
 
 %% @private
-init([ControlPid, InfoHash, PeerId, TorrentId, Options]) ->
+init([InfoHash, PeerId, TorrentId, Options]) ->
     process_flag(trap_exit, true),
     random:seed(os:timestamp()),
     UrlTiers = etorrent_tracker:get_url_tiers(TorrentId),
@@ -104,10 +103,9 @@ init([ControlPid, InfoHash, PeerId, TorrentId, Options]) ->
                                      Options, timer:seconds(60)),
     case first_tracker_id(Url) of
         undefined -> 
-            {stop, normal}; %% trackerless
+            {stop, trackerless};
         _ ->
-            {ok, #state{control_pid = ControlPid,
-                        torrent_id = TorrentId,
+            {ok, #state{torrent_id = TorrentId,
                         url = Url,
                         info_hash = InfoHash,
                         peer_id = PeerId,
