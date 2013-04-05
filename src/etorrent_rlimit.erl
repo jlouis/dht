@@ -4,11 +4,48 @@
 %%
 %% etorrent_peer_send is expected to aquire a slot after a message is sent.
 %% etorrent_peer_recv is expected to aquire a slot after receiving a message.
--export([init/0, send/1, recv/1]).
+-export([init/0,
+         send/1,
+         recv/1,
+         send_rate/0,
+         recv_rate/0,
+         max_send_rate/0,
+         max_recv_rate/0,
+         max_send_rate/1,
+         max_recv_rate/1]).
 
 %% flow name definitions
 -define(DOWNLOAD, etorrent_download_rlimit).
 -define(UPLOAD, etorrent_upload_rlimit).
+
+
+-spec send_rate() -> non_neg_integer().
+send_rate() ->
+    round(rlimit:prev_allowed(?UPLOAD)).
+
+
+-spec recv_rate() -> non_neg_integer().
+recv_rate() ->
+    round(rlimit:prev_allowed(?DOWNLOAD)).
+
+
+-spec max_recv_rate() -> non_neg_integer().
+max_recv_rate() ->
+    round(rlimit:get_limit(?DOWNLOAD)).
+
+-spec max_recv_rate(non_neg_integer()) -> ok.
+max_recv_rate(Value) ->
+    round(rlimit:set_limit(?DOWNLOAD, Value)).
+
+
+-spec max_send_rate() -> non_neg_integer().
+max_send_rate() ->
+    round(rlimit:get_limit(?UPLOAD)).
+
+
+-spec max_send_rate(non_neg_integer()) -> ok.
+max_send_rate(Value) ->
+    round(rlimit:set_limit(?UPLOAD, Value)).
 
 
 %% @doc Initialize the download and upload flows.
