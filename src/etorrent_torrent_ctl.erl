@@ -25,6 +25,7 @@
          switch_mode/2,
          update_tracker/1,
          is_partial/1,
+         get_mode/1, %% for debugging
          set_peer_id/2]).
 
 %% gproc registry entries
@@ -175,6 +176,9 @@ unwanted_pieces(Pid) ->
 
 switch_mode(Pid, Mode) ->
     gen_fsm:send_all_state_event(Pid, {switch_mode, Mode}).
+
+get_mode(Pid) ->
+    gen_fsm:sync_send_all_state_event(Pid, get_mode).
 
 %% @doc Connect to the tracker immediately.
 %% The call is async.
@@ -574,7 +578,7 @@ paused(update_tracker, S) ->
 
 %% @private
 handle_event({switch_mode, Mode}, SN, S=#state{mode=Mode}) ->
-    {next_state, SN, S};
+   {next_state, SN, S};
 
 handle_event({switch_mode, NewMode}, SN, S=#state{mode=OldMode}) ->
     lager:info("Switch mode: ~p => ~p ~n", [OldMode, NewMode]),
@@ -587,9 +591,8 @@ handle_event({switch_mode, NewMode}, SN, S=#state{mode=OldMode}) ->
     'endgame' ->
         etorrent_torrent_sup:start_endgame(Sup, TorrentID)
     end,
-        
+    ok = etorrent_torrent:statechange(TorrentID, [{set_mode, NewMode}]),
     etorrent_download:switch_mode(TorrentID, OldMode, NewMode),
-
     {next_state, SN, S#state{mode=NewMode}};
 
 %% Handle `{set_peer_id, PeerId}'.
@@ -604,11 +607,7 @@ handle_event({set_peer_id, PeerId}, paused, S=#state{id=TorrentID}) ->
 handle_event({set_peer_id, PeerId}, started, S=#state{id=TorrentID}) ->
     S1 = restart_networking(S#state{peer_id=PeerId}),
     ok = etorrent_torrent:statechange(TorrentID, [{set_peer_id, PeerId}]),
-    {next_state, started, S1};
-
-handle_event(Msg, SN, S) ->
-    lager:error("Problem: ~p~n", [Msg]),
-    {next_state, SN, S}.
+    {next_state, started, S1}.
 
 
 
@@ -627,6 +626,9 @@ handle_sync_event(get_unwanted_files, _, StateName, State) ->
 
 handle_sync_event(is_partial, _, StateName, State) ->
     {reply, {ok, is_partial_int(State)}, StateName, State};
+
+handle_sync_event(get_mode, _, StateName, State) ->
+    {reply, {ok, State#state.mode}, StateName, State};
 
 
 handle_sync_event({subscribe, Type, Value}, {_Pid, Ref} = Client, SN, SD) ->
@@ -737,11 +739,7 @@ handle_info({piece, {stored, Index}}, started, State) ->
             ok = etorrent_piecestate:invalid(Index, Progress),
             ok = etorrent_piecestate:unassigned(Index, Peers),
             {next_state, started, State}
-    end;
-
-handle_info(Info, StateName, State) ->
-    lager:error("Unknown handle_info event: ~p", [Info]),
-    {next_state, StateName, State}.
+    end.
 
 
 %% @private
@@ -761,7 +759,7 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 
 %% Read information and calculate a set of metrics.
 registration(S=#state{id=Id, torrent=Torrent, hashes=Hashes,
-                      peer_id=LocalPeerId}, UseIO, FastResumePL) ->
+                      peer_id=LocalPeerId, mode=Mode}, UseIO, FastResumePL) ->
     case UseIO of
         true ->
             %% Read the torrent, check its contents for what we are missing
@@ -806,6 +804,7 @@ registration(S=#state{id=Id, torrent=Torrent, hashes=Hashes,
             {is_private, etorrent_metainfo:is_private(Torrent)},
             {pieces, NumberOfValidPieces},
             {missing, NumberOfMissingPieces},
+            {mode, Mode},
             {state, TState}]),
 
     WishRecordSet = try

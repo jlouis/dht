@@ -159,7 +159,7 @@ progress_spec(TorrentID, Torrent, ValidPieces, Wishes, UnwantedPieces) ->
 endgame_spec(TorrentID) ->
     {endgame,
         {etorrent_endgame, start_link, [TorrentID]},
-        transient, 5000, worker, [etorrent_endgame]}.
+        temporary, 5000, worker, [etorrent_endgame]}.
 
 torrent_control_spec(TorrentID, Torrent, TorrentFile, TorrentIH, PeerID, Options) ->
     {control,

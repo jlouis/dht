@@ -349,9 +349,7 @@ handle_call(Request, _From, State) ->
 %% @private
 handle_cast(rechoke, #state { opt_unchoke_chain = Chain } = S) ->
     rechoke(Chain, S),
-    {noreply, S};
-handle_cast(_Msg, State) ->
-    {noreply, State}.
+    {noreply, S}.
 
 %% @private
 handle_info(round_tick, S) ->
@@ -370,10 +368,7 @@ handle_info({'DOWN', _Ref, process, Pid, _Reason}, S) ->
     NewChain = lists:delete(Pid, S#state.opt_unchoke_chain),
     %% Rechoke the chain if the peer was among the unchoked
     rechoke(NewChain, S),
-    {noreply, S#state { opt_unchoke_chain = NewChain }};
-handle_info(Info, State) ->
-    lager:info([unknown_info_msg, ?MODULE, Info]),
-    {noreply, State}.
+    {noreply, S#state { opt_unchoke_chain = NewChain }}.
 
 %% @private
 terminate(_Reason, _S) ->
@@ -382,6 +377,8 @@ terminate(_Reason, _S) ->
 %% @private
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+%%====================================================================
 
 start_round_timer(S=#state{round_time=Time}) ->
     S#state{round_tref = erlang:send_after(Time, self(), round_tick)}.

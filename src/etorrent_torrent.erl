@@ -21,14 +21,14 @@
          insert/2, all/0, statechange/2,
          num_pieces/1, decrease_not_fetched/1,
          is_seeding/1, seeding/0,
-         lookup/1, is_endgame/1,
+         lookup/1, get_mode/1, is_endgame/1,
          is_private/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, code_change/3,
          handle_info/2, terminate/2]).
 
 %% The type of torrent records.
--type(torrent_state() :: 'leeching' | 'seeding' | 'endgame' | 'paused' | 'unknown').
+-type(torrent_state() :: 'leeching' | 'seeding' | 'paused' | 'unknown').
 -type peer_id() :: etorrent_types:peer_id().
 
 %% A single torrent is represented as the 'torrent' record
@@ -63,12 +63,15 @@
           %% How many people are downloaded
           %% `incomplete' field from the tracker responce.
           leechers = 0 :: non_neg_integer(),
+          connected_seeders = 0 :: non_neg_integer(),
+          connected_leechers = 0 :: non_neg_integer(),
           %% This is a list of recent speeds present so we can plot them
           rate_sparkline = [0.0] :: [float()],
           %% BEP 27: is this torrent private
           is_private :: boolean(),
           %% Rewrite the local peer id for this torrent.
           peer_id :: peer_id() | undefined,
+          mode :: progress | endgame,
           state :: torrent_state()}).
 
 -define(SERVER, ?MODULE).
@@ -182,13 +185,20 @@ decrease_not_fetched(Id) ->
     gen_server:call(?SERVER, {decrease, Id}).
 
 
+-spec get_mode(integer()) -> boolean().
+get_mode(Id) ->
+    case ets:lookup(?TAB, Id) of
+        [T] -> T#torrent.mode;
+        [] -> undefined % The torrent isn't there anymore.
+    end.
+
 %% @doc Returns true if the torrent is in endgame mode
 %% @end
 %% TODO: checkme
 -spec is_endgame(integer()) -> boolean().
 is_endgame(Id) ->
     case ets:lookup(?TAB, Id) of
-        [T] -> T#torrent.state =:= endgame;
+        [T] -> T#torrent.mode =:= endgame;
         [] -> false % The torrent isn't there anymore.
     end.
     
@@ -329,7 +339,9 @@ props_to_record(Id, PL) ->
                pieces = FO(pieces, 'unknown'),
                is_private = FR('is_private'),
                peer_id = FU(peer_id),
-               state = State }.
+               state = State,
+               mode = FO(mode, progress)
+             }.
 
 
 %%--------------------------------------------------------------------
@@ -358,7 +370,10 @@ proplistify(T) ->
      {all_time_uploaded,   T#torrent.all_time_uploaded},
      {leechers,         T#torrent.leechers},
      {seeders,          T#torrent.seeders},
+     {connected_leechers, T#torrent.connected_leechers},
+     {connected_seeders,  T#torrent.connected_seeders},
      {state,            T#torrent.state},
+     {mode,             T#torrent.mode},
      {rate_sparkline,   T#torrent.rate_sparkline}].
 
 
@@ -419,8 +434,8 @@ state_change(Id, List) when is_integer(Id) ->
 do_state_change([unknown | Rem], T) ->
     do_state_change(Rem, T#torrent{state = unknown});
 
-do_state_change([endgame | Rem], T) ->
-    do_state_change(Rem, T#torrent{state = endgame});
+do_state_change([{set_mode, Mode} | Rem], T) ->
+    do_state_change(Rem, T#torrent{mode = Mode});
 
 do_state_change([paused | Rem], T) ->
     do_state_change(Rem, T#torrent{state = paused});
@@ -488,6 +503,22 @@ do_state_change([{set_peer_id, PeerId} | Rem], T) ->
     
 do_state_change([{tracker_report, Seeders, Leechers} | Rem], T) ->
     NewT = T#torrent{seeders = Seeders, leechers = Leechers},
+    do_state_change(Rem, NewT);
+
+do_state_change([inc_connected_leecher | Rem], T=#torrent{connected_leechers=L}) ->
+    NewT = T#torrent{connected_leechers=L+1},
+    do_state_change(Rem, NewT);
+
+do_state_change([dec_connected_leecher | Rem], T=#torrent{connected_leechers=L}) ->
+    NewT = T#torrent{connected_leechers=L-1},
+    do_state_change(Rem, NewT);
+
+do_state_change([inc_connected_seeder | Rem], T=#torrent{connected_seeders=L}) ->
+    NewT = T#torrent{connected_seeders=L+1},
+    do_state_change(Rem, NewT);
+
+do_state_change([dec_connected_seeder | Rem], T=#torrent{connected_seeders=L}) ->
+    NewT = T#torrent{connected_seeders=L-1},
     do_state_change(Rem, NewT);
 
 do_state_change([], T) ->

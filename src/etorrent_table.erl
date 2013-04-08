@@ -242,8 +242,10 @@ all_peers_of_tracker(Url) ->
 %% @end
 -spec statechange_peer(pid(), seeder) -> ok.
 statechange_peer(Pid, seeder) ->
-    [Peer] = ets:lookup(peers, Pid),
-    true = ets:insert(peers, Peer#peer { state = seeding }),
+    TorrentId = ets:lookup_element(peers, Pid, #peer.torrent_id),
+    etorrent_torrent:statechange(TorrentId, [dec_connected_leecher,
+                                             inc_connected_seeder]),
+    true = ets:update_element(peers, Pid, {#peer.state, seeding}),
     ok.
 
 %% @doc Insert a row for the peer
@@ -255,6 +257,10 @@ new_peer(TrackerUrl, IP, Port, TorrentId, Pid, State, IsFast, PeerId)
     Peer = #peer{ pid = Pid, tracker_url_hash = erlang:phash2(TrackerUrl),
                   ip = IP, port = Port, torrent_id = TorrentId, state = State,
                   is_fast = IsFast, peer_id = PeerId},
+    etorrent_torrent:statechange(TorrentId, [case State of
+                seeding  -> inc_connected_seeder;
+                leeching -> inc_connected_leecher
+            end]),
     true = ets:insert(peers, Peer),
     lager:debug("Register new peer ~p.", [Peer]),
     add_monitor(peer, Pid).
@@ -281,10 +287,7 @@ new_torrent(File, IH, Supervisor, Id) when is_integer(Id),
 %% @end
 -spec connected_peer(ipaddr(), portnum(), integer()) -> boolean().
 connected_peer(IP, Port, Id) when is_integer(Id) ->
-    case ets:match(peers, #peer { ip = IP, port = Port, torrent_id = Id, _ = '_'}) of
-    [] -> false;
-    L when is_list(L) -> true
-    end.
+    [] =/= ets:match(peers, #peer { ip = IP, port = Port, torrent_id = Id, _ = '_'}).
 
 
 %% IP and Port are remote ones.
@@ -368,29 +371,27 @@ handle_call({acquire_check_token, Id}, _From, S) ->
             _ ->
                 false
         end,
-    {reply, R, S};
-handle_call(Msg, _From, S) ->
-    lager:error("Unknown handle_call: ~p", [Msg]),
-    {noreply, S}.
+    {reply, R, S}.
 
 %% @private
 handle_cast(Msg, S) ->
-    lager:error("Unknown handle_cast: ~p", [Msg]),
-    {noreply, S}.
+    {stop, Msg, S}.
 
 %% @private
 handle_info({'DOWN', Ref, _, _, _}, S) ->
     {ok, {X, Type}} = dict:find(Ref, S#state.monitoring),
     case Type of
         peer ->
+            [#peer{torrent_id=TorrentId, state=State}] = ets:lookup(peers, X),
+            etorrent_torrent:statechange(TorrentId, [case State of
+                seeding  -> dec_connected_seeder;
+                leeching -> dec_connected_leecher
+            end]),
             true = ets:delete(peers, X);
         {torrent, Id} ->
             true = ets:delete(tracking_map, Id)
     end,
-    {noreply, S#state { monitoring = dict:erase(Ref, S#state.monitoring) }};
-handle_info(Msg, S) ->
-    lager:error("Unknown handle_info call: ~p", [Msg]),
-    {noreply, S}.
+    {noreply, S#state { monitoring = dict:erase(Ref, S#state.monitoring) }}.
 
 %% @private
 code_change(_OldVsn, S, _Extra) ->

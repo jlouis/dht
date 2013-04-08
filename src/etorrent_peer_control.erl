@@ -246,7 +246,6 @@ handle_cast({incoming_msg, Msg}, S) ->
 
 %% Block the remote node (send from etorrent_choker).
 handle_cast(choke, State) ->
-    lager:info("Choked."),
     #state{
         torrent_id=TorrentID, send_pid=SendPid,
         remote=Remote, config=Config} = State,
@@ -281,7 +280,6 @@ handle_cast(choke, State) ->
     end;
 
 handle_cast(unchoke, State) ->
-    lager:info("Unchoked."),
     #state{torrent_id=TorrentID, send_pid=SendPid, remote=Remote,
            reject_after_choke_tref=RejectTRef} = State,
     [timer:cancel(RejectTRef) || RejectTRef =/= undefined],
@@ -326,11 +324,7 @@ handle_cast(interested, State) ->
 %% TODO: this cause death of `etorrent_peer_sup' with reason 
 %%       `reached_max_restart_intensity'.
 handle_cast(stop, S) ->
-    {stop, normal, S};
-
-handle_cast(Msg, State) ->
-    lager:error("Unknown handle_cast: ~p", [Msg]),
-    {noreply, State}.
+    {stop, normal, S}.
 
 
 %% @private
@@ -425,10 +419,6 @@ handle_info({download, Update}, State) ->
             
 handle_info({tcp, _, _}, State) ->
     lager:error("Detected wrong controller for TCP socket"),
-    {noreply, State};
-
-handle_info(Info, State) ->
-    lager:error("Unknown handle_info: ~p", [Info]),
     {noreply, State}.
 
 %% @private

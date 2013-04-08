@@ -63,6 +63,7 @@ handle_call(obtain_peer_slot, {Pid, _Tag}, S) ->
     [{peer_slots, K}] = ets:lookup(etorrent_counters, peer_slots),
     case K >= etorrent_config:max_peers() of
         true ->
+            %% TODO: test me with common tests
             {reply, full, S};
         false ->
             _Ref = erlang:monitor(process, Pid),
@@ -71,22 +72,17 @@ handle_call(obtain_peer_slot, {Pid, _Tag}, S) ->
     end;
 handle_call(slots_left, _From, S) ->
     [{peer_slots, K}] = ets:lookup(etorrent_counters, peer_slots),
-    {reply, {value, etorrent_config:max_peers() - K}, S};
-handle_call(_Request, _From, State) ->
-    Reply = ok,
-    {reply, Reply, State}.
+    {reply, {value, etorrent_config:max_peers() - K}, S}.
 
 %% @private
-handle_cast(_Msg, State) ->
-    {noreply, State}.
+handle_cast(Msg, State) ->
+    {stop, Msg, State}.
 
 %% @private
 handle_info({'DOWN', _Ref, process, _Pid, _Reason}, S) ->
     K = ets:update_counter(etorrent_counters, peer_slots, {2, -1, 0, 0}),
     true = K >= 0, % Assert the state of the counter
-    {noreply, S};
-handle_info(_Info, State) ->
-    {noreply, State}.
+    {noreply, S}.
 
 %% @private
 terminate(_Reason, _State) ->

@@ -40,16 +40,22 @@
 %% @end
 -spec await_servers(torrent_id()) -> tservices().
 await_servers(TorrentID) ->
+    Mode      = etorrent_torrent:get_mode(TorrentID),
     Pending   = etorrent_pending:await_server(TorrentID),
     Progress  = etorrent_progress:await_server(TorrentID),
     Histogram = etorrent_scarcity:await_server(TorrentID),
+    Endgame   = case Mode of
+                    endgame -> etorrent_endgame:await_server(TorrentID);
+                    _       -> undefined
+                end,
     ok = etorrent_pending:register(Pending),
     Handle = #tservices{
-        mode=progress,
+        mode=Mode,
         torrent_id=TorrentID,
         pending=Pending,
         progress=Progress,
-        histogram=Histogram},
+        histogram=Histogram,
+        endgame=Endgame},
     Handle.
 
 

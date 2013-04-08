@@ -110,7 +110,7 @@ handle_call({receiver, Newrecvpid}, _, State) ->
     Assigned = fun({Piece, Offset, Length, Peerpid}) ->
         etorrent_chunkstate:assigned(Piece, Offset, Length, Peerpid, Newrecvpid)
     end,
-    %% TODO: we can use only one messange here.
+    %% TODO: we can use only one message here.
     [Assigned(Request) || Request <- Requests],
     Peers = etorrent_peer_control:lookup_peers(TorrentID),
     [etorrent_peer_control:update_queue(Peer) || Peer <- Peers],
