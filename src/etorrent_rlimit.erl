@@ -35,7 +35,7 @@ max_recv_rate() ->
 
 -spec max_recv_rate(non_neg_integer()) -> ok.
 max_recv_rate(Value) ->
-    round(rlimit:set_limit(?DOWNLOAD, Value)).
+    rlimit:set_limit(?DOWNLOAD, Value).
 
 
 -spec max_send_rate() -> non_neg_integer().
@@ -45,7 +45,7 @@ max_send_rate() ->
 
 -spec max_send_rate(non_neg_integer()) -> ok.
 max_send_rate(Value) ->
-    round(rlimit:set_limit(?UPLOAD, Value)).
+    rlimit:set_limit(?UPLOAD, Value).
 
 
 %% @doc Initialize the download and upload flows.

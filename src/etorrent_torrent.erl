@@ -36,7 +36,7 @@
 -record(torrent,
 	{ %% Unique identifier of torrent, monotonically increasing
           id :: non_neg_integer(),
-          %% How many bytes are there left before we have the full torrent.
+          %% How many bytes are there left before we stop.
           %% Only valid (i.e. stored AND checked) pieces are counted.
           left = unknown :: unknown | non_neg_integer(),
           display_name :: string(),

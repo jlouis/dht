@@ -109,7 +109,10 @@ handle_info({magnet_peer_ctl, PeerPid, {piece, PieceNum, Piece}},
         etorrent_magnet_peer_ctl:request_piece(PeerPid, NextPieceNum);
         true -> no_more_requests
     end,
-    {noreply, State#mctl_state{var=Var2}}.
+    {noreply, State#mctl_state{var=Var2}};
+handle_info(Msg, State) ->
+    lager:warning("Unexpected message ~p.", [Msg]),
+    {noreply, State}.
 
 terminate(_Reason, _State) ->
     ok.

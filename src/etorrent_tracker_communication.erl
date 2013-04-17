@@ -482,8 +482,18 @@ response_ips_v6(BC) ->
 shuffle_tiers(Tiers) ->
     [etorrent_utils:list_shuffle(T) || T <- Tiers].
 
-first_tracker_id([[{TrackerID, _URL}|_]]) -> TrackerID;
-first_tracker_id([_]) -> undefined.
+first_tracker_id([[{TrackerID, _URL}|_]|_]) -> TrackerID;
+first_tracker_id([]) -> undefined.
 
 %%% Test
 %%% ----------------------------------------------------------------------
+
+-ifdef(TEST).
+
+first_tracker_id_test_() ->
+    [?_assertEqual(10,
+                   first_tracker_id([[{10,"http://bt3.rutracker.org/ann?uk=xxxxxxxxxx"}],
+                                     [{11,"http://retracker.local/announce"}]]))
+    ].
+
+-endif.

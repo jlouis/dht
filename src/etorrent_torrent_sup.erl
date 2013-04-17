@@ -100,6 +100,8 @@ stop_networking(Pid) ->
     supervisor:delete_child(Pid, peer_pool_sup),
     supervisor:terminate_child(Pid, tracker_communication),
     supervisor:delete_child(Pid, tracker_communication),
+    supervisor:terminate_child(Pid, dht_tracker),
+    supervisor:delete_child(Pid, dht_tracker),
     ok.
 
 pause(Pid) ->
@@ -183,7 +185,7 @@ peer_pool_spec(TorrentID) ->
         transient, 5000, supervisor, [etorrent_peer_pool]}.
 
 start_child_dht_tracker(Pid, InfoHash, TorrentID) ->
-    Tracker = {{tracker, InfoHash},
+    Tracker = {dht_tracker,
                 {etorrent_dht_tracker, start_link, [InfoHash, TorrentID]},
                 permanent, 5000, worker, dynamic},
     supervisor:start_child(Pid, Tracker).
