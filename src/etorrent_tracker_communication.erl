@@ -1,5 +1,6 @@
 %% @author Jesper Louis Andersen <jesper.louis.andersen@gmail.com>
 %% @doc Handle communication with trackers
+%%
 %% <p>This module handles all communication with a tracker. It will
 %% periodically announce to the tracker for an update. Eventual errors
 %% and new Peers are fed back into the Peer Manager process so they
@@ -26,7 +27,7 @@
 %% an event=paused parameter in every announce while it is a partial seed.
 %%
 %% Implementing event=paused is not save:
-%% https://forum.transmissionbt.com/viewtopic.php?f=4&t=7117
+%% [https://forum.transmissionbt.com/viewtopic.php?f=4&amp;t=7117]
 %% @end
 -module(etorrent_tracker_communication).
 

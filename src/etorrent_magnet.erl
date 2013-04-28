@@ -171,14 +171,14 @@ colton_url() ->
     "tr=udp%3A%2F%2Ftracker.ccc.de%3A80".
 
 parse_url_test_() ->
-    [?_assertEqual(parse_url("magnet:?xt=urn:btih:IXE2K3JMCPUZWTW3YQZZOIB5XD6KZIEQ"),
-                   {398417223648295740807581630131068684170926268560, undefined, []})
-    ,?_assertEqual(parse_url(colton_url()),
-                   {1030803369114085151184244669493103882218552823476,
+    [?_assertEqual({398417223648295740807581630131068684170926268560, undefined, []},
+                   parse_url("magnet:?xt=urn:btih:IXE2K3JMCPUZWTW3YQZZOIB5XD6KZIEQ"))
+    ,?_assertEqual({1030803369114085151184244669493103882218552823476,
                                    "Jonathan Coulton - Discography",
                                    ["udp://tracker.publicbt.com:80",
                                     "udp://tracker.openbittorrent.com:80",
                                     "udp://tracker.istole.it:6969",
-                                    "udp://tracker.ccc.de:80"]})
+                                    "udp://tracker.ccc.de:80"]},
+                   parse_url(colton_url()))
     ].
 -endif.

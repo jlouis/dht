@@ -128,12 +128,12 @@ await_server(TorrentID) ->
     etorrent_utils:await(server_name(TorrentID), ?AWAIT_TIMEOUT).
 
 
+-spec get_mask(torrent_id(), file_id() | [file_id()]) -> pieceset().
 get_mask(TorrentID, FileID) ->
     get_mask(TorrentID, FileID, true).
 
 
 %% @doc Build a mask of the file in the torrent.
--spec get_mask(torrent_id(), file_id() | [file_id()]) -> pieceset().
 get_mask(TorrentID, FileID, IsGreedy)
     when is_integer(FileID), is_boolean(IsGreedy) ->
     DirPid = await_server(TorrentID),

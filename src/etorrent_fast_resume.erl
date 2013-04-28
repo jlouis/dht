@@ -52,7 +52,7 @@ list() ->
     gen_server:call(srv_name(), list).
 
 %% @doc Query for the state of TorrentID, ID.
-%% <p>The function returns the proplist.
+%% <p>The function returns the proplist.</p>
 %% [{state, State},
 %%  {bitfield, Bitfield}, optional
 %%  {uploaded, Uploaded},
