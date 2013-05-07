@@ -73,6 +73,9 @@ announce(Tr, PL) ->
 announce(TrackerAddr, PropList, Timeout) ->
     case catch gen_server:call(?MODULE, {announce, TrackerAddr, PropList},
                                Timeout) of
+	{'EXIT', {noproc, _}} ->
+            lager:error("Announce to ~p failed with reason noproc.", [TrackerAddr]),
+            timeout;
 	{'EXIT', {timeout, _}} ->
 	    gen_server:cast(?MODULE, {announce_cancel, TrackerAddr, PropList}),
         lager:error("UDP-tracker ~p does not respond.", [TrackerAddr]),
