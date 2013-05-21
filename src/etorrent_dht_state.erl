@@ -244,7 +244,7 @@ safe_ping(IP, Port) ->
     etorrent_dht_net:ping(IP, Port).
 
 %
-% unsafe_ping overrides the behaviour of etorrent_net:ping/2 by
+% unsafe_ping overrides the behaviour of etorrent_dht_net:ping/2 by
 % avoiding to issue ping queries to nodes that are unlikely to
 % be reachable. If a node has not been queried before, a safe_ping
 % will always be performed.
@@ -261,6 +261,7 @@ unsafe_ping(IP, Port) ->
                     RandNode = random_node_tag(),
                     DelSpec = [{{'_', RandNode}, [], [true]}],
                     _ = ets:select_delete(unreachable_tab(), DelSpec),
+                    lager:debug("~p:~p is unreachable.", [IP, Port]),
                     ets:insert(unreachable_tab(), {{IP, Port}, RandNode}),
                     pang;
                 NodeID ->
