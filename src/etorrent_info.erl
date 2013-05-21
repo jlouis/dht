@@ -1,5 +1,11 @@
 % @author Uvarov Michail <arcusfelis@gmail.com>
 
+%% uTorrent/3120 forms a torrent with unordered directories:
+%% ["dir1/f1.flac", "dir2/f2.flac", "dir1/f1.log"]
+%% Run for more information:
+%% etorrent_bcoding:parse_file("test/etorrent_eunit_SUITE_data/malena.torrent").
+%%
+%% There can be directory duplicates.
 -module(etorrent_info).
 -behaviour(gen_server).
 
@@ -75,6 +81,7 @@
 
 -record(file_info, {
     id :: file_id(),
+    parent_id :: file_id() | undefined,
     %% Relative name, used in file_sup
     name :: string(),
     %% Label for nodes of cascadae file tree
@@ -85,7 +92,10 @@
     capacity  = 0 :: non_neg_integer(),
     size      = 0 :: non_neg_integer(),
     % byte offset from 0
+    % for splited directories - the lowest position
     position  = 0 :: non_neg_integer(),
+    %% [{Position, Size}]
+    byte_ranges :: [{non_neg_integer(), non_neg_integer()}],
     pieces :: etorrent_pieceset:t(),
     distinct_pieces :: etorrent_pieceset:t()
 }).
@@ -489,9 +499,7 @@ handle_call({file_name, FileID}, _, State) ->
 
 handle_call({minimize_filelist, FileIDs}, _, State) ->
     #state{static_file_info=Arr} = State,
-    RecList = [ array:get(FileID, Arr) || FileID <- FileIDs ],
-    FilteredIDs = [Rec#file_info.id || Rec <- minimize_reclist(RecList)],
-    {reply, {ok, FilteredIDs}, State};
+    {reply, {ok, minimize_reclist(FileIDs, Arr)}, State};
 
 handle_call({tree_children, FileID}, _, State) ->
     #state{static_file_info=Arr} = State,
@@ -560,14 +568,18 @@ collect_static_file_info(Torrent) ->
     %% Add directories as additional nodes.
     [#file_info{size=TLen2}|_] = Rec2 = add_directories(Rec1),
     assert_total_length(TLen, TLen2),
+
+    Rec3 = init_ranges(Rec2),
+    Rec4 = merge_duplicate_directories(Rec3),
     %% Fill `pieces' field.
     %% A mask is a set of pieces which contains the file.
-    Rec3 = fill_pieces(Rec2, PieceLength, TLen),
-    Rec4 = fill_distinct_pieces(Rec3, PieceLength, TLen),
-    Rec5 = fill_ids(Rec4),
-    DirIds = [FileId || #file_info{id=FileId, children=[_|_]} <- Rec5],
-    {array:from_list(Rec5), PieceLength, TLen, DirIds}.
-
+    Rec5 = fill_pieces(Rec4, PieceLength, TLen),
+    Rec6 = fill_distinct_pieces(Rec5, PieceLength, TLen),
+    Rec7 = fill_short_name(Rec6),
+    DirIds = [FileId || #file_info{id=FileId, children=[_|_]} <- Rec7],
+    FileId2RecPL = [{FileId, Rec} || Rec=#file_info{id=FileId} <- Rec7],
+    FileId2RecOD = orddict:from_list(FileId2RecPL),
+    {array:from_orddict(FileId2RecOD), PieceLength, TLen, DirIds}.
 
 %% @private
 flen_to_record([{Name, FLen} | T], From, Acc) ->
@@ -587,7 +599,7 @@ flen_to_record([], TotalLen, Acc) ->
 %% @private
 add_directories(Rec1) ->
     Idx = 1,
-    {Rec2, Children, Idx1, []} = add_directories_(Rec1, Idx, "", [], []),
+    {Rec2, Children, Idx1, []} = add_directories_(Rec1, Idx, 0, "", [], []),
     [Last|_] = Rec2,
     Rec3 = lists:reverse(Rec2),
 
@@ -597,6 +609,7 @@ add_directories(Rec1) ->
     } = Last,
 
     Root = #file_info {
+        id = 0,
         name = "",
         % total size
         size = (LastSize + LastPos),
@@ -606,6 +619,65 @@ add_directories(Rec1) ->
     },
 
     [Root|Rec3].
+
+
+init_ranges(Recs) ->
+    [X#file_info{byte_ranges=[{Pos, Size}]}
+     || X=#file_info{position = Pos, size = Size} <- Recs].
+
+
+merge_duplicate_directories(Rec1) ->
+    Rec2 = lists:keysort(#file_info.name, Rec1),
+    {Rec3, Rewritten} = merge_duplicate_directories_1(Rec2, [], []),
+    Old2NewIdDict = dict:from_list(Rewritten),
+    rewrite_children(Rec3, Old2NewIdDict).
+
+
+rewrite_children(Recs, Old2NewIdDict) ->
+    [X#file_info{
+        children = lists:usort([rewrite_child_id(OldChildId, Old2NewIdDict)
+                                || OldChildId <- Children])}
+     || X=#file_info{children = Children} <- Recs].
+
+rewrite_child_id(OldChildId, Old2NewIdDict) ->
+    case dict:find(OldChildId, Old2NewIdDict) of
+        {ok, NewChildId} -> NewChildId;
+        error -> OldChildId
+    end.
+
+merge_duplicate_directories_1([H1=#file_info{name = N},
+                               H2=#file_info{name = N}|T], Recs, Retwritten) ->
+    #file_info{
+        id = Id1,
+        parent_id = ParentId,
+        size = Size1,
+        position = Pos1,
+        children = Children1,
+        capacity = Capacity1,
+        byte_ranges = Ranges1
+    } = H1,
+    #file_info{
+        id = Id2,
+        parent_id = ParentId,
+        size = Size2,
+        children = Children2,
+        capacity = Capacity2,
+        byte_ranges = Ranges2
+    } = H2,
+    H = #file_info{name = N, 
+        id = Id1,
+        parent_id = ParentId,
+        size = Size1 + Size2,
+        position = Pos1,
+        children = Children1 ++ Children2,
+        capacity = Capacity1 + Capacity2,
+        byte_ranges = Ranges1 ++ Ranges2
+    },
+    merge_duplicate_directories_1([H|T], Recs, [{Id2, Id1}|Retwritten]);
+merge_duplicate_directories_1([H|T], Recs, Rewritten) ->
+    merge_duplicate_directories_1(T, [H|Recs], Rewritten);
+merge_duplicate_directories_1([], Recs, Rewritten) ->
+    {lists:reverse(Recs), Rewritten}.
 
 
 %% "test/t1.txt"
@@ -646,10 +718,10 @@ file_prefix_(S1, S2) ->
 
 
 %% @private
-add_directories_([], Idx, _Cur, Children, Acc) ->
+add_directories_([], Idx, _ParentIdx, _Cur, Children, Acc) ->
     {Acc, lists:reverse(Children), Idx, []};
 
-add_directories_([H|T], Idx, Cur, Children, Acc) ->
+add_directories_([H|T], Idx, ParentIdx, Cur, Children, Acc) ->
     #file_info{ name = Name, position = CurPos } = H,
     Dir = dirname_(Name),
     Action = case Dir of
@@ -664,7 +736,8 @@ add_directories_([H|T], Idx, Cur, Children, Acc) ->
     case Action of
         %% file is in the same directory
         'equal' ->
-            add_directories_(T, Idx+1, Dir, [Idx|Children], [H|Acc]);
+            H1 = H#file_info{id = Idx, parent_id = ParentIdx},
+            add_directories_(T, Idx+1, ParentIdx, Dir, [Idx|Children], [H1|Acc]);
 
         %% file is in child directory
         'prefix' ->
@@ -673,10 +746,12 @@ add_directories_([H|T], Idx, Cur, Children, Acc) ->
             NextDir = file_join_(Cur, Part),
 
             {SubAcc, SubCh, Idx1, SubT} 
-                = add_directories_([H|T], Idx+1, NextDir, [], []),
+                = add_directories_([H|T], Idx+1, Idx, NextDir, [], []),
             [#file_info{ position = LastPos, size = LastSize }|_] = SubAcc,
 
             DirRec = #file_info {
+                id = Idx,
+                parent_id = ParentIdx,
                 name = NextDir,
                 size = (LastPos + LastSize - CurPos),
                 position = CurPos,
@@ -684,7 +759,7 @@ add_directories_([H|T], Idx, Cur, Children, Acc) ->
                 capacity = Idx1 - Idx
             },
             NewAcc = SubAcc ++ [DirRec|Acc],
-            add_directories_(SubT, Idx1, Cur, [Idx|Children], NewAcc);
+            add_directories_(SubT, Idx1, ParentIdx, Cur, [Idx|Children], NewAcc);
         
         %% file is in the other directory
         'other' ->
@@ -694,36 +769,32 @@ add_directories_([H|T], Idx, Cur, Children, Acc) ->
 
 %% @private
 fill_pieces(RecList, PLen, TLen) ->
-    F = fun(#file_info{position = From, size = Size} = Rec) ->
-            Mask = make_mask(From, Size, PLen, TLen),
-            Set = etorrent_pieceset:from_bitstring(Mask),
+    F = fun(#file_info{byte_ranges = Ranges} = Rec) ->
+            %% Be greedy.
+            Sets = [etorrent_pieceset:from_bitstring(
+                        make_mask(From, Size, PLen, TLen, true))
+                    || {From, Size} <- Ranges],
+            Set = etorrent_pieceset:union(Sets),
             Rec#file_info{pieces = Set}
         end,
         
     lists:map(F, RecList).    
 
 fill_distinct_pieces(RecList, PLen, TLen) ->
-    F = fun(#file_info{position = From, size = Size} = Rec) ->
+    F = fun(#file_info{byte_ranges = Ranges} = Rec) ->
             %% Don't be greedy.
-            Mask = make_mask(From, Size, PLen, TLen, false),
-            Set = etorrent_pieceset:from_bitstring(Mask),
+            Sets = [etorrent_pieceset:from_bitstring(
+                        make_mask(From, Size, PLen, TLen, false))
+                    || {From, Size} <- Ranges],
+            Set = etorrent_pieceset:union(Sets),
             Rec#file_info{distinct_pieces = Set}
         end,
         
     lists:map(F, RecList).    
 
-fill_ids(RecList) ->
-    fill_ids_(RecList, 0, []).
-
-fill_ids_([H1=#file_info{name=Name}|T], Id, Acc) ->
-    % set id, prepare name for cascadae
-    H2 = H1#file_info{
-        id = Id,
-        short_name = list_to_binary(filename:basename(Name))
-    },
-    fill_ids_(T, Id+1, [H2|Acc]);
-fill_ids_([], _Id, Acc) ->
-    lists:reverse(Acc).
+fill_short_name(Recs) ->
+    [X#file_info{short_name = list_to_binary(filename:basename(Name))}
+     || X=#file_info{name = Name} <- Recs].
 
 
 make_mask(From, Size, PLen, TLen) ->
@@ -760,10 +831,15 @@ make_mask(From, Size, PLen, TLen, IsGreedy)
     assert_positive(PAfter),
     <<0:PBefore, -1:PIn, 0:PAfter>>.
 
+minimize_reclist(FileIDs, Arr) ->
+    %% TODO: write me
+%   RecList = [ array:get(FileID, Arr) || FileID <- FileIDs ],
+    FileIDs.
 
 %% @private
 %% Warning: It is not optimal.
-minimize_reclist(RecList) ->
+%% Warning: Every record in the list MUST be continuous.
+simple_minimize_reclist(RecList) ->
     RecList1 = lists:usort(fun(X, Y) -> sort_file_key(X) =< sort_file_key(Y) end,
                            RecList),
     minimize_(RecList1, []).
@@ -850,7 +926,7 @@ add_directories_test_() ->
     Children  = el(Rec, #file_info.children),
 
     [Root|Elems] = Rec,
-    MinNames  = el(minimize_reclist(Elems), #file_info.name),
+    MinNames  = el(simple_minimize_reclist(Elems), #file_info.name),
     
     %% {NumberOfFile, Name, Size, Position, ChildNumbers}
     List = [{0, "",             8, 0, [1, 3, 4]}
@@ -1165,6 +1241,46 @@ mask_to_filelist_rec_tiny_file(#file_info{id=Id, pieces=FileMask}, Mask) ->
 
 -ifdef(TEST).
 
+unordered_mask_to_filelist_int_ungreedy_test_() ->
+    FileName = filename:join(code:lib_dir(etorrent_core), 
+                             "test/etorrent_eunit_SUITE_data/malena.torrent"),
+    {ok, Torrent} = etorrent_bcoding:parse_file(FileName),
+    Info = collect_static_file_info(Torrent),
+    TorrentName = "Malena Ernmann 2009 La Voux Du Nord (2CD)",
+    {Arr, _PLen, _TLen, _} = Info,
+    List = lists:keysort(#file_info.size, array:sparse_to_list(Arr)),
+    io:format(user, "Arr: ~p~n", [List]),
+    N2I     = file_name_to_ids(Arr),
+    FileId  = fun(Name) -> dict:fetch(TorrentName ++ "/" ++ Name, N2I) end,
+    Pieces  = fun(Id) -> #file_info{pieces=Ps} = array:get(Id, Arr), Ps end,
+    GetName = fun(Id) -> #file_info{name=N} = array:get(Id, Arr), N end,
+    CD1     = FileId("CD1 PopWorks"),
+    Flac1   = FileId("CD1 PopWorks/Malena Ernman - La Voix Du Nord - PopWorks (CD 1).flac"),
+    Log1    = FileId("CD1 PopWorks/Malena Ernman - La Voix Du Nord - PopWorks (CD 1).log"),
+    Cue1    = FileId("CD1 PopWorks/Malena Ernman - La Voix Du Nord - PopWorks (CD 1).cue"),
+    AU1     = FileId("CD1 PopWorks/Folder.auCDtect.txt"),
+
+    CD2     = FileId("CD2 Arias"),
+    AU2     = FileId("CD2 Arias/Folder.auCDtect.txt"),
+    Flac2   = FileId("CD2 Arias/Malena Ernman - La Voix Du Nord - Arias (CD 2).flac"),
+    Log2    = FileId("CD2 Arias/Malena Ernman - La Voix Du Nord - Arias (CD 2).log"),
+    Cue2    = FileId("CD2 Arias/Malena Ernman - La Voix Du Nord - Arias (CD 2).cue"),
+    AU2     = FileId("CD2 Arias/Folder.auCDtect.txt"),
+    CD2Pieces   = Pieces(CD2),
+    Flac2Pieces  = Pieces(Flac2),
+    Log2Pieces   = Pieces(Log2),
+    Cue2Pieces   = Pieces(Cue2),
+    AU2Pieces    = Pieces(AU2),
+    UnionCD2Pieces = etorrent_pieceset:union([Flac2Pieces, Log2Pieces,
+                                              Cue2Pieces, AU2Pieces]),
+    [{"Tiny files are not wanted, but will be downloaded too.",
+      [?_assertEqual([Log1, Cue1, AU1, CD2],
+                     mask_to_filelist_int(UnionCD2Pieces, Arr, false))
+      ,?_assertEqual([Log1, Cue1, AU1, CD2],
+                     mask_to_filelist_int(CD2Pieces, Arr, false))
+      ]}
+    ].
+
 mask_to_filelist_int_test_() ->
     FileName = filename:join(code:lib_dir(etorrent_core), 
                              "test/etorrent_eunit_SUITE_data/coulton.torrent"),
@@ -1193,8 +1309,6 @@ mask_to_filelist_int_ungreedy_test_() ->
     {ok, Torrent} = etorrent_bcoding:parse_file(FileName),
     Info = collect_static_file_info(Torrent),
     {Arr, _PLen, _TLen, _} = Info,
-%   List = lists:keysort(#file_info.size, array:to_list(Arr)),
-%   io:format(user, "Arr: ~p~n", [List]),
     N2I     = file_name_to_ids(Arr),
     FileId  = fun(Name) -> dict:fetch(Name, N2I) end,
     Pieces  = fun(Id) -> #file_info{pieces=Ps, distinct_pieces=DPs} = 
@@ -1205,18 +1319,19 @@ mask_to_filelist_int_ungreedy_test_() ->
 
     {T01Pieces, T01DisPieces} = Pieces(T01),
     [{"Large file overlaps small files."
-     ,?_assertEqual([FFP, TXT, T01], mask_to_filelist_int(T01Pieces, Arr, true))}
+     ,?_assertEqual(lists:sort([FFP, TXT, T01]),
+                    lists:sort(mask_to_filelist_int(T01Pieces, Arr, true)))}
     ,?_assert(T01Pieces =/= T01DisPieces)
     ,{"Match by distinct pieces."
      ,?_assertEqual([T01], mask_to_filelist_int(T01DisPieces, Arr, false))}
     ,{"Match by distinct pieces. Test for mask_to_filelist_rec_tiny_file."
-     ,?_assertEqual([FFP, TXT, T01],
-                    mask_to_filelist_int(T01Pieces, Arr, false))}
+    ,?_assertEqual(lists:sort([FFP, TXT, T01]),
+                   lists:sort(mask_to_filelist_int(T01Pieces, Arr, false)))}
     ].
 
 file_name_to_ids(Arr) ->
     F = fun(FileId, #file_info{name=Name}, Acc) -> [{Name, FileId}|Acc] end,
-    dict:from_list(array:foldl(F, [], Arr)).
+    dict:from_list(array:sparse_foldl(F, [], Arr)).
 
 -endif.
 
@@ -1259,7 +1374,7 @@ get_distinct_mask(FileID, Arr) ->
     Mask.
 
 recs_to_byte_ranges(Files) ->
-    [{From, Size} || #file_info{position=From, size=Size} <- Files].
+    [Range || #file_info{byte_ranges = Ranges} <- Files, Range <- Ranges].
 
 %% If one file ends in the same piece, as the next starts, than this
 %% piece must be included.
