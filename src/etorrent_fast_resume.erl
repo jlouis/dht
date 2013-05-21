@@ -206,8 +206,12 @@ form_entry(Id, Props) ->
 
     PeerId = proplists:get_value(peer_id, Props),
     State  = proplists:get_value(state, Props),
+    %% Dir is `undefined', if the default directory is used.
+    Dir    = proplists:get_value(directory, Props),
 
-    Basic = case PeerId of undefined -> []; _ -> [{peer_id, PeerId}] end ++
+    MaybeUndefined = [{peer_id, PeerId}
+                     ,{directory, Dir}],
+    Basic = [{K,V} || {K,V} <- MaybeUndefined, V =/= undefined] ++
             [{state, State}
             ,{uploaded, Uploaded}
             ,{downloaded, Downloaded}],

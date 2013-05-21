@@ -115,7 +115,7 @@ start_link(TorrentID, Torrent) ->
 allocate(TorrentID) ->
     DirPid = await_directory(TorrentID),
     {ok, Files}  = get_files(DirPid),
-    Dldir = etorrent_config:download_dir(),
+    Dldir = etorrent_torrent:download_dir(TorrentID),
     lists:foreach(
       fun ({Pth, ISz}) ->
 	      F = filename:join([Dldir, Pth]),
@@ -531,15 +531,14 @@ make_piece_map(Torrent) ->
         array:set(Piece, With, Acc)
     end, array:new({default, []}), MapEntries).
 
+
+-spec make_file_list(Torrent) -> [{FileName, FileSize}] when
+    Torrent :: bcode(),
+    FileName :: file:filename(),
+    FileSize :: non_neg_integer().
+
 make_file_list(Torrent) ->
-    Files = etorrent_metainfo:get_files(Torrent),
-    Name = etorrent_metainfo:get_name(Torrent),
-    case Files of
-	[_] -> Files;
-	[_|_] ->
-	    [{filename:join([Name, Filename]), Size}
-	     || {Filename, Size} <- Files]
-    end.
+    etorrent_metainfo:file_path_len(Torrent).
 
 %%
 %% Calculate the positions where pieces start and continue in the

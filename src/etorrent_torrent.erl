@@ -22,6 +22,7 @@
          num_pieces/1, decrease_not_fetched/1,
          is_seeding/1, seeding/0,
          lookup/1, get_mode/1, is_endgame/1,
+         get_download_dir/1,
          is_private/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, code_change/3,
@@ -30,6 +31,7 @@
 %% The type of torrent records.
 -type(torrent_state() :: 'leeching' | 'seeding' | 'paused' | 'unknown').
 -type peer_id() :: etorrent_types:peer_id().
+-type torrent_id() :: etorrent_types:torrent_id().
 
 %% A single torrent is represented as the 'torrent' record
 %% TODO: How many seeders/leechers are we connected to?
@@ -69,8 +71,10 @@
           rate_sparkline = [0.0] :: [float()],
           %% BEP 27: is this torrent private
           is_private :: boolean(),
-          %% Rewrite the local peer id for this torrent.
+          %% A rewritten local peer id for this torrent.
           peer_id :: peer_id() | undefined,
+          %% A rewritten target directory (download_dir).
+          directory :: file:filename() | undefined,
           mode :: progress | endgame,
           state :: torrent_state()}).
 
@@ -185,12 +189,22 @@ decrease_not_fetched(Id) ->
     gen_server:call(?SERVER, {decrease, Id}).
 
 
--spec get_mode(integer()) -> boolean().
+-spec get_mode(torrent_id()) -> boolean().
 get_mode(Id) ->
     case ets:lookup(?TAB, Id) of
         [T] -> T#torrent.mode;
         [] -> undefined % The torrent isn't there anymore.
     end.
+
+
+-spec get_download_dir(torrent_id()) -> file:filename().
+get_download_dir(Id) ->
+    [T] = ets:lookup(?TAB, Id),
+    case T#torrent.directory of
+        undefined -> etorrent_torrent:download_dir();
+        D -> D
+    end.
+
 
 %% @doc Returns true if the torrent is in endgame mode
 %% @end
@@ -339,6 +353,7 @@ props_to_record(Id, PL) ->
                pieces = FO(pieces, 'unknown'),
                is_private = FR('is_private'),
                peer_id = FU(peer_id),
+               directory = FU(directory),
                state = State,
                mode = FO(mode, progress)
              }.
@@ -355,7 +370,9 @@ all(Pos) ->
 
 proplistify(T) ->
     OptionalPairs =
-    [{peer_id,          T#torrent.peer_id}],
+    [{peer_id,          T#torrent.peer_id},
+     {directory,        T#torrent.directory}],
+
     skip_undefined(OptionalPairs) ++
     [{id,               T#torrent.id},
      {display_name,     T#torrent.display_name},
@@ -499,6 +516,10 @@ do_state_change([{set_wanted, Amount} | Rem], T)
 
 do_state_change([{set_peer_id, PeerId} | Rem], T) ->
     NewT = T#torrent { peer_id = PeerId },
+    do_state_change(Rem, NewT);
+
+do_state_change([{set_directory, Dir} | Rem], T) ->
+    NewT = T#torrent { directory = Dir },
     do_state_change(Rem, NewT);
     
 do_state_change([{tracker_report, Seeders, Leechers} | Rem], T) ->

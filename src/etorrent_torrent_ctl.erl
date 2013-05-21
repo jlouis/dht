@@ -500,7 +500,9 @@ initializing(timeout, #state{id=Id, parent_pid=Sup} = S) ->
                     S1 = registration(S, false, FastResumePL),
                     {next_state, paused, S1};
                 _ ->
-                    S1 = start_io(S),
+                    %% Register with disabled IO before checking.
+                    S1 = registration(S, false, FastResumePL),
+                    S2 = start_io(S1),
                     %% Checking the torrent, using IO, set the `valid' field.
                     S2 = registration(S1, true, FastResumePL),
                     %% Networking will use the `valid' field.
@@ -788,24 +790,27 @@ registration(S=#state{id=Id, torrent=Torrent, hashes=Hashes,
 
     %% Rewritten peer id or `undefined'.
     PeerId = proplists:get_value(peer_id, FastResumePL),
+    %% Rewritten download_dir or `undefined'.
+    Dir    = proplists:get_value(directory, FastResumePL),
+
+    OptFields = [{peer_id, PeerId},
+                 {directory, Dir}],
+    ReqFields = [{display_name, list_to_binary(etorrent_metainfo:get_name(Torrent))},
+                 {uploaded, 0},
+                 {downloaded, 0},
+                 {all_time_uploaded, AU},
+                 {all_time_downloaded, AD},
+                 {left, Left},
+                 {total, etorrent_metainfo:get_length(Torrent)},
+                 {is_private, etorrent_metainfo:is_private(Torrent)},
+                 {pieces, NumberOfValidPieces},
+                 {missing, NumberOfMissingPieces},
+                 {mode, Mode},
+                 {state, TState}],
 
     %% Add a torrent entry for this torrent.
     %% @todo Minimize calculation in `etorrent_torrent' module.
-    ok = etorrent_torrent:insert(
-           Id,
-           case PeerId of undefined -> []; _ -> [{peer_id, PeerId}] end ++
-           [{display_name, list_to_binary(etorrent_metainfo:get_name(Torrent))},
-            {uploaded, 0},
-            {downloaded, 0},
-            {all_time_uploaded, AU},
-            {all_time_downloaded, AD},
-            {left, Left},
-            {total, etorrent_metainfo:get_length(Torrent)},
-            {is_private, etorrent_metainfo:is_private(Torrent)},
-            {pieces, NumberOfValidPieces},
-            {missing, NumberOfMissingPieces},
-            {mode, Mode},
-            {state, TState}]),
+    ok = etorrent_torrent:insert(Id, OptFields ++ ReqFields),
 
     WishRecordSet = try
         validate_wishes(Id, to_records(Wishes), [], ValidPieces)
