@@ -82,12 +82,17 @@
 -record(file_info, {
     id :: file_id(),
     parent_id :: file_id() | undefined,
+    level :: non_neg_integer(),
     %% Relative name, used in file_sup
     name :: string(),
     %% Label for nodes of cascadae file tree
     short_name :: binary(),
     type      = file :: directory | file,
+    %% Sorted.
     children  = [] :: [file_id()],
+    %% Ascenders of this node without root-node.
+    %% The oldest parent is last.
+    parents = [] :: [file_id()],
     % How many files are in this node?
     capacity  = 0 :: non_neg_integer(),
     size      = 0 :: non_neg_integer(),
@@ -499,7 +504,7 @@ handle_call({file_name, FileID}, _, State) ->
 
 handle_call({minimize_filelist, FileIDs}, _, State) ->
     #state{static_file_info=Arr} = State,
-    {reply, {ok, minimize_reclist(FileIDs, Arr)}, State};
+    {reply, {ok, minimize_filelist_priv(FileIDs, Arr)}, State};
 
 handle_call({tree_children, FileID}, _, State) ->
     #state{static_file_info=Arr} = State,
@@ -599,7 +604,7 @@ flen_to_record([], TotalLen, Acc) ->
 %% @private
 add_directories(Rec1) ->
     Idx = 1,
-    {Rec2, Children, Idx1, []} = add_directories_(Rec1, Idx, 0, "", [], []),
+    {Rec2, Children, Idx1, []} = add_directories_(Rec1, Idx, 1, 0, [], "", [], []),
     [Last|_] = Rec2,
     Rec3 = lists:reverse(Rec2),
 
@@ -610,6 +615,7 @@ add_directories(Rec1) ->
 
     Root = #file_info {
         id = 0,
+        level = 0,
         name = "",
         % total size
         size = (LastSize + LastPos),
@@ -630,19 +636,30 @@ merge_duplicate_directories(Rec1) ->
     Rec2 = lists:keysort(#file_info.name, Rec1),
     {Rec3, Rewritten} = merge_duplicate_directories_1(Rec2, [], []),
     Old2NewIdDict = dict:from_list(Rewritten),
-    rewrite_children(Rec3, Old2NewIdDict).
+    rewrite_records(Rec3, Old2NewIdDict).
 
 
-rewrite_children(Recs, Old2NewIdDict) ->
+rewrite_records(Recs, Old2NewIdDict) ->
     [X#file_info{
-        children = lists:usort([rewrite_child_id(OldChildId, Old2NewIdDict)
-                                || OldChildId <- Children])}
-     || X=#file_info{children = Children} <- Recs].
+        parent_id = rewrite_id(ParentId, Old2NewIdDict),
+        children = rewrite_ids(Children, Old2NewIdDict),
+        parents = rewrite_ids(Parents, Old2NewIdDict)}
+     || X=#file_info{
+                parent_id = ParentId,
+                children = Children,
+                parents =Parents} <- Recs].
 
-rewrite_child_id(OldChildId, Old2NewIdDict) ->
-    case dict:find(OldChildId, Old2NewIdDict) of
-        {ok, NewChildId} -> NewChildId;
-        error -> OldChildId
+
+rewrite_ids(OldIds, Old2NewIdDict) ->
+    lists:usort([rewrite_id(OldId, Old2NewIdDict) || OldId <- OldIds]).
+
+rewrite_id(OldId, Old2NewIdDict) ->
+    dict_get_value(OldId, Old2NewIdDict, OldId).
+
+dict_get_value(Key, Dict, DefValue) ->
+    case dict:find(Key, Dict) of
+        {ok, Value} -> Value;
+        error -> DefValue
     end.
 
 merge_duplicate_directories_1([H1=#file_info{name = N},
@@ -650,8 +667,10 @@ merge_duplicate_directories_1([H1=#file_info{name = N},
     #file_info{
         id = Id1,
         parent_id = ParentId,
+        level = Lvl,
         size = Size1,
         position = Pos1,
+        parents = Parents,
         children = Children1,
         capacity = Capacity1,
         byte_ranges = Ranges1
@@ -659,7 +678,9 @@ merge_duplicate_directories_1([H1=#file_info{name = N},
     #file_info{
         id = Id2,
         parent_id = ParentId,
+        level = Lvl,
         size = Size2,
+        parents = Parents,
         children = Children2,
         capacity = Capacity2,
         byte_ranges = Ranges2
@@ -667,8 +688,10 @@ merge_duplicate_directories_1([H1=#file_info{name = N},
     H = #file_info{name = N, 
         id = Id1,
         parent_id = ParentId,
+        level = Lvl,
         size = Size1 + Size2,
         position = Pos1,
+        parents = Parents,
         children = Children1 ++ Children2,
         capacity = Capacity1 + Capacity2,
         byte_ranges = Ranges1 ++ Ranges2
@@ -718,10 +741,10 @@ file_prefix_(S1, S2) ->
 
 
 %% @private
-add_directories_([], Idx, _ParentIdx, _Cur, Children, Acc) ->
+add_directories_([], Idx, _ParentIdx, _Lvl, _Path, _Cur, Children, Acc) ->
     {Acc, lists:reverse(Children), Idx, []};
 
-add_directories_([H|T], Idx, ParentIdx, Cur, Children, Acc) ->
+add_directories_([H|T], Idx, ParentIdx, Lvl, Path, Cur, Children, Acc) ->
     #file_info{ name = Name, position = CurPos } = H,
     Dir = dirname_(Name),
     Action = case Dir of
@@ -736,22 +759,28 @@ add_directories_([H|T], Idx, ParentIdx, Cur, Children, Acc) ->
     case Action of
         %% file is in the same directory
         'equal' ->
-            H1 = H#file_info{id = Idx, parent_id = ParentIdx},
-            add_directories_(T, Idx+1, ParentIdx, Dir, [Idx|Children], [H1|Acc]);
+            H1 = H#file_info{
+                    id = Idx,
+                    level = Lvl,
+                    parent_id = ParentIdx,
+                    parents = Path},
+            add_directories_(T, Idx+1, ParentIdx, Lvl, Path, Dir, [Idx|Children], [H1|Acc]);
 
-        %% file is in child directory
+        %% file is in the child directory
         'prefix' ->
             Sub = Dir -- Cur,
             Part = first_token_(Sub),
             NextDir = file_join_(Cur, Part),
 
             {SubAcc, SubCh, Idx1, SubT} 
-                = add_directories_([H|T], Idx+1, Idx, NextDir, [], []),
+                = add_directories_([H|T], Idx+1, Idx, Lvl+1, [Idx|Path], NextDir, [], []),
             [#file_info{ position = LastPos, size = LastSize }|_] = SubAcc,
 
             DirRec = #file_info {
                 id = Idx,
+                level = Lvl,
                 parent_id = ParentIdx,
+                parents = Path,
                 name = NextDir,
                 size = (LastPos + LastSize - CurPos),
                 position = CurPos,
@@ -759,9 +788,9 @@ add_directories_([H|T], Idx, ParentIdx, Cur, Children, Acc) ->
                 capacity = Idx1 - Idx
             },
             NewAcc = SubAcc ++ [DirRec|Acc],
-            add_directories_(SubT, Idx1, ParentIdx, Cur, [Idx|Children], NewAcc);
+            add_directories_(SubT, Idx1, ParentIdx, Lvl, Path, Cur, [Idx|Children], NewAcc);
         
-        %% file is in the other directory
+        %% file is in an other directory
         'other' ->
             {Acc, lists:reverse(Children), Idx, [H|T]}
     end.
@@ -831,10 +860,70 @@ make_mask(From, Size, PLen, TLen, IsGreedy)
     assert_positive(PAfter),
     <<0:PBefore, -1:PIn, 0:PAfter>>.
 
-minimize_reclist(FileIDs, Arr) ->
-    %% TODO: write me
-%   RecList = [ array:get(FileID, Arr) || FileID <- FileIDs ],
-    FileIDs.
+
+minimize_filelist_priv(FileIDs, Arr) ->
+    case lists:usort(FileIDs) of
+        [] -> []; %% empty
+        [X] -> [X]; %% trivial
+        [0|_] -> [0]; %% all files
+        FileIDs1 -> minimize_filelist_priv_1(FileIDs1, Arr)
+    end.
+
+minimize_filelist_priv_1(FileIDs, Arr) ->
+    FileSet = sets:from_list(FileIDs),
+    RecList = [ array:get(FileID, Arr) || FileID <- FileIDs ],
+    %% RecList without double-inclusion
+    %% (i.e. it contains parents, but not their children).
+    RecList1 = [X || X=#file_info{parents = Parents} <- RecList,
+                %% Filter, if at least one of the parents is listed here too.
+                not lists:any(
+                    fun(ParentId) -> sets:is_element(ParentId, FileSet) end,
+                    Parents)],
+
+    MaxLvl = lists:foldl(fun(#file_info{level=Lvl}, Max) -> max(Lvl, Max) end,
+                         0, RecList1),
+
+    %% `[{0, []}, {1, [#file_info{},...]}, {2, [#file_info{}]}]'
+    RecByLvl = [{Lvl, [Rec || Rec=#file_info{level=RecLvl} <- RecList1,
+                              Lvl =:= RecLvl]}
+                || Lvl <- lists:seq(0, MaxLvl)],
+
+    {MergedAcc, SameAcc} = minimize_filelist_priv_2(RecByLvl, Arr, [], []),
+    FileIDs2 = [FileID || #file_info{id = FileID} <- MergedAcc ++ SameAcc],
+    lists:sort(FileIDs2).
+
+%% This function is not tail recursive.
+%% First element of `RecByLvl' is an element with lowerest level.
+minimize_filelist_priv_2([], _Arr, MergedAcc, SameAcc) ->
+    {MergedAcc, SameAcc};
+minimize_filelist_priv_2([{_Lvl, RecList}|RecByLvl], Arr, MergedAcc, SameAcc) ->
+    %% Pass RecList as MergedAcc on the next level.
+    {MergedAcc1, SameAcc1} = minimize_filelist_priv_2(RecByLvl, Arr,
+                                                      RecList, SameAcc),
+    RecList1 = lists:usort(MergedAcc1),
+    ParentIds = [ ParentId || #file_info{parent_id=ParentId} <- RecList1],
+    ParentId2Children = [{ParentId,
+                          filter_by_parent_id(RecList1, ParentId),
+                          get_children_ids(ParentId, Arr)}
+                         || ParentId <- ParentIds, ParentId =/= undefined],
+    %% If child id sets are equal, than these children are consumed by its parent.
+    MergedIdList = [ParentId || {ParentId, X, X} <- ParentId2Children],
+    MergedIdSet = sets:from_list(MergedIdList),
+    Same = [Rec || Rec=#file_info{parent_id=ParentId} <- RecList1,
+                   not sets:is_element(ParentId, MergedIdSet)],
+    Merged = [array:get(ParentId, Arr) || ParentId <- MergedIdList],
+    {Merged ++ MergedAcc, Same ++ SameAcc1}.
+
+
+get_children_ids(Id, Arr) ->
+    case array:get(Id, Arr) of
+        #file_info{children = Children} -> Children;
+        BadRec -> error({not_a_record, Id, BadRec})
+    end.
+
+filter_by_parent_id(RecList, ParentId) ->
+    [Id || #file_info{id=Id, parent_id=ParentId_1} <- RecList,
+           ParentId =:= ParentId_1].
 
 %% @private
 %% Warning: It is not optimal.
@@ -964,7 +1053,6 @@ add_directories_test() ->
         ,#file_info{position=3, size=2, name=
     "BBC.7.BigToe/Eoin Colfer. Artemis Fowl. The Arctic Incident/artemis2_03.mp3"}
         ]),
-    io:format(user, "Add dirs: ~p~n", [X]),
     ?assertMatch(#file_info{position=0, size=5}, Root).
 
 % H = {file_info,undefined,
@@ -1249,7 +1337,6 @@ unordered_mask_to_filelist_int_ungreedy_test_() ->
     TorrentName = "Malena Ernmann 2009 La Voux Du Nord (2CD)",
     {Arr, _PLen, _TLen, _} = Info,
     List = lists:keysort(#file_info.size, array:sparse_to_list(Arr)),
-    io:format(user, "Arr: ~p~n", [List]),
     N2I     = file_name_to_ids(Arr),
     FileId  = fun(Name) -> dict:fetch(TorrentName ++ "/" ++ Name, N2I) end,
     Pieces  = fun(Id) -> #file_info{pieces=Ps} = array:get(Id, Arr), Ps end,
@@ -1278,6 +1365,14 @@ unordered_mask_to_filelist_int_ungreedy_test_() ->
                      mask_to_filelist_int(UnionCD2Pieces, Arr, false))
       ,?_assertEqual([Log1, Cue1, AU1, CD2],
                      mask_to_filelist_int(CD2Pieces, Arr, false))
+      ,?_assertEqual([CD2],
+                     minimize_filelist_priv([AU2, Flac2, Log2, Cue2], Arr))
+      ,?_assertEqual([CD2],
+                     minimize_filelist_priv([AU2, Flac2, Log2, Cue2, CD2], Arr))
+      ,?_assertEqual([CD2],
+                     minimize_filelist_priv([AU2, Cue2, CD2], Arr))
+      ,?_assertEqual([0],
+                     minimize_filelist_priv([AU2, Flac2, Log2, Cue2, 0], Arr))
       ]}
     ].
 
