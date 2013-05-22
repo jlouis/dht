@@ -115,7 +115,7 @@ start_link(TorrentID, Torrent) ->
 allocate(TorrentID) ->
     DirPid = await_directory(TorrentID),
     {ok, Files}  = get_files(DirPid),
-    Dldir = etorrent_torrent:download_dir(TorrentID),
+    Dldir = etorrent_torrent:get_download_dir(TorrentID),
     lists:foreach(
       fun ({Pth, ISz}) ->
 	      F = filename:join([Dldir, Pth]),

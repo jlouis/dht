@@ -201,7 +201,7 @@ get_mode(Id) ->
 get_download_dir(Id) ->
     [T] = ets:lookup(?TAB, Id),
     case T#torrent.directory of
-        undefined -> etorrent_torrent:download_dir();
+        undefined -> etorrent_config:download_dir();
         D -> D
     end.
 

@@ -49,8 +49,13 @@ start(File) ->
 %% process.
 %% @end
 -spec start(string(), [Option]) -> {ok, TorrentID} | {error, term()} when
-    Option :: {callback, Callback} | paused,
+    Option :: {callback, Callback}
+            | paused
+            | {peer_id, PeerID}
+            | {directory, Dir},
     Callback :: fun (() -> any()),
+    PeerID :: peerid(),
+    Dir :: file:filename(),
     TorrentID :: non_neg_integer().
 start(File, Options) when is_list(File) ->
     gen_server:call(?SERVER, {start, File, Options}, infinity).

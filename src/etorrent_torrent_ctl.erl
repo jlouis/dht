@@ -37,6 +37,7 @@
 -export([init/1, 
          handle_event/3, 
          initializing/2, 
+         waiting/2,
          started/2, 
          paused/2,
          handle_sync_event/4, 
@@ -468,7 +469,7 @@ init([Parent, Id, {Torrent, TorrentFile, TorrentIH}, PeerId, Options]) ->
         id=Id,
         torrent=Torrent,
         info_hash=TorrentIH,
-        peer_id=PeerId,
+        peer_id=proplists:get_value(peer_id, Options, PeerId),
         default_peer_id=PeerId,
         parent_pid=Parent,
         hashes=Hashes,
@@ -479,36 +480,41 @@ init([Parent, Id, {Torrent, TorrentFile, TorrentIH}, PeerId, Options]) ->
 %% @private
 initializing(timeout, #state{id=Id, parent_pid=Sup} = S) ->
     lager:info("Initialize torrent #~p.", [Id]),
+
+    %% Read the torrent, check its contents for what we are missing
+    FastResumePL = etorrent_fast_resume:query_state(Id),
+    [lager:debug("Fast resume entry for #~p is empty.", [Id])
+     || FastResumePL =:= []],
+    TState = proplists:get_value(state, FastResumePL, S#state.state),
+    case TState of
+        paused ->
+            %% Reset a parent supervisor to a default state.
+            %% It is required, if the process was restarted.
+            ok = etorrent_torrent_sup:pause(Sup),
+            etorrent_table:statechange_torrent(Id, stopped),
+            etorrent_event:stopped_torrent(Id),
+            %% Register with disabled IO
+            S1 = registration(S, false, FastResumePL),
+            {next_state, paused, S1};
+        _ ->
+            %% Register with disabled IO before checking.
+            S1 = registration(S, false, FastResumePL),
+            {next_state, waiting, S1, ?CHECK_WAIT_TIME}
+    end.
+
+
+waiting(timeout, #state{id=Id} = S) ->
     case etorrent_table:acquire_check_token(Id) of
         false ->
-            {next_state, initializing, S, ?CHECK_WAIT_TIME};
+            {next_state, waiting, S, ?CHECK_WAIT_TIME};
         true ->
-
-            %% Read the torrent, check its contents for what we are missing
             FastResumePL = etorrent_fast_resume:query_state(Id),
-            [lager:debug("Fast resume entry for #~p is empty.", [Id])
-             || FastResumePL =:= []],
-            TState = proplists:get_value(state, FastResumePL, S#state.state),
-            case TState of
-                paused ->
-                    %% Reset a parent supervisor to a default state.
-                    %% It is required, if the process was restarted.
-                    ok = etorrent_torrent_sup:pause(Sup),
-                    etorrent_table:statechange_torrent(Id, stopped),
-                    etorrent_event:stopped_torrent(Id),
-                    %% Register with disabled IO
-                    S1 = registration(S, false, FastResumePL),
-                    {next_state, paused, S1};
-                _ ->
-                    %% Register with disabled IO before checking.
-                    S1 = registration(S, false, FastResumePL),
-                    S2 = start_io(S1),
-                    %% Checking the torrent, using IO, set the `valid' field.
-                    S2 = registration(S1, true, FastResumePL),
-                    %% Networking will use the `valid' field.
-                    S3 = start_networking(S2),
-                    {next_state, started, S3}
-            end
+            S1 = start_io(S),
+            %% Checking the torrent, using IO, set the `valid' field.
+            S2 = registration(S1, true, FastResumePL),
+            %% Networking will use the `valid' field.
+            S3 = start_networking(S2),
+            {next_state, started, S3}
     end.
 
 
@@ -761,7 +767,8 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 
 %% Read information and calculate a set of metrics.
 registration(S=#state{id=Id, torrent=Torrent, hashes=Hashes,
-                      peer_id=LocalPeerId, mode=Mode}, UseIO, FastResumePL) ->
+                      peer_id=LocalPeerId, mode=Mode, options=Options},
+             UseIO, FastResumePL) ->
     case UseIO of
         true ->
             %% Read the torrent, check its contents for what we are missing
@@ -789,9 +796,11 @@ registration(S=#state{id=Id, torrent=Torrent, hashes=Hashes,
     Wishes = proplists:get_value(wishes, FastResumePL, []),
 
     %% Rewritten peer id or `undefined'.
-    PeerId = proplists:get_value(peer_id, FastResumePL),
+    PeerId = proplists:get_value(peer_id, Options,
+                                 proplists:get_value(peer_id, FastResumePL)),
     %% Rewritten download_dir or `undefined'.
-    Dir    = proplists:get_value(directory, FastResumePL),
+    Dir    = proplists:get_value(directory, Options,
+                                 proplists:get_value(directory, FastResumePL)),
 
     OptFields = [{peer_id, PeerId},
                  {directory, Dir}],
