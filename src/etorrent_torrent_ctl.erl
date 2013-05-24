@@ -494,10 +494,11 @@ initializing(timeout, #state{id=Id} = S) ->
     %% Soft checking
     case FastResumePL of
         [_|_] -> activate_next_state(S3);
-        []    -> {next_state, waiting, S3}
+        []    -> {next_state, waiting, S3, 0}
     end.
 
 activate_next_state(S=#state{id=Id, parent_pid=Sup, next_state=NextState}) ->
+    lager:info("Activate next state ~p.", [NextState]),
     case NextState of
         paused ->
             %% Reset a parent supervisor to a default state.
@@ -525,6 +526,7 @@ waiting(timeout, #state{id=Id} = S) ->
 
 
 activate_checking(S=#state{id=Id, valid=ValidPieces}) ->
+    lager:info("Checking the torrent #~p.", [Id]),
     etorrent_table:statechange_torrent(Id, checking),
     Numpieces = etorrent_pieceset:capacity(ValidPieces),
     %% TODO: Indexes can be generated with `lists:seq/3'.
@@ -533,21 +535,31 @@ activate_checking(S=#state{id=Id, valid=ValidPieces}) ->
     EmptyPieceSet = etorrent_pieceset:new(Numpieces),
     S1 = S#state{indexes_to_check=Indexes,
                  valid=EmptyPieceSet},
-    {next_state, checking, S1, 0}.
+    S2 = start_io(S1),
+    schedule_checking(S2).
+
+schedule_checking(S) ->
+    lager:info("Schedule.", []),
+    gen_fsm:send_event_after(0, check),
+    {next_state, checking, S}.
 
 
-checking(timeout, #state{indexes_to_check=[]} = S) ->
-    %% TODO: what about on-pause-checking?
-    {next_state, started, S};
-checking(timeout, #state{indexes_to_check=[I|Is],
-                         valid=ValidPieces,
-                         id=TorrentID,
-                         hashes=Hashes} = S) ->
+checking(check, #state{indexes_to_check=[],
+                       id=TorrentID} = S) ->
+    lager:info("Checking is completed for the torrent #~p.", [TorrentID]),
+    %% TODO: update state.
+    activate_next_state(S);
+checking(check, #state{indexes_to_check=[I|Is],
+                       valid=ValidPieces,
+                       id=TorrentID,
+                       hashes=Hashes} = S) ->
+    lager:info("Checking #~p.", [I]),
     NewValidPieces = case is_valid_piece(TorrentID, I, Hashes) of
         true  -> etorrent_pieceset:insert(I, ValidPieces);
         false -> ValidPieces
     end,
-    {next_state, checking, S#state{indexes_to_check=Is, valid=NewValidPieces}, 0}.
+    S1 = S#state{indexes_to_check=Is, valid=NewValidPieces},
+    schedule_checking(S1).
 
 
 %% @private
