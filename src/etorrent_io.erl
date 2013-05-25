@@ -396,9 +396,9 @@ schedule_io_operation(Directory, RelPath) ->
                   <<_:160>>) -> {ok, integer()} | wrong_hash.
 check_piece(TorrentID, Pieceindex, Piecehash) ->
     {ok, Piecebin} = etorrent_io:read_piece(TorrentID, Pieceindex),
-    case crypto:sha(Piecebin) == Piecehash of
-        true  -> {ok, byte_size(Piecebin)};
-        false -> wrong_hash
+    case crypto:sha(Piecebin) of
+        Piecehash  -> {ok, byte_size(Piecebin)};
+        _OtherHash -> wrong_hash
     end.
 
 %% ----------------------------------------------------------------------

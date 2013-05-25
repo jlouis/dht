@@ -509,11 +509,9 @@ activate_next_state(S=#state{id=Id, parent_pid=Sup, next_state=NextState}) ->
             {next_state, paused, S};
         started ->
             S1 = start_io(S),
-            %% Checking the torrent, using IO, set the `valid' field.
-            S2 = registration(S1),
             %% Networking will use the `valid' field.
-            S3 = start_networking(S2),
-            {next_state, started, S3}
+            S2 = start_networking(S1),
+            {next_state, started, S2}
     end.
 
 waiting(timeout, #state{id=Id} = S) ->
@@ -532,7 +530,7 @@ activate_checking(S=#state{id=Id, valid=ValidPieces}) ->
     %% TODO: Indexes can be generated with `lists:seq/3'.
     All = etorrent_pieceset:full(Numpieces),
     Indexes = etorrent_pieceset:to_list(All),
-    EmptyPieceSet = etorrent_pieceset:new(Numpieces),
+    EmptyPieceSet = etorrent_pieceset:empty(Numpieces),
     S1 = S#state{indexes_to_check=Indexes,
                  valid=EmptyPieceSet},
     S2 = start_io(S1),
@@ -547,14 +545,23 @@ schedule_checking(S) ->
 checking(check, #state{indexes_to_check=[],
                        id=TorrentID} = S) ->
     lager:info("Checking is completed for the torrent #~p.", [TorrentID]),
+    ValidPieces = S#state.valid,
+    lager:info("Checking summary for #~p: total=~p, valid=~p.",
+               [TorrentID,
+                etorrent_pieceset:capacity(ValidPieces),
+                etorrent_pieceset:size(ValidPieces)]),
+    S1 = registration(S),
     %% TODO: update state.
-    activate_next_state(S);
+    activate_next_state(S1);
 checking(check, #state{indexes_to_check=[I|Is],
                        valid=ValidPieces,
                        id=TorrentID,
                        hashes=Hashes} = S) ->
     lager:info("Checking #~p.", [I]),
-    NewValidPieces = case is_valid_piece(TorrentID, I, Hashes) of
+    IsValid = is_valid_piece(TorrentID, I, Hashes),
+    lager:info("Piece #~p is ~p.",
+               [I, case IsValid of true -> valid; false -> invalid end]),
+    NewValidPieces = case IsValid of
         true  -> etorrent_pieceset:insert(I, ValidPieces);
         false -> ValidPieces
     end,
