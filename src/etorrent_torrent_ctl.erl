@@ -119,7 +119,8 @@
     options,
     directory,
     %% Proplist to add into global ETS, when it will be avaiable.
-    registration_options = []
+    registration_options = [],
+    is_allocated = false :: boolean()
     }).
 
 
@@ -904,12 +905,19 @@ registration(S=#state{}) ->
     S#state{registration_options=[]}.
 
 
-start_io(S=#state{id=Id, torrent=Torrent, parent_pid=Sup}) ->
+start_io(S=#state{id=Id, torrent=Torrent, parent_pid=Sup,
+                  is_allocated=IsAllocated}) ->
     lager:info("Start IO sub-system for #~p.", [Id]),
     etorrent_torrent_sup:start_io_sup(Sup, Id, Torrent),
     etorrent_torrent_sup:start_pending(Sup, Id),
     etorrent_torrent_sup:start_scarcity(Sup, Id, Torrent),
-    S.
+    case IsAllocated of
+        false ->
+            etorrent_io:allocate(Id),
+            S#state{is_allocated=true};
+        true ->
+            S
+    end.
 
 
 %% Run this function only when IO-subsystem is active.
