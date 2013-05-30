@@ -40,6 +40,9 @@
          terminate/2,
          code_change/3]).
 
+%% debugging
+-export([requests/1]).
+
 -type torrent_id() :: etorrent_types:torrent_id().
 
 -record(state, {
@@ -60,6 +63,9 @@ await_server(TorrentID) ->
 server_name(TorrentID) ->
     {etorrent, TorrentID, pending}.
 
+requests(TorrentID) ->
+    Srvpid = await_server(TorrentID),
+    gen_server:call(Srvpid, {chunk, requests}).
 
 %% @doc
 %% @end

@@ -515,6 +515,7 @@ handle_message(not_interested, State) ->
     NewState = State#state{remote=NewRemote},
     {ok, NewState};
 
+%% Handle incoming chunk request from wire.
 handle_message({request, Index, Offset, Length}, State) ->
     #state{torrent_id=TorrentID, remote=Remote, config=Config, send_pid=SendPid} = State,
     Requests = etorrent_peerstate:requests(Remote),

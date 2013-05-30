@@ -39,7 +39,7 @@
 -endif.
 
 %% API
--export([start_link/4, completed/1]).
+-export([start_link/4, completed/1, update_tracker/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -87,7 +87,8 @@ start_link(InfoHash, PeerId, TorrentId, Options)
 completed(Pid) ->
     gen_server:cast(Pid, completed).
 
-
+update_tracker(Pid) ->
+    gen_server:cast(Pid, update_tracker).
 
 %%====================================================================
 
@@ -132,6 +133,9 @@ handle_cast(completed, S) ->
     {noreply, NS};
 handle_cast(Msg, #state { hard_timer = none } = S) ->
     NS = contact_tracker(Msg, S),
+    {noreply, NS};
+handle_cast(update_tracker, #state { hard_timer = none } = S) ->
+    NS = contact_tracker(S),
     {noreply, NS};
 handle_cast(Msg, S) ->
     lager:error("Unknown Msg: ~p", [Msg]),

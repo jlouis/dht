@@ -82,6 +82,7 @@
 -record(file_info, {
     id :: file_id(),
     parent_id :: file_id() | undefined,
+    %% Level of the node, root level is 0.
     level :: non_neg_integer(),
     %% Relative name, used in file_sup
     name :: string(),
@@ -101,7 +102,9 @@
     position  = 0 :: non_neg_integer(),
     %% [{Position, Size}]
     byte_ranges :: [{non_neg_integer(), non_neg_integer()}],
+    %% Pieces, that contains parts of this file.
     pieces :: etorrent_pieceset:t(),
+    %% Pieces, that contains parts of this file only.
     distinct_pieces :: etorrent_pieceset:t()
 }).
 

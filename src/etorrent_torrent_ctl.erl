@@ -464,6 +464,7 @@ search_wish(_El, []) ->
 
 %% @private
 init([Parent, Id, {Torrent, TorrentFile, TorrentIH}, PeerId, Options]) ->
+    gen_fsm:send_event_after(0, initialize),
     register_server(Id),
     etorrent_table:new_torrent(TorrentFile, TorrentIH, Parent, Id),
     HashList = etorrent_metainfo:get_pieces(Torrent),
@@ -478,10 +479,10 @@ init([Parent, Id, {Torrent, TorrentFile, TorrentIH}, PeerId, Options]) ->
         parent_pid=Parent,
         hashes=Hashes,
         options=Options},
-    {ok, initializing, InitState, 0}.
+    {ok, initializing, InitState}.
 
 %% @private
-initializing(timeout, #state{id=Id} = S) ->
+initializing(initialize, #state{id=Id} = S) ->
     lager:info("Initialize torrent #~p.", [Id]),
 
     %% Read the torrent, check its contents for what we are missing
@@ -558,10 +559,11 @@ checking(check, #state{indexes_to_check=[I|Is],
                        valid=ValidPieces,
                        id=TorrentID,
                        hashes=Hashes} = S) ->
-    lager:info("Checking #~p.", [I]),
+    lager:info("Checking piece #~p of #~p.", [I, TorrentID]),
     IsValid = is_valid_piece(TorrentID, I, Hashes),
-    lager:info("Piece #~p is ~p.",
-               [I, case IsValid of true -> valid; false -> invalid end]),
+    lager:info("Piece #~p of ~p is ~p.",
+               [I, TorrentID,
+                case IsValid of true -> valid; false -> invalid end]),
     NewValidPieces = case IsValid of
         true  -> etorrent_pieceset:insert(I, ValidPieces);
         false -> ValidPieces

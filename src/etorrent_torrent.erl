@@ -250,6 +250,7 @@ handle_call({insert, Id, T=#torrent{}, P=#c_pieces{}},  {Pid, _Tag},  S) ->
             NS = S#state { monitoring = dict:store(R, Id, S#state.monitoring) },
             {reply, ok, NS};
         true  ->
+            %% Just replace.
             true = ets:insert(?TAB, T),
             true = ets:insert(etorrent_c_pieces,  P),
             {reply, ok, S}
