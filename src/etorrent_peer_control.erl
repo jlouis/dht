@@ -630,6 +630,9 @@ handle_message({have, Piece}, State) ->
     TmpLocal  = check_local_interest(Piece, Local, SendPid),
     NewRemote = check_remote_seeder(TmpRemote, TmpLocal),
     NewLocal  = poll_local_rqueue(Download, SendPid, NewRemote, TmpLocal),
+    Changed   = etorrent_peerstate:seeder(Remote) =/=
+                etorrent_peerstate:seeder(NewRemote),
+    Changed andalso etorrent_table:statechange_peer(self(), seeder),
     NewState  = State#state{remote=NewRemote, local=NewLocal},
     {ok, NewState};
 
@@ -642,7 +645,6 @@ handle_message(have_none, State) ->
     NewState  = State#state{remote=NewRemote},
     {ok, NewState};
 
-%%IsSeeder andalso etorrent_table:statechange_peer(self(), seeder),
 handle_message(have_all, State) ->
     #state{torrent_id=TorrentID, send_pid=SendPid, download=Download, remote=Remote, local=Local, config=Config} = State,
     etorrent_peerconf:fast(Config) orelse erlang:error(badarg),
@@ -693,6 +695,10 @@ handle_message({extended, 0, Data}, State) ->
     lager:debug("Getting a supported extension list from the peer.", []),
     etorrent_peerconf:extended(Config) orelse erlang:error(badarg),
     {ok, Msg} = etorrent_bcoding:decode(Data),
+    lager:debug("Extended handshake dict: ~p", [Msg]),
+    ClientVersion = proplists:get_value(<<"v">>, Msg),
+    [etorrent_table:statechange_peer(self(), {version, ClientVersion})
+     || is_binary(ClientVersion)],
     Exts2 = etorrent_ext:handle_handshake_respond(Msg, Exts),
     {ok, State#state{extensions=Exts2}};
 

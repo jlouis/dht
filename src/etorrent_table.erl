@@ -71,7 +71,8 @@
         torrent_id :: non_neg_integer() | '_',
         state :: 'seeding' | 'leeching' | '_',
         is_fast :: boolean(),
-        peer_id :: peerid()
+        peer_id :: peerid(),
+        version = <<"">> :: binary()
 }).
 
 -type tracking_map_state()
@@ -246,6 +247,9 @@ statechange_peer(Pid, seeder) ->
     etorrent_torrent:statechange(TorrentId, [dec_connected_leecher,
                                              inc_connected_seeder]),
     true = ets:update_element(peers, Pid, {#peer.state, seeding}),
+    ok;
+statechange_peer(Pid, {version, NewVersion}) ->
+    true = ets:update_element(peers, Pid, {#peer.version, NewVersion}),
     ok.
 
 %% @doc Insert a row for the peer
@@ -411,10 +415,11 @@ proplistify_tmap(#tracking_map { id = Id, filename = FN, supervisor_pid = SPid,
 
 proplistify_peer(#peer {
                      pid = Pid, ip = IP, port = Port,
-                     torrent_id = TorrentId, state = State, is_fast = IsFast
+                     torrent_id = TorrentId, state = State, is_fast = IsFast,
+                     version = ClientVersion
                     }) ->
     Pairs = [{pid, Pid}, {ip, IP}, {port, Port}, {torrent_id, TorrentId},
-             {state, State}, {is_fast, IsFast}],
+             {state, State}, {is_fast, IsFast}, {version, ClientVersion}],
     [proplists:property(K, V) || {K, V} <- Pairs].
 
 add_monitor(Type, Pid) ->
