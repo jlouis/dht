@@ -36,7 +36,8 @@
          interested/1,
          ext_msg/2,
          ext_setup/3,
-         bitfield/2]).
+         bitfield/2,
+         port/2]).
 
 %% gproc registry entries
 -export([register_server/1,
@@ -176,6 +177,9 @@ ext_setup(Pid, Exts, Extra) ->
 %% @end
 ext_msg(Pid, {extended, _Id, _Body}=ExtMsg) ->
     forward_message(Pid, ExtMsg).
+
+port(Pid, PortNum) ->
+    forward_message(Pid, {port, PortNum}).
 
 
 %% @private Send a message to the encoder process.

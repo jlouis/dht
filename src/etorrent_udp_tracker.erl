@@ -97,7 +97,7 @@ cancel(Pid) ->
 %% @private
 -spec cancel_connid(pid(),conn_id()) -> 'ok'.
 cancel_connid(Pid, ConnID) ->
-    gen_server:cast(Pid, {cancel, ConnID}).
+    gen_server:cast(Pid, {cancel_connid, ConnID}).
 
 %% Used internally for the proto_decoder to inject a message to an
 %% event handler process

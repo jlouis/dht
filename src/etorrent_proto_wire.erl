@@ -36,6 +36,9 @@
 -define(EXT_BASIS, 0). % The protocol basis
 -define(EXT_FAST,  4). % The Fast Extension
 -define(EXT_EXTMSG, 1 bsl 20). % The extended message extension
+%% Peers supporting the DHT set the last bit of the 8-byte reserved flags
+%% exchanged in the BitTorrent protocol handshake. 
+-define(EXT_DHT, 1).
 
 %% Packet types
 -define(CHOKE, 0:8).
@@ -270,7 +273,10 @@ negotiate_capabilities(LocalCaps, RemoteCaps) ->
 local_capabilities() ->
     Fast = etorrent_config:fast_extension(),
     Ext  = etorrent_config:extension_protocol(),
-    [extended_messaging || Ext] ++ [fast_extension || Fast].
+    DHT  = etorrent_config:dht(),
+    [extended_messaging || Ext] ++
+    [fast_extension || Fast] ++
+    [dht_support || DHT].
 
 
 %% @doc Return the default contents of the Extended Messaging Protocol (BEP-10)
@@ -382,14 +388,17 @@ receive_header(Socket, InfoHash) ->
 encode_proto_caps(LocalCaps) ->
     Fast = proplists:get_bool(fast_extension, LocalCaps),
     Ext  = proplists:get_bool(extended_messaging, LocalCaps),
+    Dht  = proplists:get_bool(dht_support, LocalCaps),
     ProtoSpec = ?EXT_BASIS
               + if Fast -> ?EXT_FAST;   true -> 0 end
-              + if Ext  -> ?EXT_EXTMSG; true -> 0 end,
+              + if Ext  -> ?EXT_EXTMSG; true -> 0 end
+              + if Dht  -> ?EXT_DHT;    true -> 0 end,
     <<ProtoSpec:64/big>>.
 
 decode_proto_caps(N) ->
     Capabilities = [{?EXT_FAST,  fast_extension},
-                    {?EXT_EXTMSG, extended_messaging}],
+                    {?EXT_EXTMSG, extended_messaging},
+                    {?EXT_DHT, dht_support}],
     Decoded = lists:foldl(
       fun
           ({M, Cap}, Acc) when (M band N) > 0 -> [Cap | Acc];
