@@ -10,6 +10,8 @@
          lookup_server/1,
          await_server/1]).
 
+-export([debug_info/1]).
+
 %% gen_server callbacks
 -export([init/1,
         handle_call/3,
@@ -55,6 +57,9 @@ lookup_server(TorrentID) ->
 await_server(TorrentID) ->
     etorrent_utils:await(server_name(TorrentID)).
 
+debug_info(TorrentID) ->
+    gen_server:call(await_server(TorrentID), debug_info).
+
 
 %% @doc
 %% @end
@@ -87,9 +92,12 @@ handle_call({chunk, {request, _, Peerset, Pid}}, _, State) ->
         assigned=Assigned} = State,
     Request = etorrent_utils:find(
         fun({Index, _, _}=Chunk) ->
+            lager:debug("Chunk ~p", [Chunk]),
             etorrent_pieceset:is_member(Index, Peerset)
             andalso not has_assigned(Chunk, Pid, Assigned)
         end, get_assigned(Assigned)),
+    lager:debug("Task ~p for ~p.", [Request, Pid]),
+    lager:debug("Pending ~p.", [Pending]),
     case Request of
         false ->
             {reply, {ok, assigned}, State};
@@ -104,6 +112,15 @@ handle_call({chunk, requests}, _, State) ->
     #state{assigned=Assigned, fetched=Fetched} = State,
     AllReqs = gb_trees:to_list(Assigned) ++ gb_trees:to_list(Fetched),
     Reply = [{Pid, Chunk} || {Chunk, Pids} <- AllReqs, Pid <- Pids],
+    {reply, Reply, State};
+
+handle_call(debug_info, _, State) ->
+    #state{assigned=Assigned, fetched=Fetched, stored=Stored,
+           pending=Pending} = State,
+    Reply = [{assigned_count, gb_trees:size(Assigned)},
+             {fetched_count, gb_trees:size(Fetched)},
+             {stored_count, gb_trees:size(Stored)},
+             {pending_pid, Pending}],
     {reply, Reply, State}.
 
 
@@ -117,6 +134,7 @@ handle_info({chunk, {assigned, Index, Offset, Length, Pid}}, State) ->
     %% Load a request that was assigned by etorrent_progress
     #state{assigned=Assigned} = State,
     Chunk = {Index, Offset, Length},
+    lager:debug("Chunk ~p was assigned to ~p.", [Chunk, Pid]),
     NewAssigned = add_assigned(Chunk, Pid, Assigned),
     NewState = State#state{assigned=NewAssigned},
     {noreply, NewState};
@@ -127,24 +145,35 @@ handle_info({chunk, {dropped, Index, Offset, Length, Pid}}, State) ->
         fetched=Fetched,
         stored=Stored} = State,
     Chunk = {Index, Offset, Length},
+    lager:debug("Chunk ~p was dropped by ~p.", [Chunk, Pid]),
     Isstored = is_stored(Chunk, Stored),
     Isfetched = Isstored orelse is_fetched(Chunk, Fetched),
     Wasfetched = Isfetched orelse has_fetched(Chunk, Pid, Fetched),
+    Isassigned = is_assigned(Chunk, Assigned),
+    [lager:error("ASSERT: an error in logic.") || Isfetched, Isassigned],
     NewState = if
         Isstored ->
             State;
-        Isfetched and Wasfetched ->
+        Isfetched, Wasfetched ->
+            %% This chunk was fetched by this peer.
             NewFetched = del_fetched(Chunk, Pid, Fetched),
             Stillfetched = is_fetched(Chunk, NewFetched),
-            if  Stillfetched ->
+            if Stillfetched ->
                     State#state{fetched=NewFetched};
-                not Stillfetched  ->
+                true ->
                     NewAssigned = add_assigned(Chunk, Assigned),
                     State#state{assigned=NewAssigned, fetched=NewFetched}
             end;
         Isfetched ->
+            %% This chunk was fetched by another peer.
             State;
+        not Isassigned ->
+            %% This chunk was not assigned yet.
+            lager:warning("Race condition was detected and fixed."),
+            NewAssigned = add_assigned(Chunk, Assigned),
+            State#state{assigned=NewAssigned};
         true ->
+            %% This chunk was assigned, but not fetched.
             NewAssigned = del_assigned(Chunk, Pid, Assigned),
             State#state{assigned=NewAssigned}
     end,
@@ -156,6 +185,7 @@ handle_info({chunk, {fetched, Index, Offset, Length, Pid}}, State) ->
         fetched=Fetched,
         stored=Stored} = State,
     Chunk = {Index, Offset, Length},
+    lager:debug("Chunk ~p was fetched by ~p.", [Chunk, Pid]),
     Isstored = is_stored(Chunk, Stored),
     Isfetched = Isstored orelse is_fetched(Chunk, Fetched),
     Notify = fun(Peer) ->
@@ -180,6 +210,7 @@ handle_info({chunk, {stored, Index, Offset, Length, Pid}}, State) ->
         fetched=Fetched,
         stored=Stored} = State,
     Chunk = {Index, Offset, Length},
+    lager:debug("Chunk ~p was stored by ~p.", [Chunk, Pid]),
     Isstored   = is_stored(Chunk, Stored),
     HasFetched = has_fetched(Chunk, Pid, Fetched),
     Stored2 = if 
@@ -263,6 +294,10 @@ add_stored(Chunk, Stored) ->
 -spec is_stored(chunkspec(), gb_set()) -> boolean().
 is_stored(Chunk, Stored) ->
     gb_sets:is_member(Chunk, Stored).
+
+-spec is_assigned(chunkspec(), gb_set()) -> boolean().
+is_assigned(Chunk, Assigned) ->
+    gb_sets:is_member(Chunk, Assigned).
 
 %% @doc Add a peer to a set of peers that are associated with a chunk
 -spec add_peer(chunkspec(), pid(), gb_tree()) -> gb_tree().
@@ -436,5 +471,24 @@ test_request_list() ->
     Requests = ?chunkstate:requests(testpid()),
     Pid ! die, etorrent_utils:wait(Pid),
     ?assertEqual([{Pid,{0,0,1}}, {Pid,{0,1,1}}], lists:sort(Requests)).
+
+
+assigned_to_noone_test() ->
+    Assigned = gb_trees:empty(),
+    NewAssigned = add_assigned({1,2,3}, Assigned),
+    ?assertEqual({1,2,3},
+                 etorrent_utils:find(fun(_) -> true end,
+                                     get_assigned(NewAssigned))),
+    ok.
+
+dropped_and_reassigned_test() ->
+    Pid = self(),
+    Assigned1 = gb_trees:empty(),
+    Assigned2 = add_assigned({1,2,3}, Pid, Assigned1),
+    Assigned3 = del_assigned({1,2,3}, Pid, Assigned2),
+    ?assertEqual({1,2,3},
+                 etorrent_utils:find(fun(_) -> true end,
+                                     get_assigned(Assigned3))),
+    ok.
 
 -endif.

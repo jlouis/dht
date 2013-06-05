@@ -173,6 +173,7 @@ continue_torrent(Pid) ->
 
 %% @doc Get the set of valid pieces for this torrent
 %% @end
+%% TODO: A call from fast_resume after pause/continue can cause a timeout.
 -spec valid_pieces(pid()) -> {ok, pieceset()}.
 valid_pieces(Pid) ->
     gen_fsm:sync_send_all_state_event(Pid, valid_pieces).
