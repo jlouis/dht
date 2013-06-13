@@ -45,6 +45,7 @@ start_link({Torrent, TorrentFile, TorrentIH}, Local_PeerId, Id, Options) ->
                 {ok, pid()} | {ok, pid(), term()} | {error, term()}.
 start_child_tracker(Pid, <<IntIH:160>> = BinIH,
                     Local_Peer_Id, TorrentId, Options) ->
+    lager:debug("start_child_tracker(Pid=~p, TorrentId=~p)", [Pid, TorrentId]),
     %% BEP 27 Private Torrent spec does not say this explicitly, but
     %% Azureus wiki does mention a bittorrent client that conforms to
     %% BEP 27 should behave like a classic one, i.e. no PEX or DHT.
@@ -52,6 +53,8 @@ start_child_tracker(Pid, <<IntIH:160>> = BinIH,
     IsPrivate = etorrent_torrent:is_private(TorrentId),
     DhtEnabled = etorrent_config:dht(),
     [start_child_dht_tracker(Pid, IntIH, TorrentId)
+     || not IsPrivate, DhtEnabled],
+    [start_child_azdht_tracker(Pid, BinIH, TorrentId)
      || not IsPrivate, DhtEnabled],
     Tracker = {tracker_communication,
                {etorrent_tracker_communication, start_link,
@@ -76,6 +79,7 @@ start_endgame(Pid, TorrentID) ->
     Spec = endgame_spec(TorrentID),
     supervisor:start_child(Pid, Spec).
 
+%% @doc Start it before running trackers.
 start_peer_sup(Pid, TorrentID) ->
     Spec = peer_pool_spec(TorrentID),
     supervisor:start_child(Pid, Spec).
@@ -96,12 +100,14 @@ start_scarcity(Pid, TorrentID, Torrent) ->
 
 
 stop_networking(Pid) ->
-    supervisor:terminate_child(Pid, peer_pool_sup),
-    supervisor:delete_child(Pid, peer_pool_sup),
     supervisor:terminate_child(Pid, tracker_communication),
     supervisor:delete_child(Pid, tracker_communication),
     supervisor:terminate_child(Pid, dht_tracker),
     supervisor:delete_child(Pid, dht_tracker),
+    supervisor:terminate_child(Pid, azdht_tracker),
+    supervisor:delete_child(Pid, azdht_tracker),
+    supervisor:terminate_child(Pid, peer_pool_sup),
+    supervisor:delete_child(Pid, peer_pool_sup),
     ok.
 
 pause(Pid) ->
@@ -189,3 +195,11 @@ start_child_dht_tracker(Pid, InfoHash, TorrentID) ->
                 {etorrent_dht_tracker, start_link, [InfoHash, TorrentID]},
                 permanent, 5000, worker, dynamic},
     supervisor:start_child(Pid, Tracker).
+
+start_child_azdht_tracker(Pid, InfoHash, TorrentID) ->
+    Tracker = {azdht_tracker,
+                {etorrent_azdht_tracker, start_link, [InfoHash, TorrentID]},
+                permanent, 5000, worker, dynamic},
+    Res = supervisor:start_child(Pid, Tracker),
+    lager:debug("start_child_azdht_tracker returns ~p.", [Res]),
+    Res.

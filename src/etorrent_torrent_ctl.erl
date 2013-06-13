@@ -953,6 +953,8 @@ start_networking(S=#state{id=Id, torrent=Torrent, valid=ValidPieces, wishes=Wish
     etorrent_table:statechange_torrent(Id, started),
     etorrent_event:started_torrent(Id),
 
+    etorrent_torrent_sup:start_peer_sup(S#state.parent_pid, Id),
+
     %% Start the tracker
     {ok, TrackerPid} =
         case etorrent_torrent_sup:start_child_tracker(
@@ -968,8 +970,6 @@ start_networking(S=#state{id=Id, torrent=Torrent, valid=ValidPieces, wishes=Wish
             {error, trackerless} ->
                 {ok, undefined}
         end,
-
-    etorrent_torrent_sup:start_peer_sup(S#state.parent_pid, Id),
 
     {ok, Timer} = timer:send_interval(10000, check_completed),
 

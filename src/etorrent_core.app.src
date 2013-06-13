@@ -13,7 +13,8 @@
         cowboy,
         hackney,
         lhttpc,
-        upnp
+        upnp,
+        azdht
       ]},
     {mod, {etorrent_app, []}},
     {env, []}

@@ -117,7 +117,10 @@ handle_call(_Request, _From, State) ->
 
 %% @private
 handle_cast({decode, Packet}, S) ->
-    dispatch(decode(Packet)),
+    try dispatch(decode(Packet))
+    catch error:Reason ->
+        lager:error("Ignore error ~p.", [Reason])
+    end,
     {noreply, S};
 handle_cast(_Msg, State) ->
     {noreply, State}.
@@ -155,7 +158,9 @@ decode(Packet) ->
         scrape ->
             {TID, {scrape_response, decode_scrape(Rest)}};
         error ->
-            {TID, {error_response, binary_to_list(Rest)}}
+            {TID, {error_response, binary_to_list(Rest)}};
+        Ty ->
+            {error, "ETorrent: unknown action type " ++ integer_to_list(Ty) ++ "."}
     end.
 
 dispatch({TransId, Msg}) ->
@@ -184,7 +189,8 @@ decode_action(I) ->
 	?CONNECT -> connect;
 	?ANNOUNCE -> announce;
 	?SCRAPE -> scrape;
-	?ERROR -> error
+	?ERROR -> error;
+    _ -> undefined
     end.
 
 decode_scrape( <<>>) -> [];
