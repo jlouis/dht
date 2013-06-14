@@ -87,8 +87,10 @@ handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
 handle_cast({add_peers, TrackerUrl, IPList}, S) ->
-    lager:debug("Add peers ~p.", [IPList]),
-    NS = start_new_peers(TrackerUrl, IPList, S),
+    %% Drop low ports.
+    IPList1 = [{IP, Port} || {IP, Port} <- IPList, Port > 1024, Port =< 65535],
+    lager:debug("Add peers ~p.", [IPList1]),
+    NS = start_new_peers(TrackerUrl, IPList1, S),
     {noreply, NS};
 handle_cast({enter_bad_peer, IP, Port, PeerId}, S) ->
     case ets:lookup(etorrent_bad_peer, {IP, Port}) of

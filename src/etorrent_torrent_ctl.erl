@@ -545,6 +545,10 @@ schedule_checking(S) ->
     {next_state, checking, S}.
 
 
+checking(continue, S) ->
+    {next_state, S#state{next_state=started}};
+checking(pause, S) ->
+    {next_state, S#state{next_state=paused}};
 checking(check, #state{indexes_to_check=[],
                        id=TorrentID} = S) ->
     lager:info("Checking is completed for the torrent #~p.", [TorrentID]),
