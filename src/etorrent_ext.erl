@@ -118,15 +118,19 @@ filter_supported([{Name, Id}|Xs], [Name|Bnames], [MName|Mnames]) ->
 %% Remote node does not know the extension.
 filter_supported([{RName, _Id}|_]=Xs, [LName|Bnames], [_|Mnames]) 
     when RName > LName ->
-    io:format(user, "Skip local extension: ~p~n", [LName]),
+    lager:debug("Skip local extension: ~p", [LName]),
     filter_supported(Xs, Bnames, Mnames);
 %% Local node does not know the extension.
 filter_supported([{RName, _Id}|Xs], Bnames, Mnames) ->
-    io:format(user, "Skip remote extension: ~p~n", [RName]),
+    lager:debug("Skip remote extension: ~p", [RName]),
     filter_supported(Xs, Bnames, Mnames);
 filter_supported(Xs, [], []) ->
-    [io:format(user, "Skip remote extension: ~p~n", [RName])
+    [lager:debug("Skip remote extension: ~p", [RName])
      || {RName, _Id} <- Xs],
+    [];
+filter_supported([], Xs, _) ->
+    [lager:bebug("Skip local extension: ~p", [LName])
+     || LName <- Xs],
     [].
 
 
@@ -135,7 +139,10 @@ filter_supported_test_() ->
     [?_assertEqual(filter_supported([{<<"x">>,1}, {<<"y">>,2}, {<<"z">>,3}],
                                     [<<"a">>,<<"x">>,<<"y">>],
                                     [xx,yy,zz]),
-                   [{x,{1,xx}},{y,{2,yy}}])
+    ,?_assertEqual(filter_supported([],
+                                    [<<"a">>],
+                                    [xx]),
+                   [])
     ].
 -endif.
 

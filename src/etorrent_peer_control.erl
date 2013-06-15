@@ -730,6 +730,12 @@ handle_ext_message({metadata_request, PieceNum}, State) ->
     %% Send the answer.
     etorrent_peer_send:ext_msg(SendPid, Encoded),
     {ok, State};
+handle_ext_message({pex, PL}, State=#state{torrent_id=TorrentID}) ->
+    lager:debug("Handle PEX-message: ~p", [PL]),
+    Added = proplists:get_value(added, PL),
+    Peers = [{IP, Port} || {IP, Port, _Flags} <- Added],
+    etorrent_peer_mgr:add_peers(TorrentID, Peers),
+    {ok, State};
 handle_ext_message(_, _State) ->
     error(unknown_extended_message).
 

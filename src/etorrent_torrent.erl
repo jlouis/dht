@@ -25,6 +25,8 @@
          get_download_dir/1,
          is_private/1, is_paused/1]).
 
+-export([await_entry/1]).
+
 -export([init/1, handle_call/3, handle_cast/2, code_change/3,
          handle_info/2, terminate/2]).
 
@@ -77,7 +79,8 @@
           directory :: file:filename() | undefined,
           mode :: progress | endgame,
           state :: torrent_state(),
-          is_paused = false :: boolean()}).
+          is_paused = false :: boolean(),
+          is_partial = false:: boolean()}).
 
 -define(SERVER, ?MODULE).
 -define(TAB, ?MODULE).
@@ -163,6 +166,18 @@ lookup(Id) ->
     case ets:lookup(?TAB, Id) of
 	[] -> not_found;
 	[M] -> {value, proplistify(M)}
+    end.
+
+-spec await_entry(Id :: torrent_id()) -> ok.
+await_entry(Id) ->
+    await_entry(Id, 8, 500).
+
+await_entry(_Id, 0, _Timeout) ->
+    {error, not_found};
+await_entry(Id, N, Timeout) when N > 0 ->
+    case ets:member(?TAB, Id) of
+        false -> timer:sleep(Timeout), await_entry(Id, N-1, Timeout);
+        true  -> ok
     end.
 
 %% @doc Returns true if the torrent is a seeding torrent
@@ -360,8 +375,9 @@ props_to_record(Id, PL) ->
 			   all_time_uploaded = FO('all_time_uploaded', 0),
 			   all_time_downloaded = FO('all_time_downloaded', 0),
                pieces = FO(pieces, 'unknown'),
-               is_private = FR('is_private'),
-               is_paused = FO(is_private, false),
+               is_private = FR(is_private),
+               is_paused = FO(is_paused, false),
+               is_partial = FO(is_partial, false),
                peer_id = FU(peer_id),
                directory = FU(directory),
                state = State,
@@ -402,7 +418,8 @@ proplistify(T) ->
      {state,            T#torrent.state},
      {mode,             T#torrent.mode},
      {rate_sparkline,   T#torrent.rate_sparkline},
-     {is_paused,        T#torrent.is_paused}].
+     {is_paused,        T#torrent.is_paused},
+     {is_partial,       T#torrent.wanted =/= T#torrent.total}].
 
 
 %% @doc Run function F on each torrent
@@ -442,15 +459,20 @@ update_sparkline(NR, L) ->
 state_change(Id, List) when is_integer(Id) ->
     case ets:lookup(?TAB, Id) of
         [T] ->
-            NewT = do_state_change(List, T),
-            ets:insert(?TAB, NewT),
+            try
+                NewT = do_state_change(List, T),
+                ets:insert(?TAB, NewT),
 
-            case {T#torrent.state, NewT#torrent.state} of
-                {leeching, seeding} ->
-                    etorrent_event:seeding_torrent(Id),
-                    ok;
-                _ ->
-                    ok
+                case {T#torrent.state, NewT#torrent.state} of
+                    {leeching, seeding} ->
+                        etorrent_event:seeding_torrent(Id),
+                        ok;
+                    _ ->
+                        ok
+                end
+            catch error:Reason ->
+                lager:error("state_change failed with ~p.", [Reason]),
+                {error, failed}
             end;
         []   ->
             %% This is protection against bad torrent ids.
@@ -464,6 +486,9 @@ do_state_change([unknown | Rem], T) ->
 
 do_state_change([{set_mode, Mode} | Rem], T) ->
     do_state_change(Rem, T#torrent{mode = Mode});
+
+do_state_change([{is_paused, X} | Rem], T) when is_boolean(X) ->
+    do_state_change(Rem, T#torrent{is_paused = X});
 
 do_state_change([paused | Rem], T) ->
     do_state_change(Rem, T#torrent{state = paused, is_paused = true});
@@ -489,13 +514,12 @@ do_state_change([{add_upload, Amount} | Rem], T) ->
     do_state_change(Rem, NewT);
 
 do_state_change([{subtract_left, Amount} | Rem], T) ->
-    #torrent{id=Id, state=OldState, left=OldLeft} = T,
+    #torrent{id=Id, state=OldState, left=OldLeft, is_partial=IsPartial} = T,
     Left = OldLeft - Amount,
 
     NewT = case Left of
         0 ->
 	        ControlPid = etorrent_torrent_ctl:lookup_server(Id),
-			{ok, IsPartial} = etorrent_torrent_ctl:is_partial(ControlPid),
 			etorrent_torrent_ctl:completed(ControlPid),
             lager:debug("IsPartial is ~p.", [IsPartial]),
             T#torrent {
@@ -528,9 +552,9 @@ do_state_change([{subtract_left_or_skipped, Amount} | Rem], T) ->
     NewT = T#torrent { left_or_skipped = Left },
     do_state_change(Rem, NewT);
 
-do_state_change([{set_wanted, Amount} | Rem], T)
+do_state_change([{set_wanted, Amount} | Rem], T=#torrent{total=Total})
     when is_integer(Amount), Amount >= 0 ->
-    NewT = T#torrent { wanted = Amount },
+    NewT = T#torrent { wanted = Amount, is_partial=Amount =/= Total },
     do_state_change(Rem, NewT);
 
 do_state_change([{set_peer_id, PeerId} | Rem], T) ->

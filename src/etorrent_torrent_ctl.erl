@@ -114,7 +114,7 @@
     %% the `init' and `initializing' functions.
     %% If the FSM state name is `checking', than this field contains the next
     %% state.
-    next_state = stated :: paused | started,
+    next_state = started :: paused | started,
     indexes_to_check :: list(),
     options,
     directory,
@@ -165,7 +165,7 @@ completed(Pid) ->
 pause_torrent(Pid) ->
     gen_fsm:send_event(Pid, pause).
 
-%% @doc Continue leaching or seeding 
+%% @doc Continue leeching or seeding 
 %% @end
 -spec continue_torrent(pid()) -> ok.
 continue_torrent(Pid) ->
@@ -501,7 +501,7 @@ initializing(initialize, #state{id=Id} = S) ->
     end.
 
 activate_next_state(S=#state{id=Id, parent_pid=Sup, next_state=NextState}) ->
-    lager:info("Activate next state ~p.", [NextState]),
+    lager:info("Activate next state ~p for #~p.", [NextState, Id]),
     case NextState of
         paused ->
             ok = etorrent_torrent:statechange(Id, [paused]),
@@ -514,11 +514,10 @@ activate_next_state(S=#state{id=Id, parent_pid=Sup, next_state=NextState}) ->
         started ->
             ok = etorrent_torrent:statechange(Id, [continue]),
             S1 = start_io(S),
-            S2 = registration(S1), %% TODO: is it needed?
             %% Networking will use the `valid' field.
-            S3 = start_networking(S2),
-            {next_state, started, S3};
-        _ ->
+            S2 = start_networking(S1),
+            {next_state, started, S2};
+        _ when NextState == checking; NextState == waiting ->
             %% This is a state to apply after checking.
             NewNextState = case etorrent_torrent:is_paused(Id) of
                                true -> paused;
@@ -539,7 +538,16 @@ waiting(try_again, #state{id=Id} = S) ->
             {next_state, waiting, S};
         true ->
             activate_checking(S)
-    end.
+    end;
+waiting(continue, S=#state{id=Id}) ->
+    ok = etorrent_torrent:statechange(Id, [{is_paused, false}]),
+    {next_state, waiting, S#state{next_state=started}};
+waiting(pause, S=#state{id=Id}) ->
+    ok = etorrent_torrent:statechange(Id, [{is_paused, true}]),
+    {next_state, waiting, S#state{next_state=paused}};
+waiting(completed, S) ->
+    %% Ignore this unexpected message.
+    {next_state, waiting, S}.
 
 activate_checking(S=#state{id=Id, valid=ValidPieces}) ->
     lager:info("Checking the torrent #~p.", [Id]),
@@ -560,12 +568,6 @@ schedule_checking(S) ->
     {next_state, checking, S}.
 
 
-checking(continue, S) ->
-    %% TODO: update the torrent table.
-    {next_state, S#state{next_state=started}};
-checking(pause, S) ->
-    %% TODO: update the torrent table.
-    {next_state, S#state{next_state=paused}};
 checking(check, #state{indexes_to_check=[],
                        id=TorrentID} = S) ->
     lager:info("Checking is completed for the torrent #~p.", [TorrentID]),
@@ -582,8 +584,9 @@ checking(check, #state{indexes_to_check=[I|Is],
                        id=TorrentID,
                        hashes=Hashes} = S) ->
     {IsValid, PieceSize} = is_valid_piece(TorrentID, I, Hashes),
-    lager:info("Piece #~p of ~p is ~p.",
-               [I, TorrentID,
+    Total = etorrent_pieceset:capacity(ValidPieces),
+    lager:info("Piece #~p of ~p from ~p is ~p.",
+               [I, Total, TorrentID,
                 case IsValid of true -> valid; false -> invalid end]),
     NewValidPieces = case IsValid of
         true  -> etorrent_pieceset:insert(I, ValidPieces);
@@ -592,7 +595,15 @@ checking(check, #state{indexes_to_check=[I|Is],
     [etorrent_torrent:statechange(TorrentID, [{subtract_left, PieceSize}])
      || IsValid],
     S1 = S#state{indexes_to_check=Is, valid=NewValidPieces},
-    schedule_checking(S1).
+    schedule_checking(S1);
+checking(continue, S) ->
+    %% TODO: update the torrent table.
+    {next_state, checking, S#state{next_state=started}};
+checking(pause, S) ->
+    %% TODO: update the torrent table.
+    {next_state, checking, S#state{next_state=paused}};
+checking(completed, S) ->
+    {next_state, checking, S}.
 
 
 %% @private
@@ -728,8 +739,12 @@ handle_sync_event({skip_file, FileID}, _From, SN, SD) ->
         unwanted=Unwanted2,
         unwanted_files=UnwantedFiles2
     },
-    etorrent_progress:set_unwanted(TorrentID, Unwanted2),
-    update_left_metric(TorrentID, Unwanted, Unwanted2, Valid),
+    case is_progress_active(SN) of
+        true ->
+            update_left_metric(TorrentID, Unwanted, Unwanted2, Valid),
+            etorrent_progress:set_unwanted(TorrentID, Unwanted2);
+        false -> ok
+    end,
     {reply, ok, SN, SD1};
 
 handle_sync_event({unskip_file, FileID}, _From, SN, SD) ->
@@ -745,22 +760,24 @@ handle_sync_event({unskip_file, FileID}, _From, SN, SD) ->
         unwanted=Unwanted2,
         unwanted_files=UnwantedFiles2
     },
-    etorrent_progress:set_unwanted(TorrentID, Unwanted2),
-    update_left_metric(TorrentID, Unwanted, Unwanted2, Valid),
+    case is_progress_active(SN) of
+        true ->
+            update_left_metric(TorrentID, Unwanted, Unwanted2, Valid),
+            etorrent_progress:set_unwanted(TorrentID, Unwanted2);
+        false -> ok
+    end,
     {reply, ok, SN, SD1};
 
 handle_sync_event({set_wishes, NewWishes}, _From, SN, 
     SD=#state{id=Id, wishes=OldWishes, valid=ValidPieces}) ->
     Wishes = validate_wishes(Id, NewWishes, OldWishes, ValidPieces),
-    
-    case SN of
-        paused -> skip;
-        _ -> 
+    case is_progress_active(SN) of
+        true -> 
             Masks = wishes_to_masks(Wishes),
             %% Tell to the progress manager about new list of wanted pieces
-            etorrent_progress:set_wishes(Id, Masks)
+            etorrent_progress:set_wishes(Id, Masks);
+        false -> ok
     end,
-
     {reply, {ok, Wishes}, SN, SD#state{wishes=Wishes}}.
 
 
@@ -880,7 +897,7 @@ apply_fast_resume(S=#state{id=Id, torrent=Torrent, hashes=Hashes,
             wishes=WishRecordSet,
             unwanted_files=UnwantedFiles1,
             peer_id=case PeerId of undefined -> LocalPeerId; _ -> PeerId end,
-            next_state=TState,
+            next_state=torrent_state_to_next_state(TState),
             directory=Dir,
             registration_options=NewRegOpts++RegOpts
            }.
@@ -1148,3 +1165,13 @@ add_one_or_many_files(FileID, UnwantedFiles) when is_integer(FileID) ->
 add_one_or_many_files(FileIds, UnwantedFiles) when is_list(FileIds) ->
     FileIds ++ UnwantedFiles.
 
+is_progress_active(SN) when SN == paused; SN == waiting; SN == checking -> false;
+is_progress_active(_) -> true.
+
+
+torrent_state_to_next_state(seeding)  -> started;
+torrent_state_to_next_state(leeching) -> started;
+torrent_state_to_next_state(unknown)  -> waiting;
+torrent_state_to_next_state(waiting)  -> waiting;
+torrent_state_to_next_state(checking) -> checking;
+torrent_state_to_next_state(paused)   -> paused.

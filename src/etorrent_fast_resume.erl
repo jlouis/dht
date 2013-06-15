@@ -19,6 +19,9 @@
          list/0,
          query_state/1]).
 
+%% Debug
+-export([collect_state/1]).
+
 %% Privete API
 -export([srv_name/0,
          update/0]).
@@ -154,12 +157,14 @@ handle_call(update, _, State) ->
     %% TODO - in the ETS implementation the state of all inactive
     %%        torrents was flushed out on each persitance operation.
     #state{table=Table} = State,
-    [begin
+    Res = [begin
          TorrentID = proplists:get_value(id, Props),
          Filename  = proplists:get_value(filename, Props),
          track_torrent(TorrentID, Filename, Table)
      end || Props <- etorrent_table:all_torrents()],
+    SavedCount = length([ok || ok <- Res]),
     dets:sync(Table),
+    lager:info("Fast resume dictionary is saved (~B entries).", [SavedCount]),
     {reply, ok, State}.
 
 
@@ -188,7 +193,19 @@ track_torrent(Id, Filename, Table) ->
             case form_entry(Id, Props) of
                 ignore -> ignore;
                 Entry -> 
-                    dets:insert(Table, {Filename, Entry})
+                    dets:insert(Table, {Filename, Entry}),
+                    ok
+            end
+    end.
+
+collect_state(Id) ->
+    case etorrent_torrent:lookup(Id) of
+        not_found ->
+            [];
+        {value, Props} ->
+            case form_entry(Id, Props) of
+                ignore -> [];
+                Entry -> Entry
             end
     end.
 
@@ -208,6 +225,7 @@ form_entry(Id, Props) ->
     State  = proplists:get_value(state, Props),
     %% Dir is `undefined', if the default directory is used.
     Dir    = proplists:get_value(directory, Props),
+    IsPaused = proplists:get_bool(is_paused, Props),
 
     MaybeUndefined = [{peer_id, PeerId}
                      ,{directory, Dir}],
@@ -217,7 +235,7 @@ form_entry(Id, Props) ->
             ,{downloaded, Downloaded}],
 
         %% not prepared
-    if State =:= unknown, State =:= checking, State =:= waiting ->
+    if State =:= unknown ->
             ignore;
 
         %% downloaded
@@ -234,6 +252,7 @@ form_entry(Id, Props) ->
             [{bitfield, Bitfield}]
          ++ [{unwanted_files, UnwantedFiles} || is_not_empty(UnwantedFiles)]
          ++ [{wishes, Wishes} || is_not_empty(Wishes)]
+         ++ [{is_paused, IsPaused} || IsPaused]
          ++ Basic
     end.
 

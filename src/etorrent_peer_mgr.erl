@@ -61,8 +61,10 @@ add_peers(TorrentId, IPList) ->
     add_peers("no_tracker_url", TorrentId, IPList).
 -spec add_peers(string(), integer(), [{ipaddr(), portnum()}]) -> ok.
 add_peers(TrackerUrl, TorrentId, IPList) ->
+    %% Drop low ports.
     gen_server:cast(?SERVER, {add_peers, TrackerUrl,
-                              [{TorrentId, {IP, Port}} || {IP, Port} <- IPList]}).
+                              [{TorrentId, {IP, Port}} || {IP, Port} <- IPList,
+                               is_allowed_port(Port)]}).
 
 % @doc Returns true if this peer is in the list of baddies
 % @end
@@ -87,10 +89,8 @@ handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
 handle_cast({add_peers, TrackerUrl, IPList}, S) ->
-    %% Drop low ports.
-    IPList1 = [{IP, Port} || {IP, Port} <- IPList, Port > 1024, Port =< 65535],
-    lager:debug("Add peers ~p.", [IPList1]),
-    NS = start_new_peers(TrackerUrl, IPList1, S),
+    lager:debug("Add peers ~p.", [IPList]),
+    NS = start_new_peers(TrackerUrl, IPList, S),
     {noreply, NS};
 handle_cast({enter_bad_peer, IP, Port, PeerId}, S) ->
     case ets:lookup(etorrent_bad_peer, {IP, Port}) of
@@ -213,3 +213,6 @@ spawn_peer(TrackerUrl, LocalPeerId, PL, TorrentId, IP, Port) ->
 	  {error, _Reason} -> ok
       end
    end).
+
+is_allowed_port(Port) when Port > 1024, Port =< 65535 -> true;
+is_allowed_port(Port)                                 -> false.
