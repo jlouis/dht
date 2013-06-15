@@ -32,7 +32,8 @@
 -type ext_list() :: #exts{}.
 
 is_public_only(ut_metadata) -> true;
-is_public_only(_) -> false.
+is_public_only(ut_pex)      -> true;
+is_public_only(_)           -> false.
 
 % ======================================================================
 

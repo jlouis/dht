@@ -23,7 +23,7 @@
          is_seeding/1, seeding/0,
          lookup/1, get_mode/1, is_endgame/1,
          get_download_dir/1,
-         is_private/1]).
+         is_private/1, is_paused/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, code_change/3,
          handle_info/2, terminate/2]).
@@ -76,7 +76,8 @@
           %% A rewritten target directory (download_dir).
           directory :: file:filename() | undefined,
           mode :: progress | endgame,
-          state :: torrent_state()}).
+          state :: torrent_state(),
+          is_paused = false :: boolean()}).
 
 -define(SERVER, ?MODULE).
 -define(TAB, ?MODULE).
@@ -225,6 +226,13 @@ is_private(Id) ->
         [] -> false
     end.
 
+-spec is_paused(integer()) -> boolean().
+is_paused(Id) ->
+    case ets:lookup(?TAB, Id) of
+        [T] -> T#torrent.is_paused;
+        [] -> false
+    end.
+
 %% =======================================================================
 
 %% @private
@@ -353,6 +361,7 @@ props_to_record(Id, PL) ->
 			   all_time_downloaded = FO('all_time_downloaded', 0),
                pieces = FO(pieces, 'unknown'),
                is_private = FR('is_private'),
+               is_paused = FO(is_private, false),
                peer_id = FU(peer_id),
                directory = FU(directory),
                state = State,
@@ -392,7 +401,8 @@ proplistify(T) ->
      {connected_seeders,  T#torrent.connected_seeders},
      {state,            T#torrent.state},
      {mode,             T#torrent.mode},
-     {rate_sparkline,   T#torrent.rate_sparkline}].
+     {rate_sparkline,   T#torrent.rate_sparkline},
+     {is_paused,        T#torrent.is_paused}].
 
 
 %% @doc Run function F on each torrent
@@ -456,11 +466,19 @@ do_state_change([{set_mode, Mode} | Rem], T) ->
     do_state_change(Rem, T#torrent{mode = Mode});
 
 do_state_change([paused | Rem], T) ->
-    do_state_change(Rem, T#torrent{state = paused});
+    do_state_change(Rem, T#torrent{state = paused, is_paused = true});
 
 do_state_change([continue | Rem], T) ->
     NewState = left_to_state(T#torrent.left, T#torrent.left_or_skipped),
-    do_state_change(Rem, T#torrent{state = NewState});
+    do_state_change(Rem, T#torrent{state = NewState, is_paused = false});
+
+do_state_change([checking | Rem], T=#torrent{wanted=Wanted, total=Total}) ->
+    do_state_change(Rem, T#torrent{state = checking,
+                                   left = Wanted,
+                                   left_or_skipped = Total});
+
+do_state_change([waiting | Rem], T) ->
+    do_state_change(Rem, T#torrent{state = waiting});
 
 do_state_change([{add_downloaded, Amount} | Rem], T) ->
     NewT = T#torrent{downloaded = T#torrent.downloaded + Amount},

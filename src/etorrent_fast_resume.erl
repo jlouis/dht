@@ -217,7 +217,7 @@ form_entry(Id, Props) ->
             ,{downloaded, Downloaded}],
 
         %% not prepared
-    if State =:= unknown, State =:= checking ->
+    if State =:= unknown, State =:= checking, State =:= waiting ->
             ignore;
 
         %% downloaded
@@ -231,8 +231,11 @@ form_entry(Id, Props) ->
             Bitfield     = etorrent_pieceset:to_binary(Valid),
             {ok, Wishes} = etorrent_torrent_ctl:get_permanent_wishes(Id),
             {ok, UnwantedFiles} = etorrent_torrent_ctl:get_unwanted_files(Id),
-            [{bitfield, Bitfield}
-            ,{unwanted_files, UnwantedFiles}
-            ,{wishes, Wishes}
-            |Basic]
+            [{bitfield, Bitfield}]
+         ++ [{unwanted_files, UnwantedFiles} || is_not_empty(UnwantedFiles)]
+         ++ [{wishes, Wishes} || is_not_empty(Wishes)]
+         ++ Basic
     end.
+
+is_not_empty([_|_]) -> true;
+is_not_empty([])    -> false.
