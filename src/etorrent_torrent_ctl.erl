@@ -914,8 +914,11 @@ registration(S=#state{}) ->
            torrent=Torrent,
            mode=Mode} = S,
             
+    Total = etorrent_metainfo:get_length(Torrent),
     %% Left is a size of an intersection of invalid and wanted pieces in bytes
-    Left = calculate_amount_left(Id, ValidPieces, UnwantedPieces, Torrent),
+    Left = calculate_amount_left(Id, ValidPieces, UnwantedPieces, Total),
+    Wanted = calculate_amount_wanted(Id, UnwantedPieces, Total),
+    LeftOrSkipped = calculate_amount_left_or_skipped(Id, ValidPieces, Total),
     NumberOfPieces = etorrent_pieceset:capacity(ValidPieces),
     NumberOfValidPieces = etorrent_pieceset:size(ValidPieces),
     NumberOfMissingPieces = NumberOfPieces - NumberOfValidPieces,
@@ -926,8 +929,10 @@ registration(S=#state{}) ->
                  {uploaded, 0},
                  {downloaded, 0},
                  {left, Left},
+                 {left_or_skipped, LeftOrSkipped},
                  {total, etorrent_metainfo:get_length(Torrent)},
                  {is_private, etorrent_metainfo:is_private(Torrent)},
+                 {wanted, Wanted},
                  {pieces, NumberOfValidPieces},
                  {missing, NumberOfMissingPieces},
                  {mode, Mode},
@@ -1024,14 +1029,24 @@ restart_networking(S) ->
 
 %% --------------------------------------------------------------------
 
-calculate_amount_left(TorrentID, Valid, Unwanted, Torrent) ->
-    Total          = etorrent_metainfo:get_length(Torrent),
+calculate_amount_left(TorrentID, Valid, Unwanted, Total) ->
     ValidOrSkipped = etorrent_pieceset:union(Valid, Unwanted),
     Indexes        = etorrent_pieceset:to_list(ValidOrSkipped),
     Sizes = [etorrent_info:piece_size(TorrentID, I) || I <- Indexes],
     Downloaded = lists:sum(Sizes),
     Total - Downloaded.
 
+calculate_amount_left_or_skipped(TorrentID, ValidPieces, Total) ->
+    Indexes = etorrent_pieceset:to_list(ValidPieces),
+    Sizes = [etorrent_info:piece_size(TorrentID, I) || I <- Indexes],
+    Valid = lists:sum(Sizes),
+    Total - Valid.
+
+calculate_amount_wanted(TorrentID, UnwantedPieces, Total) ->
+    Indexes = etorrent_pieceset:to_list(UnwantedPieces),
+    Sizes = [etorrent_info:piece_size(TorrentID, I) || I <- Indexes],
+    Unwanted = lists:sum(Sizes),
+    Total - Unwanted.
     
     
 %% @doc This simple function transforms the stored state of the torrent 

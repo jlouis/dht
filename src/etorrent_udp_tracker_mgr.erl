@@ -176,6 +176,7 @@ handle_cast({announce_cancel, Tracker, PL}, S) ->
         [{_, Pid}] ->
             etorrent_udp_tracker:cancel(Pid),
             {noreply, S}
+        %% FIXME: badmatch [{_,Pid}, {_, Pid}]
     end;
 handle_cast({distribute_connid, Tracker, ConnID}, S) ->
     Pids = ets:lookup(?TAB, {announce, Tracker}),
