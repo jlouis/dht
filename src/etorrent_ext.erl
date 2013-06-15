@@ -129,7 +129,7 @@ filter_supported(Xs, [], []) ->
      || {RName, _Id} <- Xs],
     [];
 filter_supported([], Xs, _) ->
-    [lager:bebug("Skip local extension: ~p", [LName])
+    [lager:debug("Skip local extension: ~p", [LName])
      || LName <- Xs],
     [].
 

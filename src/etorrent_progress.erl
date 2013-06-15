@@ -544,6 +544,7 @@ handle_call({chunk, {request, Numchunks, Peerset, PeerPid}}, _, State) ->
             {NewUnassigned, NewBegun, NewAssigned, UnassignedUpdated} =
             case {Targetstate, Transitionstate} of
                 {unassigned, begun} ->
+                    lager:debug("Begun new piece #~p.", [Index]),
                     { etorrent_pieceset:delete(Index, Unassigned)
                     , etorrent_pieceset:insert(Index, Begun)
                     , Assigned, true};
