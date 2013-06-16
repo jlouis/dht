@@ -12,6 +12,7 @@
          dht_port/0,
          dht_state_file/0,
          dht_bootstrap_nodes/0,
+         azdht/0,
          dotdir/0,
          dirwatch_interval/0,
          download_dir/0,
@@ -148,6 +149,9 @@ logger_file() -> call(logger_fname).
 %% @todo move inside configuration server
 -spec dht() -> boolean().
 dht() -> element(2, (required(dht))([])).
+
+-spec azdht() -> boolean().
+azdht() -> element(2, (required(azdht))([])).
 
 -spec dht_port() -> pos_integer().
 dht_port() -> call(dht_port).

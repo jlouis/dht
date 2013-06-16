@@ -52,10 +52,11 @@ start_child_tracker(Pid, <<IntIH:160>> = BinIH,
     %% So only enable DHT support for non-private torrent here.
     IsPrivate = etorrent_torrent:is_private(TorrentId),
     DhtEnabled = etorrent_config:dht(),
+    AzDhtEnabled = etorrent_config:azdht(),
     [start_child_dht_tracker(Pid, IntIH, TorrentId)
      || not IsPrivate, DhtEnabled],
     [start_child_azdht_tracker(Pid, BinIH, TorrentId)
-     || not IsPrivate, DhtEnabled],
+     || not IsPrivate, AzDhtEnabled],
     Tracker = {tracker_communication,
                {etorrent_tracker_communication, start_link,
                 [BinIH, Local_Peer_Id, TorrentId, Options]},
