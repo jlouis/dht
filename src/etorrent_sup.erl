@@ -89,9 +89,10 @@ init([PeerId]) ->
           [Conf, Tables, Torrent, Tracker,
            Counters, EventManager, PeerMgr,
            FastResume, PeerStates,
-           Choker, Listener,
-           UdpTracking, TorrentPool, Ctl,
-           DirWatcherSup, Console] ++ DHTSup ++ UPNPSup}}.
+           Choker, Listener, UdpTracking] 
+           ++ UPNPSup
+           ++ DHTSup
+           ++ [TorrentPool, Ctl, DirWatcherSup, Console]}}.
 
 
 
