@@ -214,7 +214,9 @@ init([TrackerUrl, LocalPeerID, RemotePeerID,
     Config3  = etorrent_peerconf:extended(Extended, Config2),
     Config   = etorrent_peerconf:fast(Fast, Config3),
     IsPrivate = etorrent_info:is_private(TorrentID),
-    Exts     = etorrent_ext:new([ut_metadata, ut_pex], [private || IsPrivate]),
+    ExtNames = [ut_metadata]
+            ++ [ut_pex || etorrent_config:pex()],
+    Exts     = etorrent_ext:new(ExtNames, [private || IsPrivate]),
 
     MetadataSize = etorrent_info:metadata_size(TorrentID),
 

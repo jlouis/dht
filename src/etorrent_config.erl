@@ -13,6 +13,7 @@
          dht_state_file/0,
          dht_bootstrap_nodes/0,
          azdht/0,
+         pex/0,
          dotdir/0,
          dirwatch_interval/0,
          download_dir/0,
@@ -61,6 +62,8 @@ configuration_specification() ->
      required(port),
      required(logger_dir),
      required(logger_fname),
+     optional(azdht, false),
+     optional(pex, false),
      optional(listen_ip, all),
      optional(dht_port, 6882),
      optional(dht_state, "etorrent_dht_state"),
@@ -151,7 +154,10 @@ logger_file() -> call(logger_fname).
 dht() -> element(2, (required(dht))([])).
 
 -spec azdht() -> boolean().
-azdht() -> element(2, (required(azdht))([])).
+azdht() -> call(azdht).
+
+-spec pex() -> boolean().
+pex() -> call(pex).
 
 -spec dht_port() -> pos_integer().
 dht_port() -> call(dht_port).
