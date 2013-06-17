@@ -494,11 +494,7 @@ initializing(initialize, #state{id=Id} = S) ->
     S1 = apply_fast_resume(S, FastResumePL),
     S2 = apply_options(S1),
     S3 = registration(S2),
-    %% Soft checking
-    case FastResumePL of
-        [_|_] -> activate_next_state(S3);
-        []    -> activate_waiting(S3)
-    end.
+    activate_next_state(S3).
 
 activate_next_state(S=#state{id=Id, parent_pid=Sup, next_state=NextState}) ->
     lager:info("Activate next state ~p for #~p.", [NextState, Id]),
@@ -585,9 +581,9 @@ checking(check, #state{indexes_to_check=[I|Is],
                        hashes=Hashes} = S) ->
     {IsValid, PieceSize} = is_valid_piece(TorrentID, I, Hashes),
     Total = etorrent_pieceset:capacity(ValidPieces),
-    lager:info("Piece #~p of ~p from ~p is ~p.",
-               [I, Total, TorrentID,
-                case IsValid of true -> valid; false -> invalid end]),
+    lager:debug("Piece #~p of ~p from ~p is ~p.",
+                [I, Total, TorrentID,
+                 case IsValid of true -> valid; false -> invalid end]),
     NewValidPieces = case IsValid of
         true  -> etorrent_pieceset:insert(I, ValidPieces);
         false -> ValidPieces
