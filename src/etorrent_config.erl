@@ -154,7 +154,7 @@ logger_file() -> call(logger_fname).
 dht() -> element(2, (required(dht))([])).
 
 -spec azdht() -> boolean().
-azdht() -> call(azdht).
+azdht() -> element(2, (optional(azdht, false))([])).
 
 -spec pex() -> boolean().
 pex() -> call(pex).

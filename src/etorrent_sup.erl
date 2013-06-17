@@ -71,6 +71,11 @@ init([PeerId]) ->
                 permanent, infinity, supervisor, [etorrent_dht_sup]}]
     end,
 
+    case etorrent_config:azdht() of
+        false -> ok;
+        true -> application:start(azdht)
+    end,
+
     %% UPnP subsystemm is optional.
     UPNPSup = case etorrent_config:use_upnp() of
         false -> [];

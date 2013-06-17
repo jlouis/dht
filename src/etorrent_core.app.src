@@ -12,9 +12,9 @@
         ranch,
         cowboy,
         hackney,
-        lhttpc,
+        lhttpc
 %       upnp,
-        azdht
+%       azdht
       ]},
     {mod, {etorrent_app, []}},
     {env, []}
