@@ -29,7 +29,8 @@ init([]) ->
             {"etorrent.udp", udp, etorrent_config:udp_port()},
             {"etorrent.dht", udp, etorrent_config:dht_port()}]
            ++
-           [{"etorrent.azdht", udp, azdht_net:node_port()} || is_azdht_loaded()],
+           [{"etorrent.azdht", udp, azdht_net:node_port()}
+            || etorrent_config:azdht(), is_azdht_loaded()],
 
     UPNPSpecs = [{maps, Maps}],
     UPNPHandler = upnp:child_spec(etorrent_upnp, UPNPSpecs),
