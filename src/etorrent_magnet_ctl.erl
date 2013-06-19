@@ -53,7 +53,7 @@ init([Parent, <<IntIH:160>> = BinIH, LocalPeerID,
             {is_private, false},
             {pieces, 0},
             {missing, 0},
-            {state, leeching}]),
+            {state, fetching}]),
     {ok, #mctl_state{torrent_id=TorrentID, info_hash=BinIH,
                      trackers=UrlTiers, options=Options}}.
 

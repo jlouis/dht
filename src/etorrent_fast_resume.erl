@@ -235,7 +235,7 @@ form_entry(Id, Props) ->
             ,{downloaded, Downloaded}],
 
         %% not prepared
-    if State =:= unknown ->
+    if State =:= unknown, State =:= fetching ->
             ignore;
 
         %% downloaded
