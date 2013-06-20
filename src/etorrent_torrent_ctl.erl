@@ -816,6 +816,32 @@ handle_info({piece, {stored, Index}}, started, State) ->
             ok = etorrent_piecestate:invalid(Index, Progress),
             ok = etorrent_piecestate:unassigned(Index, Peers),
             {next_state, started, State}
+    end;
+
+%% A late messages were delivered. It is because pausing the torrent is
+%% an async operation.
+%%
+%% Do the same as we do in the started state, except do not send updates to
+%% assignor (progress) and to peers.
+handle_info({piece, {stored, Index}}, paused, State) ->
+    #state{id=TorrentID, 
+        hashes=Hashes, 
+        valid=ValidPieces,
+        unwanted=UnwantedPieces} = State,
+    Piecehash = fetch_hash(Index, Hashes),
+    case etorrent_io:check_piece(TorrentID, Index, Piecehash) of
+        {ok, PieceSize} ->
+            StateChange = 
+            case etorrent_pieceset:is_member(Index, UnwantedPieces) of
+                true -> []; %% Already subtracted, when the piece was skipped.
+                false -> [{subtract_left, PieceSize}]
+            end,
+            ok = etorrent_torrent:statechange(TorrentID, 
+                [{subtract_left_or_skipped, PieceSize}|StateChange]),
+            NewValidState = etorrent_pieceset:insert(Index, ValidPieces),
+            {next_state, paused, State#state { valid = NewValidState }};
+        wrong_hash ->
+            {next_state, paused, State}
     end.
 
 
