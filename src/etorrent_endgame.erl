@@ -295,9 +295,9 @@ add_stored(Chunk, Stored) ->
 is_stored(Chunk, Stored) ->
     gb_sets:is_member(Chunk, Stored).
 
--spec is_assigned(chunkspec(), gb_set()) -> boolean().
+-spec is_assigned(chunkspec(), gb_tree()) -> boolean().
 is_assigned(Chunk, Assigned) ->
-    gb_sets:is_member(Chunk, Assigned).
+    gb_trees:is_member(Chunk, Assigned).
 
 %% @doc Add a peer to a set of peers that are associated with a chunk
 -spec add_peer(chunkspec(), pid(), gb_tree()) -> gb_tree().
