@@ -67,7 +67,8 @@
     reject_after_choke_tref :: term(),
     %% Does remote peer support DHT?
     remote_dht :: boolean(),
-    remote_ip :: ipaddr()
+    remote_ip :: ipaddr(),
+    remote_port :: inet:port_number()
     }).
 
 %% Default size for a chunk. All clients use this.
@@ -234,7 +235,8 @@ init([TrackerUrl, LocalPeerID, RemotePeerID,
         config=Config,
         extensions=Exts,
         remote_dht=DHT,
-        remote_ip=IP},
+        remote_ip=IP,
+        remote_port=Port},
     {ok, State}.
 
 %% @private
@@ -711,7 +713,8 @@ handle_message({extended, ExtId, Data}, State) ->
 
 handle_message({port, PortNum}, State=#state{remote_dht=true,
                                              remote_ip=RemoteIP}) ->
-    lager:info("Remote DHT-port is ~p.", [PortNum]),
+    lager:info("Remote DHT-address is ~s.",
+               [etorrent_utils:format_address({RemoteIP, PortNum})]),
     LocalDHT = etorrent_config:dht(),
     [etorrent_dht_state:safe_insert_node(RemoteIP, PortNum) || LocalDHT],
     {ok, State};
@@ -732,10 +735,16 @@ handle_ext_message({metadata_request, PieceNum}, State) ->
     %% Send the answer.
     etorrent_peer_send:ext_msg(SendPid, Encoded),
     {ok, State};
-handle_ext_message({pex, PL}, State=#state{torrent_id=TorrentID}) ->
+handle_ext_message({pex, PL}, State=#state{torrent_id=TorrentID,
+                                           remote_ip=RemoteIP,
+                                           remote_port=RemotePort}) ->
     lager:debug("Handle PEX-message: ~p", [PL]),
     Added = proplists:get_value(added, PL),
     Peers = [{IP, Port} || {IP, Port, _Flags} <- Added],
+    lager:info("Added ~B peers from ~s for ~p.",
+               [length(Peers),
+                etorrent_utils:format_address({RemoteIP, RemotePort}),
+                TorrentID]),
     etorrent_peer_mgr:add_peers(TorrentID, Peers),
     {ok, State};
 handle_ext_message(_, _State) ->

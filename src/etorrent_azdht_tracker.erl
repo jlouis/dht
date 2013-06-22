@@ -136,6 +136,7 @@ handle_info({timeout, _, announce}, State) ->
 
     lager:debug("Adding peers ~p.", [Peers]),
     ok = etorrent_peer_mgr:add_peers(TorrentID, Peers),
+    lager:info("Added ~B peers from azDHT for ~p.", [length(Peers), TorrentID]),
     NewState = State#state{},
     {noreply, NewState}.
 

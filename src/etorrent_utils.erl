@@ -36,6 +36,8 @@
          await/1,
          await/2]).
 
+-export([format_address/1]).
+
 %%====================================================================
 
 %% @doc Graceful split.
@@ -434,3 +436,8 @@ base32_binary_to_integer_test_() ->
     ].
 
 -endif.
+
+format_address({{A,B,C,D}, Port}) ->
+    io_lib:format("~B.~B.~B.~B:~B", [A,B,C,D,Port]);
+format_address(Addr) ->
+    io_lib:format("~p", [Addr]).

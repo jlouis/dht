@@ -28,12 +28,15 @@
                     peerid       :: binary()       | '_',
                     last_offense :: {integer(), integer(), integer()} | '$1' }).
 
+-record(recent_peer, { ip, last_attempt }).
+
 -record(state, { local_peer_id         :: binary(),
                  available_peers = []  :: [{torrent_id(), peerinfo()}] }).
 
 -define(SERVER, ?MODULE).
 -define(DEFAULT_BAD_COUNT, 2).
--define(GRACE_TIME, 900).
+-define(GRACE_TIME, 1800). %% 30 min
+-define(RETRY_TIME, 900).  %% 15 min
 -define(CHECK_TIME, timer:seconds(120)).
 -define(DEFAULT_CONNECT_TIMEOUT, 30 * 1000).
 
@@ -75,13 +78,24 @@ is_bad_peer(IP, Port) ->
         [P] -> P#bad_peer.offenses > ?DEFAULT_BAD_COUNT
     end.
 
+is_recent_peer(IP, _Port) ->
+    ets:member(etorrent_recent_peer, IP).
+
+enter_recent_peer(IP) ->
+    Peer = #recent_peer{ip = IP,
+                        last_attempt = os:timestamp()},
+    ets:insert(etorrent_recent_peer, Peer).
+
+
 %% ====================================================================
 
 init([LocalPeerId]) ->
     random:seed(os:timestamp()), %% Seed RNG
     erlang:send_after(?CHECK_TIME, self(), cleanup_table),
-    _Tid = ets:new(etorrent_bad_peer, [protected, named_table,
-                                       {keypos, #bad_peer.ipport}]),
+    ets:new(etorrent_bad_peer, [protected, named_table,
+                                {keypos, #bad_peer.ipport}]),
+    ets:new(etorrent_recent_peer, [public, named_table,
+                                   {keypos, #recent_peer.ip}]),
     {ok, #state{ local_peer_id = LocalPeerId }}.
 
 handle_call(_Request, _From, State) ->
@@ -111,11 +125,18 @@ handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info(cleanup_table, S) ->
-    Bound = etorrent_utils:now_subtract_seconds(os:timestamp(), ?GRACE_TIME),
+    Now = os:timestamp(),
+    Bound = etorrent_utils:now_subtract_seconds(Now, ?GRACE_TIME),
     _N = ets:select_delete(etorrent_bad_peer,
                            [{#bad_peer { last_offense = '$1', _='_'},
                              [{'<','$1',{Bound}}],
                              [true]}]),
+    RetryBound = etorrent_utils:now_subtract_seconds(Now, ?RETRY_TIME),
+    ets:select_delete(etorrent_recent_peer,
+                           [{#recent_peer { last_attempt = '$1', _='_'},
+                             [{'<','$1',{RetryBound}}],
+                             [true]}]),
+
     gen_server:cast(?SERVER, {add_peers, []}),
     erlang:send_after(?CHECK_TIME, self(), cleanup_table),
     {noreply, S};
@@ -133,20 +154,16 @@ code_change(_OldVsn, State, _Extra) ->
 start_new_peers(TrackerUrl, IPList, State) ->
     %% Update the PeerList with the new incoming peers
     PeerList = etorrent_utils:list_shuffle(
-		 clean_list(IPList ++ State#state.available_peers)),
+		 lists:usort(IPList ++ State#state.available_peers)),
     PeerId   = State#state.local_peer_id,
     {value, SlotsLeft} = etorrent_counters:slots_left(),
     Remaining = fill_peers(TrackerUrl, SlotsLeft, PeerId, PeerList),
     State#state{available_peers = Remaining}.
 
-clean_list([]) -> [];
-clean_list([H | T]) ->
-    [H | clean_list(T -- [H])].
-
 fill_peers(_TrackerUrl, 0, _PeerId, Rem) -> Rem;
 fill_peers(_TrackerUrl, _K, _PeerId, []) -> [];
 fill_peers(TrackerUrl, K, PeerId, [{TorrentId, {IP, Port}} | R]) ->
-    case is_bad_peer(IP, Port) of
+    case is_bad_peer(IP, Port) orelse is_recent_peer(IP, Port) of
        true -> fill_peers(TrackerUrl, K, PeerId, R);
        false -> guard_spawn_peer(TrackerUrl, K, PeerId, TorrentId, IP, Port, R)
     end.
@@ -174,6 +191,7 @@ try_spawn_peer(TrackerUrl, K, PeerId, PL, TorrentId, IP, Port, R) ->
 
 spawn_peer(TrackerUrl, LocalPeerId, PL, TorrentId, IP, Port) ->
     proc_lib:spawn(fun () ->
+      enter_recent_peer(IP),
       {value, PL2} = etorrent_torrent:lookup(TorrentId),
       %% Get the rewritten peer id (if defined).
       LocalPeerId2 = proplists:get_value(peer_id, PL2, LocalPeerId),
@@ -215,4 +233,4 @@ spawn_peer(TrackerUrl, LocalPeerId, PL, TorrentId, IP, Port) ->
    end).
 
 is_allowed_port(Port) when Port > 1024, Port =< 65535 -> true;
-is_allowed_port(Port)                                 -> false.
+is_allowed_port(_)                                    -> false.
