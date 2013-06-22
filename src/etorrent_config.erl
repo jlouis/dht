@@ -68,7 +68,8 @@ configuration_specification() ->
      optional(dht_port, 6882),
      optional(dht_state, "etorrent_dht_state"),
      optional(dht_bootstrap_nodes, ["router.utorrent.com:6881",
-                                    "router.bittorrent.com:6881"]),
+                                    "router.bittorrent.com:6881",
+                                    "dht.transmissionbt.com:6881"]),
      optional(log_settings, []),
      optional(extension_protocol, true),
      optional(fast_extension, true)].

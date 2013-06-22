@@ -20,6 +20,7 @@
          is_empty/1,
          is_full/1,
          insert/2,
+         insert_new/2,
          delete/2,
          intersection/2,
          difference/2,
@@ -225,6 +226,10 @@ insert(PieceIndex, Pieceset) ->
             Updated = <<Low/bitstring, 1:1, High/bitstring>>,
             Pieceset#pieceset{elements=Updated}
     end.
+
+insert_new(PieceIndex, Pieceset) ->
+    is_member(PieceIndex, Pieceset) andalso error(already_exists),
+    insert(PieceIndex, Pieceset).
 
 %% @doc
 %% Delete a piece from a pice set. If the index is negative

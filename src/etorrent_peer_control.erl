@@ -637,6 +637,8 @@ handle_message({have, Piece}, State) ->
     Changed   = etorrent_peerstate:seeder(Remote) =/=
                 etorrent_peerstate:seeder(NewRemote),
     Changed andalso etorrent_table:statechange_peer(self(), seeder),
+    Progress = etorrent_pieceset:progress(Pieceset),
+    etorrent_table:statechange_peer(self(), {progress, Progress}),
     NewState  = State#state{remote=NewRemote, local=NewLocal},
     {ok, NewState};
 
@@ -646,6 +648,7 @@ handle_message(have_none, State) ->
     NewRemote = etorrent_peerstate:hasnone(Remote),
     Pieceset  = etorrent_peerstate:pieces(NewRemote),
     ok        = etorrent_scarcity:add_peer(TorrentID, Pieceset),
+    etorrent_table:statechange_peer(self(), {progress, 0.0}),
     NewState  = State#state{remote=NewRemote},
     {ok, NewState};
 
@@ -658,6 +661,8 @@ handle_message(have_all, State) ->
     TmpLocal  = check_local_interest(Pieceset, Local, SendPid),
     NewRemote = check_remote_seeder(TmpRemote, TmpLocal),
     NewLocal  = poll_local_rqueue(Download, SendPid, NewRemote, TmpLocal),
+    etorrent_table:statechange_peer(self(), seeder),
+    etorrent_table:statechange_peer(self(), {progress, 1.0}),
     NewState  = State#state{remote=NewRemote, local=NewLocal},
     {ok, NewState};
 
@@ -669,6 +674,9 @@ handle_message({bitfield, Bitfield}, State) ->
     TmpLocal  = check_local_interest(Pieceset, Local, SendPid),
     NewRemote = check_remote_seeder(TmpRemote, TmpLocal),
     NewLocal  = poll_local_rqueue(Download, SendPid, NewRemote, TmpLocal),
+    Progress = etorrent_pieceset:progress(Pieceset),
+    Progress == 100 andalso etorrent_table:statechange_peer(self(), seeder),
+    etorrent_table:statechange_peer(self(), {progress, Progress}),
     NewState  = State#state{remote=NewRemote, local=NewLocal},
     {ok, NewState};
 
