@@ -155,8 +155,12 @@ init(Args) ->
     lager:debug("Starting DHT tracker for ~p (~p).", [TorrentID, InfoHash]),
     true = gproc:reg(poller_key(), TorrentID),
     register_server(TorrentID),
-    _ = gen_server:cast(self(), init_nodes),
-    _ = self() ! {timeout, undefined, announce},
+    %% Fetch a node-list for 30 seconds and announce for 10 seconds after it.
+    %% It will decrease load during starting.
+    T1 = random:uniform(30000),
+    T2 = random:uniform(10000),
+    erlang:send_after(T1, self(), init_nodes),
+    erlang:send_after(T1+T2, self(), {timeout, undefined, announce}),
     InitState = #state{
         infohash=InfoHash,
         torrent_id=TorrentID,
@@ -170,20 +174,20 @@ handle_cast(init_timer, State) ->
     #state{interval=Interval} = State,
     TRef = erlang:start_timer(Interval, self(), announce),
     NewState = State#state{timer_ref=TRef},
-    {noreply, NewState};
+    {noreply, NewState}.
 %
 % Initialize a small table of node table with the nodes that
 % are the closest to the info-hash of this torrent. The routing
 % table cannot be used because it keeps a list of the nodes that
 % are close to the id of this node.
 %
-handle_cast(init_nodes, State) ->
+handle_info(init_nodes, State) ->
     #state{infohash=InfoHash} = State,
 %   Nodes = ?dht_net:find_node_search(TorrentID),
     Nodes = ?dht_net:find_node_search(InfoHash),
     InitNodes = cut_list(16, Nodes),
     NewState = State#state{nodes=InitNodes},
-    {noreply, NewState}.
+    {noreply, NewState};
 
 %
 % Send announce messages to the nodes that are the closest to the info-hash
