@@ -509,7 +509,7 @@ handle_info(_Msg, State) ->
 terminate(_, _State) ->
     ok.
 
-code_change(_, _, State) ->
+code_change(_, State, _) ->
     {ok, State}.
 
 %% Default args. Returns a proplist of default args
