@@ -90,7 +90,7 @@ handle_info({magnet_peer_ctl, PeerPid, {piece, PieceNum, Piece}},
     if TryCheck ->
         Data = iolist_to_binary(etorrent_metadata_variant:
                                 extract_data(PeerPid, Var2)),
-        case crypto:sha(Data) of
+        case crypto:hash(sha, Data) of
             RequiredIH ->
                 lager:info("Metadata downloaded.", []),
                 handle_completion(RequiredIH, TorrentID, Data, UrlTiers,

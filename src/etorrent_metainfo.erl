@@ -93,7 +93,7 @@ get_dht_urls(Torrent)  -> get_with_prefix(Torrent, "dht://").
 -spec get_infohash(bcode()) -> binary().
 get_infohash(Torrent) ->
     Info = get_info(Torrent),
-    crypto:sha(iolist_to_binary(etorrent_bcoding:encode(Info))).
+    crypto:hash(sha, iolist_to_binary(etorrent_bcoding:encode(Info))).
     
 
 %% @doc Get a file list from the torrent

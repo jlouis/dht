@@ -42,9 +42,9 @@ allowed_fast(Sz, <<B1:8/integer, B2:8/integer, B3:8/integer, _B4:8/integer>>,
 
 rnd(0, _X, _Sz, Set) -> {value, Set};
 rnd(K, X, Sz, Set) ->
-    %% Start a new round. Each round hashes the previous round to gen.
-    %%  a pseudo-random sequence
-    NX = crypto:sha(X),
+    %% Start a new round. Each round hashes the previous round to
+    %% generate a pseudo-random sequence
+    NX = crypto:hash(sha, X),
     %% Cut into the current NX sequence.
     cut(K, 0, NX, Sz, Set).
 
