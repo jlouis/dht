@@ -8,6 +8,7 @@
 -export([start_link/0,
          start_child/4,
          terminate_child/1,
+         terminate_children/0,
          start_magnet_child/5]).
 
 %% Supervisor callbacks
@@ -53,6 +54,10 @@ terminate_child(BinIH)
     when is_binary(BinIH) ->
     ok = supervisor:terminate_child(?SERVER, BinIH),
     ok = supervisor:delete_child(?SERVER, BinIH).
+
+terminate_children() ->
+    [terminate_child(BinIH)
+     || {BinIH, _, _, _} <- supervisor:which_children(?SERVER)].
 
 %% ====================================================================
 

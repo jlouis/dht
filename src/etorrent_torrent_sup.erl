@@ -53,10 +53,13 @@ start_child_tracker(Pid, <<IntIH:160>> = BinIH,
     IsPrivate = etorrent_torrent:is_private(TorrentId),
     DhtEnabled = etorrent_config:dht(),
     AzDhtEnabled = etorrent_config:azdht(),
+    MdnsEnabled = etorrent_config:mdns(),
     [start_child_dht_tracker(Pid, IntIH, TorrentId)
      || not IsPrivate, DhtEnabled],
     [start_child_azdht_tracker(Pid, BinIH, TorrentId)
      || not IsPrivate, AzDhtEnabled],
+    [start_child_mdns_tracker(Pid, BinIH, TorrentId)
+     || MdnsEnabled],
     Tracker = {tracker_communication,
                {etorrent_tracker_communication, start_link,
                 [BinIH, Local_Peer_Id, TorrentId, Options]},
@@ -203,4 +206,12 @@ start_child_azdht_tracker(Pid, InfoHash, TorrentID) ->
                 permanent, 5000, worker, dynamic},
     Res = supervisor:start_child(Pid, Tracker),
     lager:debug("start_child_azdht_tracker returns ~p.", [Res]),
+    Res.
+
+start_child_mdns_tracker(Pid, InfoHash, TorrentID) ->
+    Tracker = {mdns_tracker,
+                {etorrent_mdns_tracker, start_link, [InfoHash, TorrentID]},
+                permanent, 5000, worker, dynamic},
+    Res = supervisor:start_child(Pid, Tracker),
+    lager:debug("start_child_mdns_tracker returns ~p.", [Res]),
     Res.

@@ -76,6 +76,17 @@ init([PeerId]) ->
         true -> application:start(azdht)
     end,
 
+    MDNSSup = case etorrent_config:mdns() of
+        false -> [];
+        true ->
+            ListenIP = etorrent_config:listen_ip(),
+            application:set_env(mdns, interface_ip, ListenIP),
+            application:start(mdns),
+            [{mdns_sup,
+                {etorrent_mdns_sup, start_link, [PeerId]},
+                permanent, infinity, supervisor, [etorrent_mdns_sup]}]
+    end,
+
     %% UPnP subsystemm is optional.
     UPNPSup = case etorrent_config:use_upnp() of
         false -> [];
@@ -92,6 +103,7 @@ init([PeerId]) ->
            Choker, Listener, UdpTracking] 
            ++ UPNPSup
            ++ DHTSup
+           ++ MDNSSup
            ++ [TorrentPool, Ctl, DirWatcherSup, Console]}}.
 
 

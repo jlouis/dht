@@ -131,7 +131,7 @@ integer_hash_to_literal(InfoHashInt) when is_integer(InfoHashInt) ->
 handle_completion(RequiredIH, TorrentID, Data, UrlTiers, Options) ->
     proc_lib:spawn(fun() ->
         lager:info("Terminate metadata-downloader ~p.", [RequiredIH]),
-        etorrent_torrent_pool:terminate_child(RequiredIH),
+        etorrent_ctl:stop_and_wait(TorrentID),
         etorrent_magnet:handle_completion(RequiredIH, TorrentID, Data,
                                           UrlTiers, Options)
         end).

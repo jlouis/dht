@@ -28,7 +28,7 @@
                     peerid       :: binary()       | '_',
                     last_offense :: {integer(), integer(), integer()} | '$1' }).
 
--record(recent_peer, { ip, last_attempt }).
+-record(recent_peer, { tid_ip, last_attempt }).
 
 -record(state, { local_peer_id         :: binary(),
                  available_peers = []  :: [{torrent_id(), peerinfo()}] }).
@@ -78,11 +78,11 @@ is_bad_peer(IP, Port) ->
         [P] -> P#bad_peer.offenses > ?DEFAULT_BAD_COUNT
     end.
 
-is_recent_peer(IP, _Port) ->
-    ets:member(etorrent_recent_peer, IP).
+is_recent_peer(TorrentId, IP, _Port) ->
+    ets:member(etorrent_recent_peer, {TorrentId, IP}).
 
-enter_recent_peer(IP) ->
-    Peer = #recent_peer{ip = IP,
+enter_recent_peer(TorrentId, IP) ->
+    Peer = #recent_peer{tid_ip = {TorrentId, IP},
                         last_attempt = os:timestamp()},
     ets:insert(etorrent_recent_peer, Peer).
 
@@ -95,7 +95,7 @@ init([LocalPeerId]) ->
     ets:new(etorrent_bad_peer, [protected, named_table,
                                 {keypos, #bad_peer.ipport}]),
     ets:new(etorrent_recent_peer, [public, named_table,
-                                   {keypos, #recent_peer.ip}]),
+                                   {keypos, #recent_peer.tid_ip}]),
     {ok, #state{ local_peer_id = LocalPeerId }}.
 
 handle_call(_Request, _From, State) ->
@@ -163,7 +163,7 @@ start_new_peers(TrackerUrl, IPList, State) ->
 fill_peers(_TrackerUrl, 0, _PeerId, Rem) -> Rem;
 fill_peers(_TrackerUrl, _K, _PeerId, []) -> [];
 fill_peers(TrackerUrl, K, PeerId, [{TorrentId, {IP, Port}} | R]) ->
-    case is_bad_peer(IP, Port) orelse is_recent_peer(IP, Port) of
+    case is_bad_peer(IP, Port) orelse is_recent_peer(TorrentId, IP, Port) of
        true -> fill_peers(TrackerUrl, K, PeerId, R);
        false -> guard_spawn_peer(TrackerUrl, K, PeerId, TorrentId, IP, Port, R)
     end.
@@ -191,7 +191,7 @@ try_spawn_peer(TrackerUrl, K, PeerId, PL, TorrentId, IP, Port, R) ->
 
 spawn_peer(TrackerUrl, LocalPeerId, PL, TorrentId, IP, Port) ->
     proc_lib:spawn(fun () ->
-      enter_recent_peer(IP),
+      enter_recent_peer(TorrentId, IP),
       {value, PL2} = etorrent_torrent:lookup(TorrentId),
       %% Get the rewritten peer id (if defined).
       LocalPeerId2 = proplists:get_value(peer_id, PL2, LocalPeerId),

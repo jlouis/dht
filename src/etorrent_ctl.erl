@@ -12,7 +12,7 @@
 
 -export([start_link/1,
 
-         start/1, start/2, stop/1,
+         start/1, start/2, stop/1, stop_and_wait/1,
          check/1, pause/1, continue/1,
          local_peer_id/0]).
 
@@ -80,9 +80,16 @@ continue(Id) ->
 
 % @doc Ask the manager process to stop a torrent, identified by File.
 % @end
--spec stop(string()) -> ok.
+-spec stop(string() | integer()) -> ok.
+stop(TorrentID) when is_integer(TorrentID) ->
+    gen_server:cast(?SERVER, {stop, TorrentID});
 stop(File) ->
-    gen_server:cast(?SERVER, {stop, File}).
+    gen_server:cast(?SERVER, {stop, {filename, File}}).
+
+stop_and_wait(TorrentID) when is_integer(TorrentID) ->
+    gen_server:call(?SERVER, {stop_and_wait, TorrentID});
+stop_and_wait(File) ->
+    gen_server:call(?SERVER, {stop_and_wait, {filename, File}}).
 
 %% @doc Get a local peer id (as a binary).
 %%
@@ -118,11 +125,12 @@ handle_cast({continue, Id}, S) ->
     etorrent_torrent_ctl:continue_torrent(Child),
     {noreply, S};
 
-handle_cast({stop, F}, S) ->
-    stop_torrent(F),
+handle_cast({stop, Param}, S) ->
+    stop_torrent(Param),
     {noreply, S}.
 
 %% @private
+
 handle_call({start, FileName, Options}, _From, S) ->
     lager:info("Starting torrent from file ~s", [FileName]),
     case load_torrent(FileName) of
@@ -154,6 +162,9 @@ handle_call({start, FileName, Options}, _From, S) ->
             etorrent_event:notify({malformed_torrent_file, FileName}),
             {reply, {error, Reason}, S}
     end;
+handle_call({stop_and_wait, Param}, _From, S) ->
+    stop_torrent(Param),
+    {reply, ok, S};
 handle_call(stop_all, _From, S) ->
     stop_all(),
     {reply, ok, S};
@@ -175,22 +186,21 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 %% =======================================================================
-stop_torrent(F) ->
-    lager:info("Stopping torrent in file ~s", [F]),
-    case etorrent_table:get_torrent({filename, F}) of
-        not_found -> ok; % Was already removed, it is ok.
+stop_torrent(Param) ->
+    case etorrent_table:get_torrent(Param) of
+        not_found ->
+            lager:debug("Torrent ~p was already terminated.", [Param]),
+            ok; % Was already removed, it is ok.
         {value, PL} ->
             TorrentIH = proplists:get_value(info_hash, PL),
+            lager:debug("Stop torrent ~p.", [TorrentIH]),
             etorrent_torrent_pool:terminate_child(TorrentIH),
             ok
     end.
 
 stop_all() ->
-    PLS = etorrent_table:all_torrents(),
-    [begin
-         F = proplists:get_value(filename, PL),
-         stop_torrent(F)
-     end || PL <- PLS].
+    etorrent_torrent_pool:terminate_children(),
+    ok.
 
 -spec load_torrent(string()) -> duplicate
                                 | {ok, bcode()}

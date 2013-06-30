@@ -13,6 +13,7 @@
          dht_state_file/0,
          dht_bootstrap_nodes/0,
          azdht/0,
+         mdns/0,
          pex/0,
          dotdir/0,
          dirwatch_interval/0,
@@ -63,6 +64,7 @@ configuration_specification() ->
      required(logger_dir),
      required(logger_fname),
      optional(azdht, false),
+     optional(mdns, false),
      optional(pex, false),
      optional(listen_ip, all),
      optional(dht_port, 6882),
@@ -141,7 +143,7 @@ max_download_rate() -> call(max_download_rate).
 listen_port() -> call(port).
 
 -spec listen_ip() -> inet:ip_address().
-listen_ip() -> call(listen_ip).
+listen_ip() -> element(2, (required(listen_ip))([])).
 
 -spec logger_dir() -> file_path().
 logger_dir() -> call(logger_dir).
@@ -156,6 +158,9 @@ dht() -> element(2, (required(dht))([])).
 
 -spec azdht() -> boolean().
 azdht() -> element(2, (optional(azdht, false))([])).
+
+-spec mdns() -> boolean().
+mdns() -> element(2, (optional(mdns, false))([])).
 
 -spec pex() -> boolean().
 pex() -> call(pex).
