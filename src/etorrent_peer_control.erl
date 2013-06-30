@@ -191,7 +191,7 @@ init([TrackerUrl, LocalPeerID, RemotePeerID,
     lager:info("New peer ~p:~p is known as ~p for #~p. Caps: ~p.",
                [IP, Port, RemotePeerID, TorrentID, Caps]),
 
-    random:seed(os:timestamp()),
+    etorrent_utils:init_random_generator(),
     %% Use socket handle as remote peer-id.
     register_server(TorrentID, Socket),
     Download = etorrent_download:await_servers(TorrentID),

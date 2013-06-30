@@ -90,7 +90,7 @@ enter_recent_peer(TorrentId, IP) ->
 %% ====================================================================
 
 init([LocalPeerId]) ->
-    random:seed(os:timestamp()), %% Seed RNG
+    etorrent_utils:init_random_generator(),
     erlang:send_after(?CHECK_TIME, self(), cleanup_table),
     ets:new(etorrent_bad_peer, [protected, named_table,
                                 {keypos, #bad_peer.ipport}]),

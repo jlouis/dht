@@ -15,7 +15,7 @@
 	 list_shuffle/1, date_str/1, any_to_list/1,
      merge_proplists/2, compare_proplists/2,
      find/2, wait/1, expect/1, shutdown/1, ping/1,
-     first/0, group/2]).
+     first/0, group/2, init_random_generator/0]).
 
 %% "mock-like" functions
 -export([reply/1]).
@@ -388,7 +388,7 @@ prop_group_count() ->
 	    end).
 
 shuffle_list(List) ->
-    random:seed(now()),
+    init_random_generator(),
     {NewList, _} = lists:foldl( fun(_El, {Acc,Rest}) ->
         RandomEl = lists:nth(random:uniform(length(Rest)), Rest),
         {[RandomEl|Acc], lists:delete(RandomEl, Rest)}
@@ -441,3 +441,17 @@ format_address({{A,B,C,D}, Port}) ->
     io_lib:format("~B.~B.~B.~B:~B", [A,B,C,D,Port]);
 format_address(Addr) ->
     io_lib:format("~p", [Addr]).
+
+
+init_random_generator() ->
+    Def = random:seed0(),
+    case get(random_seed) of
+        Def         -> new_seed();
+        undefined   -> new_seed();
+        _           -> ok
+    end.
+
+new_seed() ->
+    <<A1:32, A2:32, A3:32>> = crypto:rand_bytes(12),
+    random:seed(A1, A2, A3),
+    ok.

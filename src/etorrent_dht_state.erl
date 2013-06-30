@@ -327,7 +327,7 @@ unreachable_tab() ->
     etorrent_dht_unreachable_cache_tab.
 
 random_node_tag() ->
-    random:seed(os:timestamp()),
+    etorrent_utils:init_random_generator(),
     random:uniform(max_unreachable()).
 
 %% @private

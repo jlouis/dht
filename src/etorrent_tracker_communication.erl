@@ -95,7 +95,7 @@ update_tracker(Pid) ->
 %% @private
 init([InfoHash, PeerId, TorrentId, Options]) ->
     process_flag(trap_exit, true),
-    random:seed(os:timestamp()),
+    etorrent_utils:init_random_generator(),
     UrlTiers = etorrent_tracker:get_url_tiers(TorrentId),
     Url = shuffle_tiers(UrlTiers),
     SoftInt = timer:seconds(?DEFAULT_CONNECTION_TIMEOUT_INTERVAL),

@@ -145,7 +145,7 @@ poller_key() ->
 
 
 random_peer() ->
-    random:seed(os:timestamp()),
+    etorrent_utils:init_random_generator(),
     random:uniform(max_per_torrent()).
 
 init(Args) ->
