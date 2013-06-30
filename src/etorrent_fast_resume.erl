@@ -19,6 +19,9 @@
          list/0,
          query_state/1]).
 
+%% Debug
+-export([collect_state/1]).
+
 %% Privete API
 -export([srv_name/0,
          update/0]).
@@ -52,7 +55,7 @@ list() ->
     gen_server:call(srv_name(), list).
 
 %% @doc Query for the state of TorrentID, ID.
-%% <p>The function returns the proplist.
+%% <p>The function returns the proplist.</p>
 %% [{state, State},
 %%  {bitfield, Bitfield}, optional
 %%  {uploaded, Uploaded},
@@ -67,12 +70,12 @@ list() ->
 %%         if we had just started it
 %%      </dd>
 %%
-%%      <dt>seeding, paused, Left = 0</dt>
+%%      <dt>seeding, paused, LeftOrSkipped = 0</dt>
 %%      <dd>
 %%          We are currently seeding this torrent.
 %%      </dd>
 %%
-%%      <dt>leaching, paused, Left > 0</dt>
+%%      <dt>leaching, paused, LeftOrSkipped > 0</dt>
 %%      <dd>
 %%          Here is the bitfield of known good pieces.
 %%          The rest are in an unknown state.
@@ -154,12 +157,14 @@ handle_call(update, _, State) ->
     %% TODO - in the ETS implementation the state of all inactive
     %%        torrents was flushed out on each persitance operation.
     #state{table=Table} = State,
-    [begin
+    Res = [begin
          TorrentID = proplists:get_value(id, Props),
          Filename  = proplists:get_value(filename, Props),
          track_torrent(TorrentID, Filename, Table)
      end || Props <- etorrent_table:all_torrents()],
+    SavedCount = length([ok || ok <- Res]),
     dets:sync(Table),
+    lager:info("Fast resume dictionary is saved (~B entries).", [SavedCount]),
     {reply, ok, State}.
 
 
@@ -188,7 +193,19 @@ track_torrent(Id, Filename, Table) ->
             case form_entry(Id, Props) of
                 ignore -> ignore;
                 Entry -> 
-                    dets:insert(Table, {Filename, Entry})
+                    dets:insert(Table, {Filename, Entry}),
+                    ok
+            end
+    end.
+
+collect_state(Id) ->
+    case etorrent_torrent:lookup(Id) of
+        not_found ->
+            [];
+        {value, Props} ->
+            case form_entry(Id, Props) of
+                ignore -> [];
+                Entry -> Entry
             end
     end.
 
@@ -202,28 +219,42 @@ form_entry(Id, Props) ->
     DownloadDiff  = proplists:get_value(downloaded, Props),
     Downloaded    = DownloadTotal + DownloadDiff,
 
-    Left = proplists:get_value(left, Props),
+    LeftOrSkipped = proplists:get_value(left_or_skipped, Props),
 
-    case proplists:get_value(state, Props) of
+    PeerId = proplists:get_value(peer_id, Props),
+    State  = proplists:get_value(state, Props),
+    %% Dir is `undefined', if the default directory is used.
+    Dir    = proplists:get_value(directory, Props),
+    IsPaused = proplists:get_bool(is_paused, Props),
+
+    MaybeUndefined = [{peer_id, PeerId}
+                     ,{directory, Dir}],
+    Basic = [{K,V} || {K,V} <- MaybeUndefined, V =/= undefined] ++
+            [{state, State}
+            ,{uploaded, Uploaded}
+            ,{downloaded, Downloaded}],
+
         %% not prepared
-        unknown ->
+    if State =:= unknown, State =:= fetching ->
             ignore;
 
         %% downloaded
-        State when Left =:= 0 ->
-            [{state, State}
-            ,{uploaded, Uploaded}
-            ,{downloaded, Downloaded}];
+        LeftOrSkipped =:= 0 ->
+            Basic;
 
         %% not downloaded
-        State ->
+        true ->
             TorrentPid   = etorrent_torrent_ctl:lookup_server(Id),
             {ok, Valid}  = etorrent_torrent_ctl:valid_pieces(TorrentPid),
             Bitfield     = etorrent_pieceset:to_binary(Valid),
             {ok, Wishes} = etorrent_torrent_ctl:get_permanent_wishes(Id),
-            [{state, State}
-            ,{bitfield, Bitfield}
-            ,{wishes, Wishes}
-            ,{uploaded, Uploaded}
-            ,{downloaded, Downloaded}]
+            {ok, UnwantedFiles} = etorrent_torrent_ctl:get_unwanted_files(Id),
+            [{bitfield, Bitfield}]
+         ++ [{unwanted_files, UnwantedFiles} || is_not_empty(UnwantedFiles)]
+         ++ [{wishes, Wishes} || is_not_empty(Wishes)]
+         ++ [{is_paused, IsPaused} || IsPaused]
+         ++ Basic
     end.
+
+is_not_empty([_|_]) -> true;
+is_not_empty([])    -> false.

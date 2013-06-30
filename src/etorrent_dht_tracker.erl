@@ -7,7 +7,7 @@
 -define(dht_state, etorrent_dht_state).
 
 %% API.
--export([start_link/0,
+-export([create_common_resources/0,
          start_link/2,
          announce/1,
          tab_name/0,
@@ -74,7 +74,7 @@ tab_name() ->
 max_per_torrent() ->
     32.
 
-start_link() ->
+create_common_resources() ->
     _ = case ets:info(tab_name()) of
         undefined -> ets:new(tab_name(), [named_table, public, bag]);
         _ -> ok
@@ -96,16 +96,24 @@ announce(TrackerPid) ->
 % deleted.
 %
 -spec announce(infohash(), ipaddr(), portnum()) -> 'true'.
-announce(InfoHash, {_,_,_,_}=IP, Port) when is_integer(InfoHash), is_integer(Port) ->
+announce(InfoHash, {_,_,_,_}=IP, Port)
+    when is_integer(InfoHash), is_integer(Port) ->
     % Always delete a random peer when inserting a new
     % peer into the table. If limit is not reached yet, the
     % chances of deleting a peer for no good reason are lower.
-    RandPeer = random_peer(),
-    DelSpec  = [{{InfoHash,'$1','$2',RandPeer},[],[true]}],
-    _ = ets:select_delete(tab_name(), DelSpec),
-    lager:debug("Register ~p:~p as a peer for ~s.",
-                [IP, Port, integer_hash_to_literal(InfoHash)]),
-    ets:insert(tab_name(), {InfoHash, IP, Port, RandPeer}).
+    %% Do not let add duplicates.
+    case ets:match(tab_name(), {InfoHash, IP, '_', '_'}) of
+        [[]] ->
+            lager:info("Enforce one-peer-per-IP restriction for IP=~p, IH=~p.", [IP, InfoHash]),
+            true;
+        [] ->
+            RandPeerNum = random_peer(),
+            DelSpec  = [{{InfoHash,'$1','$2',RandPeerNum},[],[true]}],
+            _ = ets:select_delete(tab_name(), DelSpec),
+            lager:debug("Register ~p:~p as a peer for ~s.",
+                        [IP, Port, integer_hash_to_literal(InfoHash)]),
+            ets:insert(tab_name(), {InfoHash, IP, Port, RandPeerNum})
+    end.
 
 %
 % Get the peers that are registered as members of this swarm.
@@ -137,18 +145,22 @@ poller_key() ->
 
 
 random_peer() ->
-    random:seed(now()),
+    etorrent_utils:init_random_generator(),
     random:uniform(max_per_torrent()).
 
 init(Args) ->
     InfoHash  = proplists:get_value(infohash, Args),
     TorrentID = proplists:get_value(torrent_id, Args),
     BTPortNum = etorrent_config:listen_port(),
+    lager:debug("Starting DHT tracker for ~p (~p).", [TorrentID, InfoHash]),
     true = gproc:reg(poller_key(), TorrentID),
     register_server(TorrentID),
-    _ = gen_server:cast(self(), init_nodes),
-    _ = self() ! {timeout, undefined, announce},
-    lager:debug("Starting DHT tracker for ~p (~p).", [TorrentID, InfoHash]),
+    %% Fetch a node-list for 30 seconds and announce for 10 seconds after it.
+    %% It will decrease load during starting.
+    T1 = random:uniform(30000),
+    T2 = random:uniform(10000),
+    erlang:send_after(T1, self(), init_nodes),
+    erlang:send_after(T1+T2, self(), {timeout, undefined, announce}),
     InitState = #state{
         infohash=InfoHash,
         torrent_id=TorrentID,
@@ -162,20 +174,20 @@ handle_cast(init_timer, State) ->
     #state{interval=Interval} = State,
     TRef = erlang:start_timer(Interval, self(), announce),
     NewState = State#state{timer_ref=TRef},
-    {noreply, NewState};
+    {noreply, NewState}.
 %
 % Initialize a small table of node table with the nodes that
 % are the closest to the info-hash of this torrent. The routing
 % table cannot be used because it keeps a list of the nodes that
 % are close to the id of this node.
 %
-handle_cast(init_nodes, State) ->
+handle_info(init_nodes, State) ->
     #state{infohash=InfoHash} = State,
 %   Nodes = ?dht_net:find_node_search(TorrentID),
     Nodes = ?dht_net:find_node_search(InfoHash),
     InitNodes = cut_list(16, Nodes),
     NewState = State#state{nodes=InitNodes},
-    {noreply, NewState}.
+    {noreply, NewState};
 
 %
 % Send announce messages to the nodes that are the closest to the info-hash
@@ -221,10 +233,11 @@ handle_info({timeout, _, announce}, State) ->
     NextTrackers = cut_list(16, AllNodes),
     NewTrackers  = [{IP, Port} || {_, IP, Port} <- NextTrackers,
                     not lists:member({IP, Port}, TrackerAddrs)],
-    _ = [begin
-            {_, Token, _, _} = ?dht_net:get_peers(IP, Port, InfoHash),
-            _ = ?dht_net:announce(IP, Port, InfoHash, Token, BTPort)
-         end || {IP, Port} <- NewTrackers],
+    [case ?dht_net:get_peers(IP, Port, InfoHash) of
+         {error, timeout} -> ok;
+         {_, Token, _, _} ->
+            ?dht_net:announce(IP, Port, InfoHash, Token, BTPort)
+     end || {IP, Port} <- NewTrackers],
 
     lager:debug("Adding peers ~p.", [Peers]),
     ok = etorrent_peer_mgr:add_peers(TorrentID, Peers),

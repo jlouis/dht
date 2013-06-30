@@ -72,7 +72,8 @@ hasset(Bitfield, Peerstate) ->
 hasone(Piece, Peerstate) ->
     #peerstate{pieces=Pieces} = Peerstate,
     NewPieces = case is_integer(Pieces) of
-        false -> etorrent_pieceset:insert(Piece, Pieces);
+        false -> etorrent_pieceset:insert_new(Piece, Pieces);
+        %% Pieces is a capacity of the set
         true  -> etorrent_pieceset:from_list([Piece], Pieces)
     end,
     Peerstate#peerstate{pieces=NewPieces}.

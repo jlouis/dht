@@ -40,16 +40,22 @@
 %% @end
 -spec await_servers(torrent_id()) -> tservices().
 await_servers(TorrentID) ->
+    Mode      = etorrent_torrent:get_mode(TorrentID),
     Pending   = etorrent_pending:await_server(TorrentID),
     Progress  = etorrent_progress:await_server(TorrentID),
     Histogram = etorrent_scarcity:await_server(TorrentID),
+    Endgame   = case Mode of
+                    endgame -> etorrent_endgame:await_server(TorrentID);
+                    _       -> undefined
+                end,
     ok = etorrent_pending:register(Pending),
     Handle = #tservices{
-        mode=progress,
+        mode=Mode,
         torrent_id=TorrentID,
         pending=Pending,
         progress=Progress,
-        histogram=Histogram},
+        histogram=Histogram,
+        endgame=Endgame},
     Handle.
 
 
@@ -78,6 +84,7 @@ update({set_endgame, Endgame}, Handle) ->
     {ok, assigned | not_interested | [chunkspec()]}.
 request_chunks(Numchunks, Peerset, Handle) when ?endgame(Handle) ->
     #tservices{endgame=Endgame} = Handle,
+    lager:debug("request_chunks"),
     etorrent_chunkstate:request(Numchunks, Peerset, Endgame);
 
 request_chunks(Numchunks, Peerset, Handle) ->
@@ -128,7 +135,9 @@ chunk_fetched(_, _, _, _) ->
 %% @end
 -spec chunk_stored(piece_index(), chunk_offset(), chunk_length(), tservices()) -> ok.
 chunk_stored(Piece, Offset, Length, Handle) ->
-    #tservices{pending=Pending, progress=Progress} = Handle,
+    #tservices{pending=Pending, progress=Progress, endgame=Endgame} = Handle,
+    [ok = etorrent_chunkstate:stored(Piece, Offset, Length, self(), Endgame)
+     || ?endgame(Handle)],
     ok = etorrent_chunkstate:stored(Piece, Offset, Length, self(), Progress),
     ok = etorrent_chunkstate:stored(Piece, Offset, Length, self(), Pending).
 

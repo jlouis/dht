@@ -12,7 +12,9 @@
 -record(peerconf, {
     localid  = exit(required) :: none | <<_:160>>,
     remoteid = exit(required) :: none | <<_:160>>,
+    %% Is Extension Protocol (BEP-10) supported?
     extended = exit(required) :: boolean(),
+    %% Is fast extention (BEP-6) supported by both of peers?
     fast = exit(required) :: boolean()}).
 
 -opaque peerconf() :: #peerconf{}.
@@ -51,7 +53,7 @@ remoteid(Peerconf) ->
 
 -spec remoteid(<<_:160>>, peerconf()) -> peerconf().
 remoteid(<<NewRemoteID:160/bitstring>>, Peerconf) ->
-    #peerconf{localid=RemoteID} = Peerconf,
+    #peerconf{remoteid=RemoteID} = Peerconf,
     RemoteID == none orelse erlang:error(badarg),
     Peerconf#peerconf{remoteid=NewRemoteID}.
 

@@ -12,7 +12,7 @@
 
 -export([start_link/1,
 
-         start/1, start/2, stop/1,
+         start/1, start/2, stop/1, stop_and_wait/1,
          check/1, pause/1, continue/1,
          local_peer_id/0]).
 
@@ -34,21 +34,31 @@
 % @end
 -spec start_link(binary()) -> {ok, pid()} | ignore | {error, term()}.
 start_link(PeerId) when is_binary(PeerId) ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [PeerId], []).
+    SOpts = [{fullsweep_after, 0}],
+    Opts = [{spawn_opt, SOpts}],
+    gen_server:start_link({local, ?SERVER}, ?MODULE, [PeerId], Opts).
 
 % @doc Ask the manager process to start a new torrent, given in File.
 % @end
 -spec start(string()) -> ok | {error, term()}.
 start(File) ->
-    start(File, none).
+    start(File, []).
 
 %% @doc Ask the manager to start a new torrent, given in File
 %% Upon completion the given CallBack function is executed in a separate
 %% process.
 %% @end
--spec start(string(), none | fun (() -> any())) -> ok | {error, term()}.
-start(File, CallBack) ->
-    gen_server:call(?SERVER, {start, File, CallBack}, infinity).
+-spec start(string(), [Option]) -> {ok, TorrentID} | {error, term()} when
+    Option :: {callback, Callback}
+            | paused
+            | {peer_id, PeerID}
+            | {directory, Dir},
+    Callback :: fun (() -> any()),
+    PeerID :: peerid(),
+    Dir :: file:filename(),
+    TorrentID :: non_neg_integer().
+start(File, Options) when is_list(File) ->
+    gen_server:call(?SERVER, {start, File, Options}, infinity).
 
 % @doc Check a torrents contents
 % @end
@@ -70,11 +80,18 @@ continue(Id) ->
 
 % @doc Ask the manager process to stop a torrent, identified by File.
 % @end
--spec stop(string()) -> ok.
+-spec stop(string() | integer()) -> ok.
+stop(TorrentID) when is_integer(TorrentID) ->
+    gen_server:cast(?SERVER, {stop, TorrentID});
 stop(File) ->
-    gen_server:cast(?SERVER, {stop, File}).
+    gen_server:cast(?SERVER, {stop, {filename, File}}).
 
-%% @doc Get a local peer id.
+stop_and_wait(TorrentID) when is_integer(TorrentID) ->
+    gen_server:call(?SERVER, {stop_and_wait, TorrentID});
+stop_and_wait(File) ->
+    gen_server:call(?SERVER, {stop_and_wait, {filename, File}}).
+
+%% @doc Get a local peer id (as a binary).
 %%
 %% Most of the code don't need this function, because the peer id is usually
 %% passed as a parameter of the `start_link' function.
@@ -108,32 +125,46 @@ handle_cast({continue, Id}, S) ->
     etorrent_torrent_ctl:continue_torrent(Child),
     {noreply, S};
 
-handle_cast({stop, F}, S) ->
-    stop_torrent(F),
+handle_cast({stop, Param}, S) ->
+    stop_torrent(Param),
     {noreply, S}.
 
 %% @private
-handle_call({start, F, CallBack}, _From, S) ->
-    lager:info("Starting torrent in file ~s", [F]),
-    case load_torrent(F) of
+
+handle_call({start, FileName, Options}, _From, S) ->
+    lager:info("Starting torrent from file ~s", [FileName]),
+    case load_torrent(FileName) of
         duplicate -> {reply, duplicate, S};
         {ok, Torrent} ->
             TorrentIH = etorrent_metainfo:get_infohash(Torrent),
+            TorrentID = etorrent_counters:next(torrent),
             case etorrent_torrent_pool:start_child(
-                   {Torrent, F, TorrentIH},
+                   {Torrent, FileName, TorrentIH},
                    S#state.local_peer_id,
-                   etorrent_counters:next(torrent)) of
+                   TorrentID,
+                   Options) of
                 {ok, TorrentPid} ->
-                    install_callback(TorrentPid, TorrentIH, CallBack),
-                    {reply, ok, S};
+                    case proplists:get_value(callback, Options) of
+                        undefined -> ok;
+                        Callback ->
+                            install_callback(TorrentPid, TorrentIH, Callback)
+                    end,
+                    {reply, {ok, TorrentID}, S};
                 {error, {already_started, _Pid}} = Err ->
+                    lager:error("Cannot load the torrent ~p twice.", [TorrentIH]),
+                    {reply, Err, S};
+                {error, Reason} = Err ->
+                    lager:error("Unknown error: ~p", [Reason]),
                     {reply, Err, S}
             end;
         {error, Reason} ->
-            lager:info("Malformed torrent file ~s, error: ~p", [F, Reason]),
-            etorrent_event:notify({malformed_torrent_file, F}),
+            lager:info("Malformed torrent file ~s, error: ~p", [FileName, Reason]),
+            etorrent_event:notify({malformed_torrent_file, FileName}),
             {reply, {error, Reason}, S}
     end;
+handle_call({stop_and_wait, Param}, _From, S) ->
+    stop_torrent(Param),
+    {reply, ok, S};
 handle_call(stop_all, _From, S) ->
     stop_all(),
     {reply, ok, S};
@@ -155,22 +186,21 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 %% =======================================================================
-stop_torrent(F) ->
-    lager:info("Stopping torrent in file ~s", [F]),
-    case etorrent_table:get_torrent({filename, F}) of
-        not_found -> ok; % Was already removed, it is ok.
+stop_torrent(Param) ->
+    case etorrent_table:get_torrent(Param) of
+        not_found ->
+            lager:debug("Torrent ~p was already terminated.", [Param]),
+            ok; % Was already removed, it is ok.
         {value, PL} ->
             TorrentIH = proplists:get_value(info_hash, PL),
+            lager:debug("Stop torrent ~p.", [TorrentIH]),
             etorrent_torrent_pool:terminate_child(TorrentIH),
             ok
     end.
 
 stop_all() ->
-    PLS = etorrent_table:all_torrents(),
-    [begin
-         F = proplists:get_value(filename, PL),
-         stop_torrent(F)
-     end || PL <- PLS].
+    etorrent_torrent_pool:terminate_children(),
+    ok.
 
 -spec load_torrent(string()) -> duplicate
                                 | {ok, bcode()}
@@ -190,7 +220,5 @@ load_torrent_internal(F) ->
     P = filename:join([Workdir, F]),
     etorrent_bcoding:parse_file(P).
 
-install_callback(_TorrentPid, _InfoHash, none) ->
-    ok;
 install_callback(TorrentPid, InfoHash, Fun) ->
     ok = etorrent_callback_handler:install_callback(TorrentPid, InfoHash, Fun).

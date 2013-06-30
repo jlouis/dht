@@ -14,7 +14,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0, encode/1, decode_dispatch/1, new_tid/0]).
+-export([start_link/0, encode/1, decode_dispatch/1, new_transaction_id/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -30,6 +30,8 @@
 -type ipaddr() :: etorrent_types:ipaddr().
 -type portnum() :: etorrent_types:portnum().
 -type action() :: connect | announce | scrape | error.
+%% `paused' is from BEP-21.
+%% `paused' is used by partial seeds, when wanted pieces are completed.
 -type event() :: none | completed | started | stopped.
 -type announce_opt() :: {interval | leechers | seeders, pos_integer()}.
 -type scrape_opt() :: {seeders | leechers | completed, pos_integer()}.
@@ -43,8 +45,8 @@
 	| {announce_response, pos_integer(), [{ipaddr(), portnum()}],
 	                                     [announce_opt()]}
 	| {scrape_request, pos_integer(), binary(), [binary()]}
-	| {scrape_response, pos_integer(), [scrape_opt()]}
-	| {error_response, pos_integer(), string()}.
+	| {scrape_response, [scrape_opt()]}
+	| {error_response, string()}.
 
 -export_type([t_udp_packet/0]).
 -define(SERVER, ?MODULE).
@@ -58,7 +60,7 @@ start_link() ->
 
 %% @doc Generate a new unique transaction id
 %% @end
-new_tid() ->
+new_transaction_id() ->
     crypto:rand_bytes(4).
 
 %% Only allows encoding of the packet types we send to the server
@@ -77,14 +79,16 @@ encode(P) ->
 	    20 = byte_size(InfoHash),
 	    20 = byte_size(PeerId),
 	    EventN = encode_event(Event),
-	    <<ConnID:64/big, ?ANNOUNCE:32/big, Tid/binary,
-	      InfoHash/binary, PeerId/binary,
+	    <<ConnID:64/big,    %% connection id
+          ?ANNOUNCE:32/big, %% action
+          Tid/binary,       %% transaction id
+	      InfoHash:20/binary, PeerId:20/binary,
 	      Down:64/big, Left:64/big, Up:64/big,
 	      EventN:32/big,
-	      0:32/big,
-	      Key:32/big,
-	      (-1):32/big,
-	      Port:16/big>>
+	      0:32/big,        %% IP address -- 0 is default
+	      Key:32/big,      %% 
+	      (-1):32/big,     %% Num want
+          Port:16/big>>    %% Listened BT-port of the local peer
     end.
 
 %% @doc Decode packet and dispatch it.
@@ -113,7 +117,10 @@ handle_call(_Request, _From, State) ->
 
 %% @private
 handle_cast({decode, Packet}, S) ->
-    dispatch(decode(Packet)),
+    try dispatch(decode(Packet))
+    catch error:Reason ->
+        lager:error("Ignore error ~p.", [Reason])
+    end,
     {noreply, S};
 handle_cast(_Msg, State) ->
     {noreply, State}.
@@ -151,13 +158,15 @@ decode(Packet) ->
         scrape ->
             {TID, {scrape_response, decode_scrape(Rest)}};
         error ->
-            {TID, {error_response, TID, binary_to_list(Rest)}}
+            {TID, {error_response, binary_to_list(Rest)}};
+        Ty ->
+            {error, "ETorrent: unknown action type " ++ integer_to_list(Ty) ++ "."}
     end.
 
-dispatch({Tid, Msg}) ->
-    case etorrent_udp_tracker_mgr:lookup_transaction(Tid) of
+dispatch({TransId, Msg}) ->
+    case etorrent_udp_tracker_mgr:lookup_transaction(TransId) of
         {ok, Pid} ->
-            etorrent_udp_tracker:msg(Pid, {Tid, Msg});
+            etorrent_udp_tracker:dispatch_incoming_message(Pid, {TransId, Msg});
         none ->
             lager:info("Ignoring UDP Message with no dispatcher: ~p", [Msg]),
             ignore %% Too old a message to care about it
@@ -168,15 +177,20 @@ encode_event(Event) ->
 	none -> 0;
 	completed -> 1;
 	started -> 2;
-	stopped -> 3
+	stopped -> 3;
+    %% BEP-21
+	paused -> 0
     end.
 
 decode_action(I) ->
+    %% CRASH REPORT Process etorrent_udp_tracker_proto with 0 neighbours exited with reason: no case clause matching 50331648 in etorrent
+    %% etorrent_udp_tracker_proto:decode_action/1 
     case I of
 	?CONNECT -> connect;
 	?ANNOUNCE -> announce;
 	?SCRAPE -> scrape;
-	?ERROR -> error
+	?ERROR -> error;
+    _ -> undefined
     end.
 
 decode_scrape( <<>>) -> [];

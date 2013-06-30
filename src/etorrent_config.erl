@@ -9,38 +9,41 @@
 -behaviour(gen_server).
 
 -export([dht/0,
-	 dht_port/0,
-	 dht_state_file/0,
+         dht_port/0,
+         dht_state_file/0,
+         dht_bootstrap_nodes/0,
+         azdht/0,
+         mdns/0,
+         pex/0,
          dotdir/0,
-	 dirwatch_interval/0,
-	 download_dir/0,
-	 fast_resume_file/0,
-	 listen_port/0,
-	 listen_ip/0,
-	 logger_dir/0,
-	 logger_file/0,
-	 log_settings/0,
-	 max_files/0,
-	 max_peers/0,
-	 max_upload_rate/0,
-	 max_download_rate/0,
-	 max_upload_slots/0,
-	 optimistic_slots/0,
-	 profiling/0,
-	 udp_port/0,
-	 webui/0,
-	 webui_address/0,
-	 webui_log_dir/0,
-	 webui_port/0,
+         dirwatch_interval/0,
+         download_dir/0,
+         fast_resume_file/0,
+         listen_port/0,
+         listen_ip/0,
+         logger_dir/0,
+         logger_file/0,
+         log_settings/0,
+         max_files/0,
+         max_peers/0,
+         max_upload_rate/0,
+         max_download_rate/0,
+         max_upload_slots/0,
+         optimistic_slots/0,
+         profiling/0,
+         udp_port/0,
          use_upnp/0,
-	 work_dir/0]).
+         work_dir/0,
+         fast_extension/0,
+         extension_protocol/0]).
+
 
 %% API
 -export([start_link/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-	 terminate/2, code_change/3]).
+     terminate/2, code_change/3]).
 
 -type file_path() :: etorrent_types:file_path().
 -record(state, { conf :: [{atom(), term()}]}).
@@ -52,22 +55,26 @@ configuration_specification() ->
      required(fast_resume_file),
      required(udp_port),
      optional(max_peers, 40),
-     required(webui),
-     required(webui_port),
-     required(webui_bind_address),
-     required(webui_logger_dir),
      optional(fs_watermark_high, 128),
      optional(max_upload_slots, auto),
-     required(min_upload),
+     optional(optimistic_slots, 1), %% min_upload
      optional(max_upload_rate, infinity),
      optional(max_download_rate, infinity),
      required(port),
      required(logger_dir),
      required(logger_fname),
+     optional(azdht, false),
+     optional(mdns, false),
+     optional(pex, false),
      optional(listen_ip, all),
      optional(dht_port, 6882),
      optional(dht_state, "etorrent_dht_state"),
-     optional(log_settings, [])].
+     optional(dht_bootstrap_nodes, ["router.utorrent.com:6881",
+                                    "router.bittorrent.com:6881",
+                                    "dht.transmissionbt.com:6881"]),
+     optional(log_settings, []),
+     optional(extension_protocol, true),
+     optional(fast_extension, true)].
 
 %%====================================================================
 
@@ -78,17 +85,19 @@ start_link() ->
 
 call(Key) ->
     case gen_server:call(?MODULE, {get_param, Key}) of
-	undefined ->
-	   exit(no_such_application_config_value);
-	V -> V
+    undefined -> exit({no_such_application_config_value, Key});
+    V -> V
     end.
+
+%call(Key, Value) ->
+%    gen_server:call(?MODULE, {set_param, Key, Value}).
+
 
 -spec work_dir() -> file_path().
 work_dir() -> call(dir).
 
 -spec dotdir() -> file_path().
-dotdir() ->
-    call(dotdir).
+dotdir() -> call(dotdir).
 
 -spec download_dir() -> file_path().
 download_dir() -> call(download_dir).
@@ -105,8 +114,6 @@ udp_port() -> call(udp_port).
 -spec max_peers() -> pos_integer().
 max_peers() -> call(max_peers).
 
--spec webui() -> boolean().
-webui() -> call(webui).
 
 -spec use_upnp() -> boolean().
 use_upnp() -> element(2, (required(use_upnp))([])).
@@ -117,15 +124,6 @@ use_upnp() -> element(2, (required(use_upnp))([])).
 -spec profiling() -> boolean().
 profiling() -> element(2, (required(profiling))([])).
 
--spec webui_port() -> pos_integer().
-webui_port() -> call(webui_port).
-
--spec webui_address() -> inet:ip_address().
-webui_address() -> call(webui_bind_address).
-
--spec webui_log_dir() -> file_path().
-webui_log_dir() -> call(webui_logger_dir).
-
 -spec max_files() -> pos_integer().
 max_files() -> call(fs_watermark_high).
 
@@ -133,7 +131,7 @@ max_files() -> call(fs_watermark_high).
 max_upload_slots() -> call(max_upload_slots).
 
 -spec optimistic_slots() -> pos_integer().
-optimistic_slots() -> call(min_upload).
+optimistic_slots() -> call(optimistic_slots).
 
 -spec max_upload_rate() -> pos_integer() | infinity.
 max_upload_rate() -> call(max_upload_rate).
@@ -145,7 +143,7 @@ max_download_rate() -> call(max_download_rate).
 listen_port() -> call(port).
 
 -spec listen_ip() -> inet:ip_address().
-listen_ip() -> call(listen_ip).
+listen_ip() -> element(2, (required(listen_ip))([])).
 
 -spec logger_dir() -> file_path().
 logger_dir() -> call(logger_dir).
@@ -158,26 +156,48 @@ logger_file() -> call(logger_fname).
 -spec dht() -> boolean().
 dht() -> element(2, (required(dht))([])).
 
+-spec azdht() -> boolean().
+azdht() -> element(2, (optional(azdht, false))([])).
+
+-spec mdns() -> boolean().
+mdns() -> element(2, (optional(mdns, false))([])).
+
+-spec pex() -> boolean().
+pex() -> call(pex).
+
 -spec dht_port() -> pos_integer().
 dht_port() -> call(dht_port).
 
 -spec dht_state_file() -> file_path().
 dht_state_file() -> call(dht_state).
 
+-spec dht_bootstrap_nodes() -> list().
+dht_bootstrap_nodes() -> call(dht_bootstrap_nodes).
+
 -spec log_settings() -> list().
 % @todo fix this return value
 log_settings() -> call(log_settings).
+
+%% BEP-6
+fast_extension() -> call(fast_extension).
+
+%% BEP-10
+extension_protocol() -> call(extension_protocol).
+
 
 %%====================================================================
 
 %% @private
 init([]) ->
-    {ok, #state{ conf = read_config([]) }}.
+    {ok, #state{ conf = dict:from_list(read_config([])) }}.
 
 %% @private
 handle_call({get_param, P}, _From, #state { conf = Conf } = State) ->
-    Reply = proplists:get_value(P, Conf),
-    {reply, Reply, State}.
+    Reply = dict:fetch(P, Conf),
+    {reply, Reply, State};
+handle_call({set_param, K, V}, _From, #state { conf = Conf } = State) ->
+    Conf2 = dict:store(K, V, Conf),
+    {reply, ok, State#state{ conf = Conf2 }}.
 
 %% @private
 handle_cast(_Msg, State) ->
@@ -200,46 +220,37 @@ code_change(_OldVsn, State, _Extra) ->
 %% Search the configuation and if does not have a value, search the key
 required(Key) ->
     fun(Config) ->
-	    case proplists:get_value(Key, Config) of
-		    undefined ->
-			case application:get_env(etorrent_core, Key) of
-			    {ok, Value} -> {Key, Value};
-			    undefined -> {Key, undefined}
-			end;
-		    Value ->
-			{Key, Value}
-		end
+        case proplists:get_value(Key, Config) of
+            undefined ->
+            case application:get_env(etorrent_core, Key) of
+                {ok, Value} -> {Key, Value};
+                undefined -> {Key, undefined}
+            end;
+            Value ->
+            {Key, Value}
+        end
     end.
 
 optional(Key, Default) ->
     fun(Config) ->
-	    case proplists:get_value(Key, Config) of
-		    undefined ->
-			case application:get_env(etorrent_core, Key) of
-			    {ok, Value} ->
-				{Key, Value};
-			    undefined when is_function(Default) ->
-				{_, Value} = Default(Config),
+        case proplists:get_value(Key, Config) of
+            undefined ->
+            case application:get_env(etorrent_core, Key) of
+                {ok, Value} ->
                 {Key, Value};
-			    undefined ->
-				{Key, Default}
-			end;
-		    Value ->
-			{Key, Value}
-		end
+                undefined when is_function(Default) ->
+                {_, Value} = Default(Config),
+                {Key, Value};
+                undefined ->
+                {Key, Default}
+            end;
+            Value ->
+            {Key, Value}
+        end
     end.
 
 
 read_config(Config) ->
     [F(Config) || F <- configuration_specification()].
-
-
-
-
-
-
-
-
-
 
 

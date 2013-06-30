@@ -1,5 +1,5 @@
 -module(etorrent_ext).
--export([new/1,
+-export([new/2,
          extension_list/1,
          handle_handshake_respond/2,
          decode_msg/3,
@@ -15,6 +15,7 @@
 -type ext_mod_name() :: atom().
 -type ext_bname() :: binary().
 -type bcode() :: etorrent_types:bcode().
+-type option() :: private.
 
 %% Local id => name as atom
 %% Name as atom => remote id
@@ -30,14 +31,25 @@
 }).
 -type ext_list() :: #exts{}.
 
+is_public_only(ut_metadata) -> true;
+is_public_only(ut_pex)      -> true;
+is_public_only(_)           -> false.
+
 % ======================================================================
 
--spec new(ext_name()) -> #exts{}.
-new(LocallySupportedNames) ->
-    Bnames = [atom_to_binary(NameAtom, utf8) || NameAtom <- LocallySupportedNames],
+-spec new([ext_name()], [option()]) -> #exts{}.
+new(LocallySupportedNames, Options) ->
+    IsPrivate = proplists:get_value(private, Options, false),
+    %% Disable public-only extensions, if it is a private torrent.
+    Names = 
+        if IsPrivate -> [X || X <- LocallySupportedNames, not is_public_only(X)];
+        true -> LocallySupportedNames
+    end,
+
+    Bnames = [atom_to_binary(NameAtom, utf8) || NameAtom <- Names],
     SortedBNames = lists:usort(Bnames),
     ModNames = gen_mod_list(SortedBNames),
-    #exts{local_id2name=list_to_tuple(LocallySupportedNames),
+    #exts{local_id2name=list_to_tuple(Names),
           bnames=SortedBNames,
           mod_names=ModNames,
           local_id2mod_name=list_to_tuple(ModNames),
@@ -106,15 +118,19 @@ filter_supported([{Name, Id}|Xs], [Name|Bnames], [MName|Mnames]) ->
 %% Remote node does not know the extension.
 filter_supported([{RName, _Id}|_]=Xs, [LName|Bnames], [_|Mnames]) 
     when RName > LName ->
-    io:format(user, "Skip local extension: ~p~n", [LName]),
+    lager:debug("Skip local extension: ~p", [LName]),
     filter_supported(Xs, Bnames, Mnames);
 %% Local node does not know the extension.
 filter_supported([{RName, _Id}|Xs], Bnames, Mnames) ->
-    io:format(user, "Skip remote extension: ~p~n", [RName]),
+    lager:debug("Skip remote extension: ~p", [RName]),
     filter_supported(Xs, Bnames, Mnames);
 filter_supported(Xs, [], []) ->
-    [io:format(user, "Skip remote extension: ~p~n", [RName])
+    [lager:debug("Skip remote extension: ~p", [RName])
      || {RName, _Id} <- Xs],
+    [];
+filter_supported([], Xs, _) ->
+    [lager:debug("Skip local extension: ~p", [LName])
+     || LName <- Xs],
     [].
 
 
@@ -123,7 +139,10 @@ filter_supported_test_() ->
     [?_assertEqual(filter_supported([{<<"x">>,1}, {<<"y">>,2}, {<<"z">>,3}],
                                     [<<"a">>,<<"x">>,<<"y">>],
                                     [xx,yy,zz]),
-                   [{x,{1,xx}},{y,{2,yy}}])
+    ,?_assertEqual(filter_supported([],
+                                    [<<"a">>],
+                                    [xx]),
+                   [])
     ].
 -endif.
 

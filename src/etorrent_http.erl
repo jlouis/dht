@@ -23,9 +23,36 @@
 % implemented trackers (most of them)
 % </p>
 % @end
--type http_response() :: {{integer(), string()}, term(), iolist()}.
+-type http_response() :: {integer(), term(), iolist()}.
 -spec request(string()) -> {error, term()} | {ok, http_response()}.
 request(URL) ->
+    request_lhttpc(URL).
+
+request_lhttpc(URL) ->
+    Headers = [{<<"User-Agent">>, binary_to_list(?AGENT_TRACKER_STRING)},
+              {<<"Host">>, decode_host(URL)},
+              {<<"Accept">>, "*/*"},
+              {<<"Accept-Encoding">>, "gzip, identity"}],
+    Ip = etorrent_config:listen_ip(),
+    Options = [{connect_options, case Ip of all -> []; _ -> [{ip, Ip}] end}],
+    lager:debug("HTTP headers: ~p~n", [Headers]),
+    case lhttpc:request(URL, get, Headers, <<>>, 15000, Options) of
+        {ok, {{StatusCode, _StatusStr}, RespHeaders, RespBody}} ->
+                    lager:debug("Response body~n~p", [RespBody]),
+                    case decode_content_encoding_lhttpc(RespHeaders) of
+                        identity ->
+                            {ok, {StatusCode, RespHeaders, RespBody}};
+                        gzip ->
+                            DecompressedBody = binary_to_list(zlib:gunzip(RespBody)),
+                            {ok, {StatusCode, RespHeaders,
+                                  DecompressedBody}}
+                    end;
+        {error, _Reason}=E ->
+            E
+    end.
+
+
+request_hackney(URL) ->
     Headers = [{<<"User-Agent">>, binary_to_list(?AGENT_TRACKER_STRING)},
               {<<"Host">>, decode_host(URL)},
               {<<"Accept">>, "*/*"},
@@ -33,10 +60,14 @@ request(URL) ->
     Ip = etorrent_config:listen_ip(),
     Options = [{pool, default}, {recv_timeout, 15000},
                {connect_options, case Ip of all -> []; _ -> [{ip, Ip}] end}],
+    lager:debug("HTTP headers: ~p~n", [Headers]),
     case hackney:request(get, URL, Headers, <<>>, Options) of
         {ok, Status, RespHeaders, Client} ->
+            lager:debug("HTTP status: ~p~n", [Status]),
+            lager:debug("Hackney state is:~n~p", [Client]),
             case hackney:body(Client) of
                 {ok, RespBody, _} ->
+                    lager:debug("Response body~n~p", [RespBody]),
                     case decode_content_encoding(RespHeaders) of
                         identity ->
                             {ok, {Status, RespHeaders, RespBody}};
@@ -85,7 +116,17 @@ header_conv(Str) when is_list(Str) -> Str.
 % Variant that decodes the content headers, handling compression.
 decode_content_encoding(Headers) ->
     HeadersDict = hackney_headers:new(Headers),
-    case hackney_headers:get_value(<<"content-encoding">>, HeadersDict) of
+    case hackney_headers:get_value("content-encoding", HeadersDict) of
+        <<"gzip">> ->
+            gzip;
+        <<"deflate">> ->
+            deflate;
+        _ ->
+            identity
+    end.
+
+decode_content_encoding_lhttpc(Headers) ->
+    case lhttpc_lib:header_value("content-encoding", Headers) of
         <<"gzip">> ->
             gzip;
         <<"deflate">> ->

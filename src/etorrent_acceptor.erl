@@ -67,24 +67,26 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 %%--------------------------------------------------------------------
-handshake(Socket, PeerId) ->
+handshake(Socket, LocalPeerId) ->
     %% This try..catch block is essentially a maybe monad. Each call
     %% checks for some condition to be true and throws an exception
     %% if the check fails. Finally, control is handed over to the control
     %% pid or we handle an error by closing down.
     try
         {ok, {IP, Port}} = inet:peername(Socket),
-        {ok, Caps, InfoHash, HisPeerId} = receive_handshake(Socket),
+        {ok, Caps, InfoHash, RemotePeerId} = receive_handshake(Socket),
         ok = check_infohash(InfoHash),
-        ok = check_peer(IP, Port, InfoHash, HisPeerId, PeerId),
+        ok = check_peer(IP, Port, InfoHash, LocalPeerId, RemotePeerId),
         ok = check_peer_count(),
         {ok, RecvPid, ControlPid} =
-            check_torrent_state(Socket, Caps, IP, Port, InfoHash, PeerId),
+            check_torrent_state(Socket, Caps, IP, Port, InfoHash, LocalPeerId,
+                                RemotePeerId),
         ok = handover_control(Socket, RecvPid, ControlPid)
     catch
         error:{badmatch, {error, enotconn}} ->
             ok;
-        throw:{error, _Reason} ->
+        throw:{error, Reason} ->
+            lager:debug("Handshake failed with reason ~p.", [Reason]),
             gen_tcp:close(Socket),
             ok;
         throw:{bad_peer, PeerPid} ->
@@ -94,9 +96,11 @@ handshake(Socket, PeerId) ->
     end.
 
 receive_handshake(Socket) ->
-    case etorrent_proto_wire:receive_handshake(Socket) of
-        {ok, Caps, InfoHash, HisPeerId} ->
-            {ok, Caps, InfoHash, HisPeerId};
+    LocalCaps = etorrent_proto_wire:local_capabilities(),
+    case etorrent_proto_wire:receive_handshake(Socket, LocalCaps) of
+        {ok, RemoteCaps, InfoHash, RemotePeerId} ->
+             Caps = etorrent_proto_wire:negotiate_capabilities(RemoteCaps, LocalCaps),
+            {ok, Caps, InfoHash, RemotePeerId};
         {error, Reason} ->
             throw({error, Reason})
     end.
@@ -110,9 +114,9 @@ check_infohash(InfoHash) ->
     end.
 
 handover_control(Socket, RPid, CPid) ->
-    case gen_tcp:controlling_process(Socket, RPid) of
-        ok -> etorrent_peer_control:initialize(CPid, incoming),
-              ok;
+    etorrent_peer_control:initialize(CPid, incoming),
+    case etorrent_peer_recv:forward_control(Socket, RPid) of
+        ok -> ok;
         {error, enotconn} ->
             etorrent_peer_control:stop(CPid),
             throw({error, enotconn})
@@ -120,11 +124,11 @@ handover_control(Socket, RPid, CPid) ->
 
 check_peer(_IP, _Port, _InfoHash, PeerId, PeerId) ->
     throw({error, connect_to_ourselves});
-check_peer(IP, Port, InfoHash, HisPeerId, _OurPeerId) ->
+check_peer(IP, Port, InfoHash, _LocalPeerId, RemotePeerId) ->
     {value, PL} = etorrent_table:get_torrent({infohash, InfoHash}),
     case etorrent_peer_mgr:is_bad_peer(IP, Port) of
         true ->
-            throw({bad_peer, HisPeerId});
+            throw({bad_peer, RemotePeerId});
         false ->
             ok
     end,
@@ -133,14 +137,20 @@ check_peer(IP, Port, InfoHash, HisPeerId, _OurPeerId) ->
         false -> ok
     end.
 
-check_torrent_state(Socket, Caps, IP, Port, InfoHash, OurPeerId) ->
+%% `LocalPeerId' is the default peer id for this node.
+check_torrent_state(Socket, Caps, IP, Port, InfoHash, LocalPeerId, RemotePeerId) ->
     {value, PL} = etorrent_table:get_torrent({infohash, InfoHash}),
+    TorrentId = proplists:get_value(id, PL),
+    {value, PL2} = etorrent_torrent:lookup(TorrentId),
+    %% Get the rewritten peer id (if defined).
+    LocalPeerId2 = proplists:get_value(peer_id, PL2, LocalPeerId),
     case proplists:get_value(state, PL) of
         started ->
             etorrent_peer_pool:start_child(
-              OurPeerId,
+              LocalPeerId2, %% will be used to compete the handshake.
+              RemotePeerId,
               InfoHash,
-              proplists:get_value(id, PL),
+              TorrentId,
               {IP, Port},
               Caps,
               Socket);

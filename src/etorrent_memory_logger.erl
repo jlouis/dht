@@ -56,7 +56,7 @@ init(_Args) ->
 
 %% @private
 handle_event(Evt, S) ->
-    Now = now(),
+    Now = os:timestamp(),
     ets:insert_new(?TAB, {Now, erlang:localtime(), Evt}),
     prune_old_events(),
     {ok, S}.

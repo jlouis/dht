@@ -25,6 +25,7 @@
          pop/1,
          peek/1,
          size/1,
+         is_empty/1,
          is_head/4,
          has_offset/3,
          is_low/1,
@@ -150,6 +151,12 @@ peek(Requestqueue) ->
 size(Requestqueue) ->
     #requestqueue{queue=Queue} = Requestqueue,
     queue:len(Queue).
+
+
+-spec is_empty(rqueue()) -> boolean().
+is_empty(Requestqueue) ->
+    #requestqueue{queue=Queue} = Requestqueue,
+    queue:is_empty(Queue).
 
 
 %% @doc Check if a request is at the head of the request queue

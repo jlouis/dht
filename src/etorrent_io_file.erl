@@ -144,6 +144,7 @@ handle_cast(open, State) ->
         handle=closed,
         relpath=RelPath,
         fullpath=FullPath} = State,
+    lager:info("Opening ~ts.", [FullPath]),
     true = etorrent_io:register_open_file(Torrent, RelPath),
     FileOpts = [read, write, binary, raw, read_ahead,
                 {delayed_write, 1024*1024, 3000}],
@@ -215,17 +216,5 @@ create_file(FD, M, N0, R) when M + 8 =< N0 ->
 create_file(FD, M, N0, R) ->
     N1 = N0-1,
     create_file(FD, M, N1, [<<N1:32/unsigned>> | R]).
-
-
-
-
-
-
-
-
-
-
-
-
 
 

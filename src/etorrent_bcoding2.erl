@@ -1,6 +1,4 @@
 %% @doc Encode/Decode bencoded data.
-%% their encoding.</p>
-%% etorrent_bcoding
 %%
 %% It is a special case for decoding `data' message.
 %% http://www.bittorrent.org/beps/bep_0009.html

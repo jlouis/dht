@@ -9,7 +9,6 @@
 %% @end
 -module(etorrent_peer_states).
 
--include("rate_mgr.hrl").
 -include("etorrent_rate.hrl").
 
 -behaviour(gen_server).
@@ -20,6 +19,7 @@
 -export([start_link/0]).
 
 -export([
+         get_peer/2,
          all_peers/0,
 
          get_global_rate/0,
@@ -38,10 +38,20 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
--record(peer_state, {pid :: {pos_integer() | '_', pid() | '_'},
+-record(peer_state, {tid_pid :: {pos_integer() | '_', pid() | '_'},
                      choke_state = choked :: choked | unchoked | '_',
                      interest_state = not_interested :: interested | not_interested | '_',
                      local_choke = true :: boolean() | '_'}).
+
+-record(rate_mgr, {
+        % {Id, Pid} of receiver
+        tid_pid :: '_' | {integer() | '_', pid() | '_'},
+        % Snubbing state - the peer is connected, but do not send any data for 
+        % a period of time
+        snub_state :: normal | snubbed | '_', 
+        rate :: float() | '_'
+}).
+
 
 -record(state, { global_recv :: #peer_rate{},
                  global_send :: #peer_rate{}}).
@@ -127,7 +137,7 @@ get_state(Id, Who) ->
             [] -> #peer_state{}; % Pick defaults
             [Ps] -> Ps
         end,
-    RP = [{pid, P#peer_state.pid},
+    RP = [
 	  {choke_state, P#peer_state.choke_state},
 	  {interest_state, P#peer_state.interest_state},
 	  {local_choke, P#peer_state.local_choke}],
@@ -178,16 +188,18 @@ get_recv_rate(Id, Pid) -> fetch_rate(etorrent_recv_state, Id, Pid).
     none | undefined | float().
 get_send_rate(Id, Pid) -> fetch_rate(etorrent_send_state, Id, Pid).
 
-%% @doc Set the receive rate of the peer
+%% @doc Set the receive rate of the peer.
+%% Pid is a pid of the peer control process.
 %% @end
 -spec set_recv_rate(integer(), pid(), float(), normal | snubbed) -> ok.
-set_recv_rate(Id, Pid, Rate, SnubState) ->
+set_recv_rate(Id, Pid, Rate, SnubState) when is_integer(Id), is_float(Rate) ->
     alter_state(recv_rate, Id, Pid, Rate, SnubState).
 
-%% @doc Set the send rate of the peer
+%% @doc Set the send rate of the peer.
+%% Pid is a pid of the peer control process.
 %% @end
 -spec set_send_rate(integer(), pid(), float()) -> ok.
-set_send_rate(Id, Pid, Rate) ->
+set_send_rate(Id, Pid, Rate) when is_integer(Id), is_float(Rate) ->
     alter_state(send_rate, Id, Pid, Rate, unchanged).
 
 %% @doc Get the rate of a given Torrent
@@ -202,7 +214,7 @@ get_torrent_rate(Id, Direction) ->
             leeching -> etorrent_recv_state;
             seeding  -> etorrent_send_state
           end,
-    Objects = ets:match_object(Tab, #rate_mgr { pid = {Id, '_'}, _ = '_' }),
+    Objects = ets:match_object(Tab, #rate_mgr { tid_pid = {Id, '_'}, _ = '_' }),
     R = lists:sum([K#rate_mgr.rate || K <- Objects]),
     {ok, R}.
 
@@ -222,11 +234,11 @@ get_global_rate() ->
 %% @private
 init([]) ->
     _Tid = ets:new(etorrent_recv_state, [public, named_table,
-                                         {keypos, #rate_mgr.pid}]),
+                                         {keypos, #rate_mgr.tid_pid}]),
     _Tid2 = ets:new(etorrent_send_state, [public, named_table,
-                                         {keypos, #rate_mgr.pid}]),
+                                         {keypos, #rate_mgr.tid_pid}]),
     _Tid3 = ets:new(etorrent_peer_state, [public, named_table,
-                                         {keypos, #peer_state.pid}]),
+                                         {keypos, #peer_state.tid_pid}]),
     {ok, #state{ global_recv = etorrent_rate:init(?RATE_FUDGE),
                  global_send = etorrent_rate:init(?RATE_FUDGE)}}.
 
@@ -245,9 +257,9 @@ handle_cast(Msg, State) ->
 
 %% @private
 handle_info({'DOWN', _Ref, process, Pid, _Reason}, S) ->
-    true = ets:match_delete(etorrent_recv_state, #rate_mgr { pid = {'_', Pid}, _='_'}),
-    true = ets:match_delete(etorrent_send_state, #rate_mgr { pid = {'_', Pid}, _='_'}),
-    true = ets:match_delete(etorrent_peer_state, #peer_state { pid = {'_', Pid}, _='_'}),
+    true = ets:match_delete(etorrent_recv_state, #rate_mgr { tid_pid = {'_', Pid}, _='_'}),
+    true = ets:match_delete(etorrent_send_state, #rate_mgr { tid_pid = {'_', Pid}, _='_'}),
+    true = ets:match_delete(etorrent_peer_state, #peer_state { tid_pid = {'_', Pid}, _='_'}),
     {noreply, S};
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -271,7 +283,7 @@ alter_state(What, Id, Pid) ->
 	    ets:insert(etorrent_peer_state,
 		       alter_record(What,
 				    #peer_state {
-				      pid = {Id, Pid},
+				      tid_pid = {Id, Pid},
 				      choke_state = choked,
 				      interest_state = not_interested,
 				      local_choke = true})),
@@ -307,7 +319,7 @@ alter_state(What, Id, Who, Rate, SnubState) ->
         [] ->
 	    ets:insert(T,
 		       #rate_mgr {
-			 pid = {Id, Who},
+			 tid_pid = {Id, Who},
 			 snub_state = case SnubState of
 					  snubbed -> snubbed;
 					  normal  -> normal;
@@ -331,8 +343,7 @@ alter_state(What, Id, Who, Rate, SnubState) ->
     none | float() | undefined.
 fetch_rate(Where, Id, Pid) ->
     case ets:lookup(Where, {Id, Pid}) of
-        [] ->
-            none;
+        []  -> none;
         [R] -> R#rate_mgr.rate
     end.
 
@@ -340,7 +351,7 @@ add_monitor(Pid) ->
     gen_server:cast(?SERVER, {monitor, Pid}).
 
 
-proplistify(#peer_state { pid = {TorrentId, Pid},
+proplistify(#peer_state { tid_pid = {TorrentId, Pid},
                           choke_state = Chokestate,
                           interest_state = Intereststate,
                           local_choke = Localchoke }) ->
@@ -349,3 +360,10 @@ proplistify(#peer_state { pid = {TorrentId, Pid},
      {choke_state, Chokestate},
      {interest_state, Intereststate},
      {local_choke, Localchoke}].
+
+
+get_peer(Id, Who) ->
+    case ets:lookup(etorrent_peer_state, {Id, Who}) of
+        []   -> not_found;
+        [Ps] -> {value, proplistify(Ps)}
+    end.

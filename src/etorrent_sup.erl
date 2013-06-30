@@ -37,13 +37,13 @@ init([PeerId]) ->
     Conf         = ?CHILD(etorrent_config),
     Tables       = ?CHILD(etorrent_table),
     Torrent      = ?CHILD(etorrent_torrent),
+    Tracker      = ?CHILD(etorrent_tracker),
     Counters     = ?CHILD(etorrent_counters),
     EventManager = ?CHILD(etorrent_event),
     PeerMgr      = ?CHILDP(etorrent_peer_mgr, [PeerId]),
     FastResume   = ?CHILD(etorrent_fast_resume),
     PeerStates   = ?CHILD(etorrent_peer_states),
     Choker       = ?CHILD(etorrent_choker),
-    Tasks        = ?CHILD(etorrent_tasks),
     Console      = ?CHILD(etorrent_console),
 
     Listener     = {etorrent_listen_sup,
@@ -67,8 +67,24 @@ init([PeerId]) ->
         false -> [];
         true ->
             [{dht_sup,
-                {etorrent_dht, start_link, []},
-                permanent, infinity, supervisor, [etorrent_dht]}]
+                {etorrent_dht_sup, start_link, []},
+                permanent, infinity, supervisor, [etorrent_dht_sup]}]
+    end,
+
+    case etorrent_config:azdht() of
+        false -> ok;
+        true -> application:start(azdht)
+    end,
+
+    MDNSSup = case etorrent_config:mdns() of
+        false -> [];
+        true ->
+            ListenIP = etorrent_config:listen_ip(),
+            application:set_env(mdns, interface_ip, ListenIP),
+            application:start(mdns),
+            [{mdns_sup,
+                {etorrent_mdns_sup, start_link, [PeerId]},
+                permanent, infinity, supervisor, [etorrent_mdns_sup]}]
     end,
 
     %% UPnP subsystemm is optional.
@@ -81,12 +97,14 @@ init([PeerId]) ->
     end,
 
     {ok, {{one_for_all, 3, 60},
-          [Conf, Tables, Torrent,
+          [Conf, Tables, Torrent, Tracker,
            Counters, EventManager, PeerMgr,
            FastResume, PeerStates,
-           Choker, Listener,
-           UdpTracking, TorrentPool, Ctl,
-           DirWatcherSup, Tasks, Console] ++ DHTSup ++ UPNPSup}}.
+           Choker, Listener, UdpTracking] 
+           ++ UPNPSup
+           ++ DHTSup
+           ++ MDNSSup
+           ++ [TorrentPool, Ctl, DirWatcherSup, Console]}}.
 
 
 

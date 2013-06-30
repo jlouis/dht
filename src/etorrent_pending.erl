@@ -40,12 +40,19 @@
          terminate/2,
          code_change/3]).
 
+%% debugging
+-export([requests/1]).
+
+-export([debug_info/1,
+         lookup_peers/1]).
+
+-type torrent_id() :: etorrent_types:torrent_id().
 
 -record(state, {
+    torrent_id :: torrent_id(),
     receiver :: pid(),
     table :: integer()}).
 
--type torrent_id()  :: etorrent_types:torrent_id().
 
 register_server(TorrentID) ->
     etorrent_utils:register(server_name(TorrentID)).
@@ -59,6 +66,15 @@ await_server(TorrentID) ->
 server_name(TorrentID) ->
     {etorrent, TorrentID, pending}.
 
+requests(TorrentID) ->
+    Srvpid = await_server(TorrentID),
+    gen_server:call(Srvpid, {chunk, requests}).
+
+debug_info(TorrentID) ->
+    gen_server:call(await_server(TorrentID), debug_info).
+
+lookup_peers(TorrentID) ->
+    gen_server:call(await_server(TorrentID), lookup_peers).
 
 %% @doc
 %% @end
@@ -86,6 +102,7 @@ init([TorrentID]) ->
     true = register_server(TorrentID),
     Table = ets:new(none, [private, set, {keypos, 1}]),
     InitState = #state{
+        torrent_id=TorrentID,
         receiver=self(),
         table=Table},
     {ok, InitState}.
@@ -103,12 +120,15 @@ handle_call({register, Peerpid}, _, State) ->
     {reply, Reply, State};
 
 handle_call({receiver, Newrecvpid}, _, State) ->
-    #state{table=Table} = State,
+    #state{table=Table, torrent_id=TorrentID} = State,
     Requests = list_requests(Table),
     Assigned = fun({Piece, Offset, Length, Peerpid}) ->
         etorrent_chunkstate:assigned(Piece, Offset, Length, Peerpid, Newrecvpid)
     end,
+    %% TODO: we can use only one message here.
     [Assigned(Request) || Request <- Requests],
+    Peers = etorrent_peer_control:lookup_peers(TorrentID),
+    [etorrent_peer_control:update_queue(Peer) || Peer <- Peers],
     NewState = State#state{receiver=Newrecvpid},
     {reply, ok, NewState};
 
@@ -116,6 +136,18 @@ handle_call({chunk, requests}, _, State) ->
     #state{table=Table} = State,
     Requests = list_requests(Table),
     Reply = [{Pid, {Piece, Offset, Length}} || {Piece, Offset, Length, Pid} <- Requests],
+    {reply, Reply, State};
+
+handle_call(lookup_peers, _, State) ->
+    #state{table=Table} = State,
+    Reply = list_peers(Table),
+    {reply, Reply, State};
+
+handle_call(debug_info, _, State) ->
+    #state{table=Table, receiver=Receiver} = State,
+    Reply = [{request_count, request_count(Table)},
+             {peer_count, peer_count(Table)},
+             {receiver, Receiver}],
     {reply, Reply, State}.
 
 
@@ -200,9 +232,21 @@ flush_requests(Table, Pid) ->
     ets:select_delete(Table, Delete),
     Requests.
 
+list_peers(Table) ->
+    Match = ets:fun2ms(fun({Pid, _Ref}) -> Pid end),
+    ets:select(Table, Match).
+
 list_requests(Table) ->
     Match = ets:fun2ms(fun({{I, O, L, P}}) -> {I, O, L, P} end),
     ets:select(Table, Match).
+
+request_count(Table) ->
+    Match = ets:fun2ms(fun({{_, _, _, P}}) -> true end),
+    ets:select_count(Table, Match).
+
+peer_count(Table) ->
+    Match = ets:fun2ms(fun({_,_}) -> true end),
+    ets:select_count(Table, Match).
 
 
 -ifdef(TEST).

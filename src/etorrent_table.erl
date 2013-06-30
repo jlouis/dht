@@ -17,12 +17,14 @@
 -export([get_path/2, insert_path/2, delete_paths/1]).
 
 %% Peer information
--export([
+-export([get_peer/1,
          all_peers/0,
+         all_tid_and_pids/0,
          connected_peer/3,
-	 foreach_peer/2, foreach_peer_of_tracker/2,
+         foreach_peer/2,
+         foreach_peer_of_tracker/2,
          get_peer_info/1,
-         new_peer/6,
+         new_peer/8,
          statechange_peer/2
         ]).
 
@@ -31,7 +33,7 @@
          new_torrent/4,
          statechange_torrent/2,
          get_torrent/1,
-	 acquire_check_token/1]).
+         acquire_check_token/1]).
 
 %% Histogram handling code
 -export([
@@ -42,25 +44,40 @@
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-	 terminate/2, code_change/3]).
+     terminate/2, code_change/3]).
 
 
 -type ipaddr() :: etorrent_types:ipaddr().
 -type portnum() :: etorrent_types:portnum().
+-type peerid() :: etorrent_types:peerid().
 %% The path map tracks file system paths and maps them to integers.
--record(path_map, {id :: {'_' | '$1' | non_neg_integer(), '_'
-			      | non_neg_integer()},
-                   path :: string() | '_'}). % File system path -- work dir
+-record(path_map, {
+        id :: {'_' | '$1' | non_neg_integer(), '_' | non_neg_integer()},
+        % File system path -- work dir
+        path :: string() | '_'
+}).
 
--record(peer, {pid :: pid() | '_' | '$1', % We identify each peer with it's pid.
-               tracker_url_hash :: integer() | '_', % Which tracker this peer comes from.
-                                              % A tracker is identified by the hash of its url.
-               ip :: ipaddr() | '_',  % Ip of peer in question
-               port :: non_neg_integer() | '_', % Port of peer in question
-               torrent_id :: non_neg_integer() | '_', % Torrent Id for peer
-               state :: 'seeding' | 'leeching' | '_'}).
+-record(peer, {
+        % We identify each peer with it's pid.
+        pid :: pid() | '_' | '$1',
+        % Which tracker this peer comes from.
+        % A tracker is identified by the hash of its url.
+        tracker_url_hash :: integer() | '_',
+        % Ip of peer in question
+        ip :: ipaddr() | '_',
+        % Port of peer in question
+        port :: non_neg_integer() | '_',
+        % Torrent Id for peer
+        torrent_id :: non_neg_integer() | '_',
+        state :: 'seeding' | 'leeching' | '_',
+        is_fast :: boolean(),
+        peer_id :: peerid(),
+        version = <<"">> :: binary(),
+        progress :: float() % 0.0 .. 1.0
+}).
 
--type(tracking_map_state() :: 'started' | 'stopped' | 'checking' | 'awaiting' | 'duplicate').
+-type tracking_map_state()
+    :: 'started' | 'stopped' | 'checking' | 'awaiting' | 'duplicate'.
 
 %% The tracking map tracks torrent id's to filenames, etc. It is the
 %% high-level view
@@ -93,7 +110,11 @@ all_torrents() ->
 -spec all_peers() -> [proplists:proplist()].
 all_peers() ->
     Objs = ets:match_object(peers, '_'),
-    [proplistify_peers(O) || O <- Objs].
+    [proplistify_peer(O) || O <- Objs].
+
+all_tid_and_pids() ->
+    R = ets:match(peers, #peer { torrent_id = '$1', pid = '$2', _ = '_' }),
+    {value, [{Tid, Pid} || [Tid, Pid] <- R]}.
 
 %% @doc Alter the state of the Tracking map identified by Id
 %%   <p>by What (see alter_map/2).</p>
@@ -110,27 +131,27 @@ statechange_torrent(Id, What) ->
 %% is a proplist with information about the torrent.</p>
 %% @end
 -spec get_torrent({infohash, binary()} | {filename, string()} | integer()) ->
-			  not_found | {value, term()}. % @todo: Change term() to proplist()
+              not_found | {value, term()}. % @todo: Change term() to proplist()
 get_torrent(Id) when is_integer(Id) ->
     case ets:lookup(tracking_map, Id) of
-	[O] ->
-	    {value, proplistify_tmap(O)};
-	[] ->
-	    not_found
+    [O] ->
+        {value, proplistify_tmap(O)};
+    [] ->
+        not_found
     end;
 get_torrent({infohash, IH}) ->
     case ets:match_object(tracking_map, #tracking_map { _ = '_', info_hash = IH }) of
-	[O] ->
-	    {value, proplistify_tmap(O)};
-	[] ->
-	    not_found
+    [O] ->
+        {value, proplistify_tmap(O)};
+    [] ->
+        not_found
     end;
 get_torrent({filename, FN}) ->
     case ets:match_object(tracking_map, #tracking_map { _ = '_', filename = FN }) of
-	[O] ->
-	    {value, proplistify_tmap(O)};
-	[] ->
-	    not_found
+    [O] ->
+        {value, proplistify_tmap(O)};
+    [] ->
+        not_found
     end.
 
 %% @doc Enter a Piece Number in the histogram
@@ -177,9 +198,9 @@ insert_path(Path, TorrentId) ->
         [] ->
             Id = etorrent_counters:next(path_map),
             PM = #path_map { id = {Id, TorrentId}, path = Path},
-	    true = ets:insert(path_map, PM),
+        true = ets:insert(path_map, PM),
             {value, Id};
-	[[Id]] ->
+    [[Id]] ->
             {value, Id}
     end.
 
@@ -197,9 +218,10 @@ delete_paths(TorrentId) when is_integer(TorrentId) ->
 -spec get_peer_info(pid()) -> not_found | {peer_info, seeding | leeching, integer()}.
 get_peer_info(Pid) when is_pid(Pid) ->
     case ets:lookup(peers, Pid) of
-	[] -> not_found;
-	[PR] -> {peer_info, PR#peer.state, PR#peer.torrent_id}
+    [] -> not_found;
+    [PR] -> {peer_info, PR#peer.state, PR#peer.torrent_id}
     end.
+
 
 %% @doc Return all peer pids with a given torrentId
 %% @end
@@ -222,16 +244,33 @@ all_peers_of_tracker(Url) ->
 %% @end
 -spec statechange_peer(pid(), seeder) -> ok.
 statechange_peer(Pid, seeder) ->
-    [Peer] = ets:lookup(peers, Pid),
-    true = ets:insert(peers, Peer#peer { state = seeding }),
+    TorrentId = ets:lookup_element(peers, Pid, #peer.torrent_id),
+    etorrent_torrent:statechange(TorrentId, [dec_connected_leecher,
+                                             inc_connected_seeder]),
+    true = ets:update_element(peers, Pid, {#peer.state, seeding}),
+    ok;
+statechange_peer(Pid, {version, NewVersion}) ->
+    true = ets:update_element(peers, Pid, {#peer.version, NewVersion}),
+    ok;
+statechange_peer(Pid, {progress, Progress}) ->
+    true = ets:update_element(peers, Pid, {#peer.progress, Progress}),
     ok.
 
 %% @doc Insert a row for the peer
 %% @end
--spec new_peer(string(), ipaddr(), portnum(), integer(), pid(), seeding | leeching) -> ok.
-new_peer(TrackerUrl, IP, Port, TorrentId, Pid, State) ->
-    true = ets:insert(peers, #peer { pid = Pid, tracker_url_hash = erlang:phash2(TrackerUrl),
-                     ip = IP, port = Port, torrent_id = TorrentId, state = State}),
+-spec new_peer(string(), ipaddr(), portnum(), integer(), pid(),
+               seeding | leeching, boolean(), peerid()) -> ok.
+new_peer(TrackerUrl, IP, Port, TorrentId, Pid, State, IsFast, PeerId)
+        when is_boolean(IsFast) ->
+    Peer = #peer{ pid = Pid, tracker_url_hash = erlang:phash2(TrackerUrl),
+                  ip = IP, port = Port, torrent_id = TorrentId, state = State,
+                  is_fast = IsFast, peer_id = PeerId},
+    etorrent_torrent:statechange(TorrentId, [case State of
+                seeding  -> inc_connected_seeder;
+                leeching -> inc_connected_leecher
+            end]),
+    true = ets:insert(peers, Peer),
+    lager:debug("Register new peer ~p.", [Peer]),
     add_monitor(peer, Pid).
 
 %% @doc Add a new torrent
@@ -245,10 +284,10 @@ new_torrent(File, IH, Supervisor, Id) when is_integer(Id),
                                         is_list(File) ->
     add_monitor({torrent, Id}, Supervisor),
     TM = #tracking_map { id = Id,
-			 filename = File,
-			 supervisor_pid = Supervisor,
-			 info_hash = IH,
-			 state = awaiting},
+             filename = File,
+             supervisor_pid = Supervisor,
+             info_hash = IH,
+             state = awaiting},
     true = ets:insert(tracking_map, TM),
     ok.
 
@@ -256,10 +295,45 @@ new_torrent(File, IH, Supervisor, Id) when is_integer(Id),
 %% @end
 -spec connected_peer(ipaddr(), portnum(), integer()) -> boolean().
 connected_peer(IP, Port, Id) when is_integer(Id) ->
-    case ets:match(peers, #peer { ip = IP, port = Port, torrent_id = Id, _ = '_'}) of
-	[] -> false;
-	L when is_list(L) -> true
+    [] =/= ets:match(peers, #peer { ip = IP, port = Port, torrent_id = Id, _ = '_'}).
+
+
+%% IP and Port are remote ones.
+-spec get_peer({address, TorrentId, IP, Port}) -> {value, PL} | not_found when
+        PL :: [{atom(), term()}],
+        TorrentId :: non_neg_integer(),
+        IP :: ipaddr(),
+        Port :: portnum();
+    ({peed_id, TorrentId, PeerId}) -> {value, PL} | not_found when
+        PL :: [{atom(), term()}],
+        TorrentId :: non_neg_integer(),
+        PeerId :: peerid();
+    ({pid, pid()}) -> {value, PL} | not_found when
+        PL :: [{atom(), term()}].
+get_peer({address, TorrentId, IP, Port}) ->
+    Pattern = #peer { ip = IP, port = Port, torrent_id = TorrentId, _ = '_'},
+    case ets:match_object(peers, Pattern) of
+    [O] ->
+        {value, proplistify_peer(O)};
+    [] ->
+        not_found
+    end;
+get_peer({peer_id, TorrentId, PeerId}) ->
+    Pattern = #peer { peer_id = PeerId, torrent_id = TorrentId, _ = '_'},
+    case ets:match_object(peers, Pattern) of
+    [O] ->
+        {value, proplistify_peer(O)};
+    [] ->
+        not_found
+    end;
+get_peer({pid, Pid}) ->
+    case ets:lookup(peers, Pid) of
+    [O] ->
+        {value, proplistify_peer(O)};
+    [] ->
+        not_found
     end.
+
 
 %% @doc Invoke a function on all peers matching a torrent Id
 %% @end
@@ -305,29 +379,27 @@ handle_call({acquire_check_token, Id}, _From, S) ->
             _ ->
                 false
         end,
-    {reply, R, S};
-handle_call(Msg, _From, S) ->
-    lager:error("Unknown handle_call: ~p", [Msg]),
-    {noreply, S}.
+    {reply, R, S}.
 
 %% @private
 handle_cast(Msg, S) ->
-    lager:error("Unknown handle_cast: ~p", [Msg]),
-    {noreply, S}.
+    {stop, Msg, S}.
 
 %% @private
 handle_info({'DOWN', Ref, _, _, _}, S) ->
     {ok, {X, Type}} = dict:find(Ref, S#state.monitoring),
     case Type of
         peer ->
+            [#peer{torrent_id=TorrentId, state=State}] = ets:lookup(peers, X),
+            etorrent_torrent:statechange(TorrentId, [case State of
+                seeding  -> dec_connected_seeder;
+                leeching -> dec_connected_leecher
+            end]),
             true = ets:delete(peers, X);
         {torrent, Id} ->
             true = ets:delete(tracking_map, Id)
     end,
-    {noreply, S#state { monitoring = dict:erase(Ref, S#state.monitoring) }};
-handle_info(Msg, S) ->
-    lager:error("Unknown handle_info call: ~p", [Msg]),
-    {noreply, S}.
+    {noreply, S#state { monitoring = dict:erase(Ref, S#state.monitoring) }}.
 
 %% @private
 code_change(_OldVsn, S, _Extra) ->
@@ -340,17 +412,20 @@ terminate(_Reason, _State) ->
 %%--------------------------------------------------------------------
 
 proplistify_tmap(#tracking_map { id = Id, filename = FN, supervisor_pid = SPid,
-				 info_hash = IH, state = S }) ->
-    [proplists:property(K,V) || {K, V} <- [{id, Id}, {filename, FN}, {supervisor, SPid},
-					   {info_hash, IH}, {state, S}]].
+                 info_hash = IH, state = S }) ->
+    Pairs = [{id, Id}, {filename, FN}, {supervisor, SPid}, {info_hash, IH},
+             {state, S}],
+    [proplists:property(K,V) || {K, V} <- Pairs].
 
-proplistify_peers(#peer {
+proplistify_peer(#peer {
                      pid = Pid, ip = IP, port = Port,
-                     torrent_id = TorrentId, state = State
+                     torrent_id = TorrentId, state = State, is_fast = IsFast,
+                     version = ClientVersion, progress = Progress
                     }) ->
-    [proplists:property(K, V) || {K, V} <- [{pid, Pid}, {ip, IP}, {port, Port},
-                                            {torrent_id, TorrentId},
-                                            {state, State}]].
+    Pairs = [{pid, Pid}, {ip, IP}, {port, Port}, {torrent_id, TorrentId},
+             {state, State}, {is_fast, IsFast}, {version, ClientVersion},
+             {progress, Progress}],
+    [proplists:property(K, V) || {K, V} <- Pairs].
 
 add_monitor(Type, Pid) ->
     gen_server:call(?SERVER, {monitor_pid, Type, Pid}).
@@ -359,8 +434,8 @@ alter_map(TM, What) ->
     case What of
         {infohash, IH} ->
             TM#tracking_map { info_hash = IH };
-	checking ->
-	    TM#tracking_map { state = checking };
+        checking ->
+            TM#tracking_map { state = checking };
         started ->
             TM#tracking_map { state = started };
         stopped ->

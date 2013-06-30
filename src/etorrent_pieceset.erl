@@ -20,6 +20,7 @@
          is_empty/1,
          is_full/1,
          insert/2,
+         insert_new/2,
          delete/2,
          intersection/2,
          difference/2,
@@ -30,6 +31,7 @@
          min/1,
          union/1,
          union/2,
+         inversion/1,
          progress/1]).
 
 -record(pieceset, {
@@ -97,9 +99,8 @@ from_bitstring(Bin) ->
 %% Convert a piece set to a bitfield, the bitfield will
 %% be padded with at most 7 bits set to zero.
 %% @end
--spec to_binary(t()) -> binary().
-to_binary(Pieceset) ->
-    #pieceset{size=Size, elements=Elements} = Pieceset,
+-spec to_binary(Pieceset::t()) -> binary().
+to_binary(#pieceset{size=Size, elements=Elements}) ->
     PadLen = paddinglen(Size),
     <<Elements/bitstring, 0:PadLen>>.
 
@@ -226,6 +227,10 @@ insert(PieceIndex, Pieceset) ->
             Pieceset#pieceset{elements=Updated}
     end.
 
+insert_new(PieceIndex, Pieceset) ->
+    is_member(PieceIndex, Pieceset) andalso error(already_exists),
+    insert(PieceIndex, Pieceset).
+
 %% @doc
 %% Delete a piece from a pice set. If the index is negative
 %% or larger than the size of the piece set, this function
@@ -325,6 +330,14 @@ size(<<>>, Acc) ->
 capacity(Pieceset) ->
     #pieceset{size=Size} = Pieceset,
     Size.
+
+
+inversion(Set) ->
+    #pieceset{elements=Elements, size=Size} = Set,
+    <<E0:Size>> = Elements,
+    E1 = bnot E0,
+    Elements1 = <<E1:Size>>,
+    Set#pieceset{elements=Elements1}.
 
 
 %% @doc Return float from 0 to 1.

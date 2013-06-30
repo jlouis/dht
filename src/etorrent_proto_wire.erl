@@ -20,11 +20,13 @@
          decode_msg/1,
          remaining_bytes/1,
          complete_handshake/3,
-         receive_handshake/1,
+         receive_handshake/2,
+         negotiate_capabilities/2,
+         local_capabilities/0,
          extended_msg_contents/0,
          extended_msg_contents/1,
          extended_msg_contents/2,
-         initiate_handshake/3]).
+         initiate_handshake/4]).
 
 -define(DEFAULT_HANDSHAKE_TIMEOUT, 120000).
 -define(HANDSHAKE_SIZE, 68).
@@ -34,6 +36,9 @@
 -define(EXT_BASIS, 0). % The protocol basis
 -define(EXT_FAST,  4). % The Fast Extension
 -define(EXT_EXTMSG, 1 bsl 20). % The extended message extension
+%% Peers supporting the DHT set the last bit of the 8-byte reserved flags
+%% exchanged in the BitTorrent protocol handshake. 
+-define(EXT_DHT, 1).
 
 %% Packet types
 -define(CHOKE, 0:8).
@@ -111,11 +116,11 @@ incoming_packet(none, <<0:32/big-integer, Rest/binary>>) ->
 incoming_packet(none, <<Left:32/big-integer, Rest/binary>>) ->
     incoming_packet({partial, {Left, []}}, Rest);
 
-incoming_packet({partial, Data}, <<More/binary>>) when is_binary(Data) ->
-    incoming_packet(none, <<Data/binary, More/binary>>);
-
 incoming_packet(none, Packet) when byte_size(Packet) < 4 ->
     {partial, Packet};
+
+incoming_packet({partial, Data}, <<More/binary>>) when is_binary(Data) ->
+    incoming_packet(none, <<Data/binary, More/binary>>);
 
 incoming_packet({partial, {Left, IOL}}, Packet)
         when byte_size(Packet) >= Left, is_integer(Left) ->
@@ -183,7 +188,7 @@ decode_msg(Message) ->
        <<?SUGGEST, Index:32/big>> -> {suggest, Index};
        <<?HAVE_ALL>> -> have_all;
        <<?HAVE_NONE>> -> have_none;
-       <<?REJECT_REQUEST, Index:32, Offset:32, Len:32>> ->
+       <<?REJECT_REQUEST, Index:32/big, Offset:32/big, Len:32/big>> ->
            {reject_request, Index, Offset, Len};
        <<?ALLOWED_FAST, FastSet/binary>> ->
            {allowed_fast, decode_allowed_fast(FastSet)};
@@ -225,12 +230,13 @@ complete_handshake(Socket, InfoHash, LocalPeerId) ->
 %% waits for the header to arrive. If the header is good, the connection can be
 %% completed by a call to complete_handshake/3.</p>
 %% @end
--spec receive_handshake(port()) ->
+-spec receive_handshake(port(), Caps) ->
     {'error',term() | {'bad_header',binary()}}
-    | {'ok',['extended_messaging' | 'fast_extension',...],<<_:160>>}
-    | {'ok',['extended_messaging' | 'fast_extension',...],<<_:160>>,<<_:160>>}.
-receive_handshake(Socket) ->
-    Header = protocol_header(),
+    | {'ok',Caps,<<_:160>>}
+    | {'ok',Caps,<<_:160>>,<<_:160>>} when
+    Caps :: ['extended_messaging' | 'fast_extension',...].
+receive_handshake(Socket, Caps) ->
+    Header = protocol_header(Caps),
     case gen_tcp:send(Socket, Header) of
         ok ->
             receive_header(Socket, await);
@@ -245,20 +251,33 @@ receive_handshake(Socket) ->
 %% @end
 -type peerid() :: <<_:160>>.
 -type infohash() :: <<_:160>>.
--spec initiate_handshake(port(), peerid(), infohash()) ->
+-spec initiate_handshake(port(), peerid(), infohash(), Caps) ->
      {'error',atom() | {'bad_header',binary()}}
-     | {'ok',['extended_messaging' | 'fast_extension',...],<<_:160>>}.
-initiate_handshake(Socket, LocalPeerId, InfoHash) ->
+     | {'ok',Caps,<<_:160>>} when
+    Caps :: ['extended_messaging' | 'fast_extension',...].
+initiate_handshake(Socket, <<_:160>> = LocalPeerId, <<_:160>> = InfoHash, LocalCaps) ->
     % Since we are the initiator, send out this handshake
-    Header = protocol_header(),
+    Header = protocol_header(LocalCaps),
     try
         ok = gen_tcp:send(Socket, Header),
         ok = gen_tcp:send(Socket, InfoHash),
         ok = gen_tcp:send(Socket, LocalPeerId),
         receive_header(Socket, InfoHash)
     catch
-        error:_ -> {error, stop}
+        error:Reason -> {error, Reason}
     end.
+
+negotiate_capabilities(LocalCaps, RemoteCaps) ->
+    [X || X <- LocalCaps, Y <- RemoteCaps, X =:= Y].
+
+local_capabilities() ->
+    Fast = etorrent_config:fast_extension(),
+    Ext  = etorrent_config:extension_protocol(),
+    DHT  = etorrent_config:dht(),
+    [extended_messaging || Ext] ++
+    [fast_extension || Fast] ++
+    [dht_support || DHT].
+
 
 %% @doc Return the default contents of the Extended Messaging Protocol (BEP-10)
 %% <p>This function builds up the extended messaging contents default
@@ -306,7 +325,7 @@ encode_msg(Message) ->
        have_all -> <<?HAVE_ALL>>;
        have_none -> <<?HAVE_NONE>>;
        {reject_request, Index, Offset, Len} ->
-           <<?REJECT_REQUEST, Index, Offset, Len>>;
+           <<?REJECT_REQUEST, Index:32/big, Offset:32/big, Len:32/big>>;
        {allowed_fast, FastSet} ->
            BinFastSet = encode_fastset(FastSet),
            <<?ALLOWED_FAST, BinFastSet/binary>>;
@@ -315,9 +334,9 @@ encode_msg(Message) ->
            <<?EXTENDED, Type:8, Contents/binary>>
    end.
 
-protocol_header() ->
+protocol_header(LocalCaps) ->
     PSSize = length(?PROTOCOL_STRING),
-    ReservedBytes = encode_proto_caps(),
+    ReservedBytes = encode_proto_caps(LocalCaps),
     <<PSSize:8, ?PROTOCOL_STRING, ReservedBytes/binary>>.
 
 
@@ -366,15 +385,20 @@ receive_header(Socket, InfoHash) ->
 
 %% PROTOCOL CAPS
 
-encode_proto_caps() ->
-    ProtoSpec = lists:sum([%?EXT_FAST,
-                           ?EXT_EXTMSG,
-                           ?EXT_BASIS]),
+encode_proto_caps(LocalCaps) ->
+    Fast = proplists:get_bool(fast_extension, LocalCaps),
+    Ext  = proplists:get_bool(extended_messaging, LocalCaps),
+    Dht  = proplists:get_bool(dht_support, LocalCaps),
+    ProtoSpec = ?EXT_BASIS
+              + if Fast -> ?EXT_FAST;   true -> 0 end
+              + if Ext  -> ?EXT_EXTMSG; true -> 0 end
+              + if Dht  -> ?EXT_DHT;    true -> 0 end,
     <<ProtoSpec:64/big>>.
 
 decode_proto_caps(N) ->
     Capabilities = [{?EXT_FAST,  fast_extension},
-                    {?EXT_EXTMSG, extended_messaging}],
+                    {?EXT_EXTMSG, extended_messaging},
+                    {?EXT_DHT, dht_support}],
     Decoded = lists:foldl(
       fun
           ({M, Cap}, Acc) when (M band N) > 0 -> [Cap | Acc];

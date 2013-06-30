@@ -6,7 +6,8 @@
 %% API Function Exports
 %% ------------------------------------------------------------------
 
--export([start_link/0]).
+-export([start_link/0,
+         set_enabled/1]).
 
 %% ------------------------------------------------------------------
 %% gen_server Function Exports
@@ -30,7 +31,8 @@
 
 -record(torrent, {
     'id'         :: torrent_id(),
-    'total'      :: non_neg_integer(),
+    'is_private' :: boolean(),
+    'wanted'     :: non_neg_integer(),
     'left'       :: integer(),
     'leechers'   :: integer(),
     'seeders'    :: integer(),
@@ -46,9 +48,9 @@
 }).
 
 -record(state, {
-    timer :: reference(),
+    update_tref :: timer:tref(),
     torrents :: [#torrent{}],
-    tick :: integer()
+    update_timeout :: integer()
 }).
 
 
@@ -57,8 +59,10 @@
 %% ------------------------------------------------------------------
 
 start_link() ->
-    Args = [2000],
-    gen_server:start_link({local, ?SERVER}, ?MODULE, Args, []).
+    gen_server:start_link({local, ?SERVER}, ?MODULE, [2000], []).
+
+set_enabled(IsEnabled) when is_boolean(IsEnabled) ->
+    gen_server:call(?SERVER, {set_enabled, IsEnabled}).
 
 
 %% ------------------------------------------------------------------
@@ -66,21 +70,35 @@ start_link() ->
 %% ------------------------------------------------------------------
 
 init([Timeout]) ->
-    timer:send_interval(Timeout, update),
+    {ok, TRef} = timer:send_interval(Timeout, update_timeout),
     SD = #state{
-        tick = Timeout,
-        torrents=[]
+        update_timeout = Timeout,
+        torrents=[],
+        update_tref=TRef
     },
     {ok, SD}.
 
-handle_call(_Mess, _From, SD) ->
+handle_call({set_enabled, false}, _From, SD=#state{update_tref=undefined}) ->
+    %% Do nothing, because it is already disabled.
+    {reply, ok, SD};
+handle_call({set_enabled, false}, _From, SD=#state{update_tref=TRef}) ->
+    {ok, cancel} = timer:cancel(TRef),
+    %% Disable this server.
+    {reply, ok, SD#state{update_tref=undefined, torrents=[]}};
+handle_call({set_enabled, true}, _From, SD=#state{update_tref=undefined,
+                                                  update_timeout=Timeout}) ->
+    {ok, TRef} = timer:send_interval(Timeout, update_timeout),
+    %% Enable this server.
+    {reply, ok, SD#state{update_tref=TRef}};
+handle_call({set_enabled, true}, _From, SD=#state{}) ->
+    %% Do nothing, because it is already enabled.
     {reply, ok, SD}.
 
 handle_cast(_Mess, SD) ->
     {noreply, SD}.
 
 
-handle_info(update, SD=#state{torrents=OldTorrents, tick=Timeout}) ->
+handle_info(update_timeout, SD=#state{torrents=OldTorrents, update_timeout=Timeout}) ->
     % proplists from etorrent.
     PLs = query_torrent_list(),
     UnsortedNewTorrents = lists:map(fun to_record/1, PLs),
@@ -90,7 +108,6 @@ handle_info(update, SD=#state{torrents=OldTorrents, tick=Timeout}) ->
     {noreply, SD#state{torrents=NewTorrents2}}.
 
 terminate(_Reason, _SD) ->
-    cascadae_event:delete(),
     ok.
 
 code_change(_OldVsn, SD, _Extra) ->
@@ -111,11 +128,12 @@ query_torrent_list() ->
 to_record(X) ->
     #torrent{
         id       = proplists:get_value('id', X),
-        total    = proplists:get_value('total', X),
+        wanted   = proplists:get_value(wanted, X),
         left     = proplists:get_value('left', X),
         leechers = proplists:get_value('leechers', X),
         seeders  = proplists:get_value('seeders', X),
         state    = proplists:get_value('state', X),
+        is_private = proplists:get_value(is_private, X),
         downloaded = proplists:get_value('downloaded', X),
         uploaded   = proplists:get_value('uploaded', X),
         all_time_downloaded = proplists:get_value('all_time_downloaded', X),
@@ -198,21 +216,21 @@ map_records2(F, OldT, []) ->
 
 
 print_torent_info(X, X) -> skip;
-print_torent_info(undefined, #torrent{id=Id}) -> 
-    log("STARTED torrent #~p.", [Id]);
+print_torent_info(undefined, #torrent{id=Id, is_private=IsPrivate}) -> 
+    Type = if IsPrivate -> "private"; true -> "public" end,
+    log("STARTED ~s torrent #~p.", [Type, Id]);
 print_torent_info(#torrent{id=Id}, undefined) -> 
     log("STOPPED torrent #~p.", [Id]);
-print_torent_info(_Old, #torrent{state=Status, id=Id, left=Left, total=Total,
-                                 speed_in=SpeedIn, speed_out=SpeedOut}) -> 
-    DownloadedPercent = (Total-Left)/Total * 100,
-    log("~.10s #~p: ~6.2f% ~s in, ~s out", 
+print_torent_info(_Old, #torrent{state=Status, id=Id, left=Left, wanted=Wanted,
+                                 speed_in=SpeedIn, speed_out=SpeedOut,
+                                 leechers=Leachers, seeders=Seeders})
+    when Wanted > 0 -> 
+    DownloadedPercent = (Wanted-Left)/Wanted * 100,
+    log("~.10s #~p: ~6.2f% ~s in, ~s out, ls ~p, ss ~p", 
         [string:to_upper(atom_to_list(Status)), Id, DownloadedPercent, 
-         pretty_speed(SpeedIn), pretty_speed(SpeedOut)]).
-    
-%   'leechers'   :: integer(),
-%   'seeders'    :: integer(),
-%   'speed_in'  = 0 :: integer(),
-%   'speed_out' = 0 :: integer()
+         pretty_speed(SpeedIn), pretty_speed(SpeedOut), Leachers, Seeders]);
+print_torent_info(_Old, #torrent{id=Id}) ->
+    log("IGNORE torrent #~p.", [Id]).
 
 log(Pattern, Args) ->
     io:format(user, Pattern ++ "~n", Args),

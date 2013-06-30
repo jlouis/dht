@@ -5,7 +5,11 @@
 -behaviour(supervisor).
 
 %% API
--export([start_link/0, start_child/3, terminate_child/1]).
+-export([start_link/0,
+         start_child/4,
+         terminate_child/1,
+         terminate_children/0,
+         start_magnet_child/5]).
 
 %% Supervisor callbacks
 -export([init/1]).
@@ -23,21 +27,37 @@ start_link() -> supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 % and info hash. Our PeerId is also given, as well as
 % the Id we wish to use for that torrent.</p>
 % @end
--spec start_child({bcode(), string(), binary()}, binary(), integer()) ->
+-spec start_child({bcode(), string(), binary()}, binary(), integer(), list()) ->
     {ok, pid()} | {ok, pid(), term()} | {error, term()}.
-start_child({Torrent, TorrentFile, TorrentIH}, Local_PeerId, Id) ->
-    ChildSpec = {TorrentIH,
+start_child({Torrent, TorrentFile, BinIH}, Local_PeerId, Id, Options)
+    when is_binary(BinIH) ->
+    ChildSpec = {BinIH,
 		 {etorrent_torrent_sup, start_link,
-		 [{Torrent, TorrentFile, TorrentIH}, Local_PeerId, Id]},
+		 [{Torrent, TorrentFile, BinIH}, Local_PeerId, Id, Options]},
 		 transient, infinity, supervisor, [etorrent_torrent_sup]},
     supervisor:start_child(?SERVER, ChildSpec).
+
+
+start_magnet_child(BinIH, LocalPeerId, TorrentId, UrlTiers, Options) 
+    when is_binary(BinIH) ->
+    ChildSpec = {BinIH,
+		 {etorrent_magnet_sup, start_link,
+		 [BinIH, LocalPeerId, TorrentId, UrlTiers, Options]},
+		 transient, infinity, supervisor, [etorrent_magnet_sup]},
+    supervisor:start_child(?SERVER, ChildSpec).
+
 
 % @doc Ask to stop the torrent represented by its info_hash.
 % @end
 -spec terminate_child(binary()) -> ok.
-terminate_child(TorrentIH) ->
-    supervisor:terminate_child(?SERVER, TorrentIH),
-    supervisor:delete_child(?SERVER, TorrentIH).
+terminate_child(BinIH) 
+    when is_binary(BinIH) ->
+    ok = supervisor:terminate_child(?SERVER, BinIH),
+    ok = supervisor:delete_child(?SERVER, BinIH).
+
+terminate_children() ->
+    [terminate_child(BinIH)
+     || {BinIH, _, _, _} <- supervisor:which_children(?SERVER)].
 
 %% ====================================================================
 

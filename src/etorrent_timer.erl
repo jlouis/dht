@@ -40,6 +40,7 @@
          send_after/4,
          start_timer/4,
          cancel/2,
+         cancel/3,
          step/1,
          fire/1]).
 
@@ -97,9 +98,23 @@ start_timer(Server, Time, Dest, Msg) ->
 
 -spec cancel(timeserver(), reference()) -> pos_integer() | false.
 cancel(Server, Timer) ->
+    cancel(Server, Timer).
+
+-spec cancel(timeserver(), reference(), [flush]) -> pos_integer() | false.
+cancel(Server, Timer, Opts) ->
+    Success =
     case Server of
         native -> erlang:cancel_timer(Timer);
         Server -> gen_server:call(Server, {cancel, Timer})
+    end,
+    case Success of
+        false ->
+            case proplists:get_bool(flush, Opts) of
+                true -> flush_timer(Timer);
+                false -> ok
+            end,
+            Success;
+        _ -> Success
     end.
 
 
@@ -335,3 +350,8 @@ duplicate_cancel_case() ->
     ?assertEqual(false, ?timer:cancel(Pid, Ref)).
 
 -endif.
+
+flush_timer(Timer) ->
+    receive {timeout, Timer, _} -> ok
+    after 0 -> ok
+    end.

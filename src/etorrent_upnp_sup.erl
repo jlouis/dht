@@ -25,9 +25,12 @@ start_link() ->
 
 init([]) ->
     % upnp config
-    Maps = [{tcp, etorrent_config:listen_port()},
-            {udp, etorrent_config:udp_port()},
-            {udp, etorrent_config:dht_port()}],
+    Maps = [{"etorrent.bt",  tcp, etorrent_config:listen_port()},
+            {"etorrent.udp", udp, etorrent_config:udp_port()},
+            {"etorrent.dht", udp, etorrent_config:dht_port()}]
+           ++
+           [{"etorrent.azdht", udp, azdht_net:node_port()}
+            || etorrent_config:azdht(), is_azdht_loaded()],
 
     UPNPSpecs = [{maps, Maps}],
     UPNPHandler = upnp:child_spec(etorrent_upnp, UPNPSpecs),
@@ -36,3 +39,11 @@ init([]) ->
                 {upnp_sup, start_link, []},
                 permanent, infinity, supervisor, [upnp_sup]},
     {ok, { {one_for_one, 10, 10}, [UPNPSup, UPNPHandler]} }.
+
+is_azdht_loaded() -> is_application_loaded(azdht).
+
+is_application_loaded(AppName) ->
+    case lists:keysearch(AppName, 1, application:loaded_applications()) of
+        {value, _} -> true;
+        false -> false
+    end.

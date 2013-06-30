@@ -3,8 +3,4 @@ deps/
 ebin/*.app
 log/*
 .eunit
-# Common tests
-/test/etorrent_SUITE_data/test_file_30M.random
-/test/etorrent_SUITE_data/test_file_30M.random.torrent
-/logs/*
-test/etorrent_SUITE_data/log/
+doc/

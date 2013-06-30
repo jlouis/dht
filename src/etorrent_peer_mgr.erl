@@ -28,12 +28,15 @@
                     peerid       :: binary()       | '_',
                     last_offense :: {integer(), integer(), integer()} | '$1' }).
 
--record(state, { our_peer_id           :: binary(),
+-record(recent_peer, { tid_ip, last_attempt }).
+
+-record(state, { local_peer_id         :: binary(),
                  available_peers = []  :: [{torrent_id(), peerinfo()}] }).
 
 -define(SERVER, ?MODULE).
 -define(DEFAULT_BAD_COUNT, 2).
--define(GRACE_TIME, 900).
+-define(GRACE_TIME, 1800). %% 30 min
+-define(RETRY_TIME, 900).  %% 15 min
 -define(CHECK_TIME, timer:seconds(120)).
 -define(DEFAULT_CONNECT_TIMEOUT, 30 * 1000).
 
@@ -41,9 +44,9 @@
 % @doc Start the peer manager
 % @end
 -spec start_link(binary()) -> {ok, pid()} | ignore | {error, term()}.
-start_link(OurPeerId)
-  when is_binary(OurPeerId) ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [OurPeerId], []).
+start_link(LocalPeerId)
+  when is_binary(LocalPeerId) ->
+    gen_server:start_link({local, ?SERVER}, ?MODULE, [LocalPeerId], []).
 
 % @doc Tell the peer mananger that a given peer behaved badly.
 % @end
@@ -61,8 +64,10 @@ add_peers(TorrentId, IPList) ->
     add_peers("no_tracker_url", TorrentId, IPList).
 -spec add_peers(string(), integer(), [{ipaddr(), portnum()}]) -> ok.
 add_peers(TrackerUrl, TorrentId, IPList) ->
+    %% Drop low ports.
     gen_server:cast(?SERVER, {add_peers, TrackerUrl,
-                              [{TorrentId, {IP, Port}} || {IP, Port} <- IPList]}).
+                              [{TorrentId, {IP, Port}} || {IP, Port} <- IPList,
+                               is_allowed_port(Port)]}).
 
 % @doc Returns true if this peer is in the list of baddies
 % @end
@@ -73,18 +78,29 @@ is_bad_peer(IP, Port) ->
         [P] -> P#bad_peer.offenses > ?DEFAULT_BAD_COUNT
     end.
 
+is_recent_peer(TorrentId, IP, _Port) ->
+    ets:member(etorrent_recent_peer, {TorrentId, IP}).
+
+enter_recent_peer(TorrentId, IP) ->
+    Peer = #recent_peer{tid_ip = {TorrentId, IP},
+                        last_attempt = os:timestamp()},
+    ets:insert(etorrent_recent_peer, Peer).
+
+
 %% ====================================================================
 
-init([OurPeerId]) ->
-    random:seed(now()), %% Seed RNG
+init([LocalPeerId]) ->
+    etorrent_utils:init_random_generator(),
     erlang:send_after(?CHECK_TIME, self(), cleanup_table),
-    _Tid = ets:new(etorrent_bad_peer, [protected, named_table,
-                                       {keypos, #bad_peer.ipport}]),
-    {ok, #state{ our_peer_id = OurPeerId }}.
+    ets:new(etorrent_bad_peer, [protected, named_table,
+                                {keypos, #bad_peer.ipport}]),
+    ets:new(etorrent_recent_peer, [public, named_table,
+                                   {keypos, #recent_peer.tid_ip}]),
+    {ok, #state{ local_peer_id = LocalPeerId }}.
 
 handle_call(_Request, _From, State) ->
-    Reply = ok,
-    {reply, Reply, State}.
+    error(badarg),
+    {reply, ok, State}.
 
 handle_cast({add_peers, TrackerUrl, IPList}, S) ->
     lager:debug("Add peers ~p.", [IPList]),
@@ -97,23 +113,30 @@ handle_cast({enter_bad_peer, IP, Port, PeerId}, S) ->
                        #bad_peer { ipport = {IP, Port},
                                    peerid = PeerId,
                                    offenses = 1,
-                                   last_offense = now() });
+                                   last_offense = os:timestamp() });
         [P] ->
             ets:insert(etorrent_bad_peer,
                        P#bad_peer { offenses = P#bad_peer.offenses + 1,
                                     peerid = PeerId,
-                                    last_offense = now() })
+                                    last_offense = os:timestamp() })
     end,
     {noreply, S};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info(cleanup_table, S) ->
-    Bound = etorrent_utils:now_subtract_seconds(now(), ?GRACE_TIME),
+    Now = os:timestamp(),
+    Bound = etorrent_utils:now_subtract_seconds(Now, ?GRACE_TIME),
     _N = ets:select_delete(etorrent_bad_peer,
                            [{#bad_peer { last_offense = '$1', _='_'},
                              [{'<','$1',{Bound}}],
                              [true]}]),
+    RetryBound = etorrent_utils:now_subtract_seconds(Now, ?RETRY_TIME),
+    ets:select_delete(etorrent_recent_peer,
+                           [{#recent_peer { last_attempt = '$1', _='_'},
+                             [{'<','$1',{RetryBound}}],
+                             [true]}]),
+
     gen_server:cast(?SERVER, {add_peers, []}),
     erlang:send_after(?CHECK_TIME, self(), cleanup_table),
     {noreply, S};
@@ -131,20 +154,16 @@ code_change(_OldVsn, State, _Extra) ->
 start_new_peers(TrackerUrl, IPList, State) ->
     %% Update the PeerList with the new incoming peers
     PeerList = etorrent_utils:list_shuffle(
-		 clean_list(IPList ++ State#state.available_peers)),
-    PeerId   = State#state.our_peer_id,
+		 lists:usort(IPList ++ State#state.available_peers)),
+    PeerId   = State#state.local_peer_id,
     {value, SlotsLeft} = etorrent_counters:slots_left(),
     Remaining = fill_peers(TrackerUrl, SlotsLeft, PeerId, PeerList),
     State#state{available_peers = Remaining}.
 
-clean_list([]) -> [];
-clean_list([H | T]) ->
-    [H | clean_list(T -- [H])].
-
 fill_peers(_TrackerUrl, 0, _PeerId, Rem) -> Rem;
 fill_peers(_TrackerUrl, _K, _PeerId, []) -> [];
 fill_peers(TrackerUrl, K, PeerId, [{TorrentId, {IP, Port}} | R]) ->
-    case is_bad_peer(IP, Port) of
+    case is_bad_peer(IP, Port) orelse is_recent_peer(TorrentId, IP, Port) of
        true -> fill_peers(TrackerUrl, K, PeerId, R);
        false -> guard_spawn_peer(TrackerUrl, K, PeerId, TorrentId, IP, Port, R)
     end.
@@ -170,31 +189,48 @@ try_spawn_peer(TrackerUrl, K, PeerId, PL, TorrentId, IP, Port, R) ->
     spawn_peer(TrackerUrl, PeerId, PL, TorrentId, IP, Port),
     fill_peers(TrackerUrl, K-1, PeerId, R).
 
-spawn_peer(TrackerUrl, PeerId, PL, TorrentId, IP, Port) ->
-    spawn(fun () ->
-      case gen_tcp:connect(IP, Port, [binary, {active, false}],
-			   ?DEFAULT_CONNECT_TIMEOUT) of
+spawn_peer(TrackerUrl, LocalPeerId, PL, TorrentId, IP, Port) ->
+    proc_lib:spawn(fun () ->
+      enter_recent_peer(TorrentId, IP),
+      {value, PL2} = etorrent_torrent:lookup(TorrentId),
+      %% Get the rewritten peer id (if defined).
+      LocalPeerId2 = proplists:get_value(peer_id, PL2, LocalPeerId),
+      LocalCaps = etorrent_proto_wire:local_capabilities(),
+      LocalIP = etorrent_config:listen_ip(),
+      Options = case LocalIP of all -> []; _ -> [{ip, LocalIP}] end
+                ++ [binary, {active, false}],
+      case gen_tcp:connect(IP, Port, Options, ?DEFAULT_CONNECT_TIMEOUT) of
 	  {ok, Socket} ->
 	      case etorrent_proto_wire:initiate_handshake(
 		     Socket,
-		     PeerId, %% local peer id as a binary, comes from init/1.
-		     proplists:get_value(info_hash, PL)) of
-		  {ok, _Capabilities, PeerId} -> ok;
-		  {ok, Capabilities, RPID} ->
+		     LocalPeerId2, %% local peer id as a binary, comes from init/1.
+		     proplists:get_value(info_hash, PL),
+             LocalCaps) of
+          %% Connected to the local node.
+		  {ok, _Capabilities, LocalPeerId} -> ok;
+		  {ok, _Capabilities, LocalPeerId2} -> ok;
+		  {ok, Capabilities, RemotePeerId} ->
 		      {ok, RecvPid, ControlPid} =
 			  etorrent_peer_pool:start_child(
 			    TrackerUrl,
-			    RPID,
+			    LocalPeerId2,
+                RemotePeerId,
                 proplists:get_value(info_hash, PL),
 			    TorrentId,
 			    {IP, Port},
-			    Capabilities,
+			    etorrent_proto_wire:negotiate_capabilities(Capabilities, LocalCaps),
 			    Socket),
-		      ok = gen_tcp:controlling_process(Socket, RecvPid),
 		      etorrent_peer_control:initialize(ControlPid, outgoing),
+		      ok = etorrent_peer_recv:forward_control(Socket, RecvPid),
 		      ok;
-		  {error, _Reason} -> ok
+          {error, Reason} ->
+              lager:debug("Outgoing handshake with ~p:~p failed with reason ~p.",
+                          [IP, Port, Reason]),
+              ok
 	      end;
 	  {error, _Reason} -> ok
       end
    end).
+
+is_allowed_port(Port) when Port > 1024, Port =< 65535 -> true;
+is_allowed_port(_)                                    -> false.

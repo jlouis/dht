@@ -115,7 +115,7 @@ start_link(TorrentID, Torrent) ->
 allocate(TorrentID) ->
     DirPid = await_directory(TorrentID),
     {ok, Files}  = get_files(DirPid),
-    Dldir = etorrent_config:download_dir(),
+    Dldir = etorrent_torrent:get_download_dir(TorrentID),
     lists:foreach(
       fun ({Pth, ISz}) ->
 	      F = filename:join([Dldir, Pth]),
@@ -158,6 +158,8 @@ read_piece(TorrentID, Piece) ->
 
 %% @doc Request the size of a piece
 %% <p>Returns `{ok, Size}' where `Size' is the amount of bytes in that piece</p>
+%%
+%% You can use `etorrent_info:piece_size/2' instead.
 %% @end
 -spec piece_size(torrent_id(), piece_index()) -> {ok, integer()}.
 piece_size(TorrentID, Piece) ->
@@ -394,20 +396,25 @@ schedule_io_operation(Directory, RelPath) ->
                   <<_:160>>) -> {ok, integer()} | wrong_hash.
 check_piece(TorrentID, Pieceindex, Piecehash) ->
     {ok, Piecebin} = etorrent_io:read_piece(TorrentID, Pieceindex),
-    case crypto:sha(Piecebin) == Piecehash of
-        true  -> {ok, byte_size(Piecebin)};
-        false -> wrong_hash
+    case crypto:sha(Piecebin) of
+        Piecehash  -> {ok, byte_size(Piecebin)};
+        _OtherHash -> wrong_hash
     end.
 
 %% ----------------------------------------------------------------------
 
 %% @private
 init([TorrentID, Torrent]) ->
+    lager:debug("Init IO directory server for ~p.", [TorrentID]),
     % Let the user define a limit on the amount of files
     % that will be open at the same time
+    lager:debug("Init IO directory server for ~p: max_files.", [TorrentID]),
     MaxFiles = etorrent_config:max_files(),
+    lager:debug("Init IO directory server for ~p: make_piece_map.", [TorrentID]),
     PieceMap  = make_piece_map(Torrent),
+    lager:debug("Init IO directory server for ~p: make_file_list.", [TorrentID]),
     Files     = make_file_list(Torrent),
+    lager:debug("Init IO directory server for ~p: ok.", [TorrentID]),
     true = register_directory(TorrentID),
     InitState = #state{
         torrent=TorrentID,
@@ -478,10 +485,10 @@ handle_cast({schedule_operation, RelPath}, State) ->
                 rel_path=RelPath,
                 process=NewPid,
                 monitor=NewMon,
-                accessed=now()},
+                accessed=os:timestamp()},
             [NewFile|OpenAfterClose];
         _ ->
-            UpdatedFile = FileInfo#io_file{accessed=now()},
+            UpdatedFile = FileInfo#io_file{accessed=os:timestamp()},
             lists:keyreplace(RelPath, #io_file.rel_path, OpenAfterClose, UpdatedFile)
     end,
     NewState = State#state{files_open=WithNewFile},
@@ -524,15 +531,14 @@ make_piece_map(Torrent) ->
         array:set(Piece, With, Acc)
     end, array:new({default, []}), MapEntries).
 
+
+-spec make_file_list(Torrent) -> [{FileName, FileSize}] when
+    Torrent :: bcode(),
+    FileName :: file:filename(),
+    FileSize :: non_neg_integer().
+
 make_file_list(Torrent) ->
-    Files = etorrent_metainfo:get_files(Torrent),
-    Name = etorrent_metainfo:get_name(Torrent),
-    case Files of
-	[_] -> Files;
-	[_|_] ->
-	    [{filename:join([Name, Filename]), Size}
-	     || {Filename, Size} <- Files]
-    end.
+    etorrent_metainfo:file_path_len(Torrent).
 
 %%
 %% Calculate the positions where pieces start and continue in the

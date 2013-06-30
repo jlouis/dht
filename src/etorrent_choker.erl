@@ -13,10 +13,13 @@
 
 -behaviour(gen_server).
 
--include("rate_mgr.hrl").
 
 %% API
--export([start_link/0, perform_rechoke/0, monitor/1]).
+-export([start_link/0,
+         perform_rechoke/0,
+         monitor/1,
+         set_upload_slots/2,
+         set_round_time/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -25,7 +28,12 @@
 -record(state, {info_hash = none   :: none | binary(),
                 round = 0          :: integer(),
                 optimistic_unchoke_pid = none :: none | pid(),
-                opt_unchoke_chain = [] :: [pid()]}).
+                opt_unchoke_chain = [] :: [pid()],
+                min_upload_slots :: non_neg_integer(),
+                max_upload_slots :: non_neg_integer(),
+                round_time = 10000 :: timeout(),
+                round_tref :: reference()
+               }).
 
 -record(rechoke_info, {pid :: pid(),
                        %% Peers state:
@@ -39,9 +47,6 @@
                        rate :: float() }).
 
 -define(SERVER, ?MODULE).
-
--define(ROUND_TIME, 10000).
--define(DEFAULT_OPTIMISTIC_SLOTS, 1).
 
 
 %%====================================================================
@@ -66,18 +71,53 @@ perform_rechoke() ->
 monitor(Pid) ->
     gen_server:call(?SERVER, {monitor, Pid}).
 
+set_upload_slots(MinUploadSlots, MaxUploadSlots) ->
+    gen_server:call(?SERVER, {set_upload_slots, MinUploadSlots, MaxUploadSlots}).
+
+set_round_time(RoundTime) ->
+    gen_server:call(?SERVER, {set_round_time, RoundTime}).
+
 %%--------------------------------------------------------------------
 %%% Internal functions
 %%--------------------------------------------------------------------
 
+rechoke(Chain, #state{min_upload_slots=MinUploadSlots,
+                      max_upload_slots=MaxUploadSlots}) ->
+    rechoke(Chain, MinUploadSlots, MaxUploadSlots).
+
 %% @doc Recalculate the choke/unchoke state of peers.
 %% @end
-rechoke(Chain) ->
+rechoke(Chain, MinUploadSlots, MaxUploadSlots) ->
     Peers = build_rechoke_info(Chain),
     {PreferredDown, PreferredSeed} = split_preferred(Peers),
-    PreferredSet = find_preferred_peers(PreferredDown, PreferredSeed),
+    PreferredSet = find_preferred_peers(PreferredDown, PreferredSeed, MaxUploadSlots),
+    PSetSize = sets:size(PreferredSet),
+    OptSlots = optimistics(PSetSize, MinUploadSlots, MaxUploadSlots),
+    lager:info("Rechoke. Min=~p, max=~p, opt=~p, pref=~p.",
+               [MinUploadSlots, MaxUploadSlots, OptSlots, PSetSize]),
     ToChoke = rechoke_unchoke(Peers, PreferredSet),
-    rechoke_choke(ToChoke, 0, optimistics(PreferredSet)).
+    rechoke_choke(ToChoke, 0, OptSlots).
+
+optimistics(PSetSize, MinUploadSlots, MaxUploadSlots) ->
+    max(MinUploadSlots, MaxUploadSlots - PSetSize).
+
+
+%% Upload slot calculation
+calc_max_upload_slots() ->
+    case etorrent_config:max_upload_slots() of
+        auto ->
+            Rate = etorrent_config:max_upload_rate(),
+            case Rate of
+                N when N =<  0 -> 7; %% Educated guess
+                N when N  <  9 -> 2;
+                N when N  < 15 -> 3;
+                N when N  < 42 -> 4;
+                N ->
+                    round(math:sqrt(N * 0.8))
+            end;
+        N when is_integer(N) ->
+            N
+    end.
 
 
 %% TODO: It is not per se given that this function belongs here. It is
@@ -172,23 +212,6 @@ insert_new_peer_into_chain(Pid, [_|_] = Chain) ->
     {Front, Back} = lists:split(Index, Chain),
     Front ++ [Pid | Back].
 
-%% Upload slot calculation
-upload_slots() ->
-    case etorrent_config:max_upload_slots() of
-        auto ->
-            Rate = etorrent_config:max_upload_rate(),
-            case Rate of
-                N when N =<  0 -> 7; %% Educated guess
-                N when N  <  9 -> 2;
-                N when N  < 15 -> 3;
-                N when N  < 42 -> 4;
-                N ->
-                    round(math:sqrt(N * 0.8))
-            end;
-        N when is_integer(N) ->
-            N
-    end.
-
 split_preferred(Peers) ->
     {Downs, Leechs} = split_preferred_peers(Peers, [], []),
     %% Notice that the rate on which we sort is negative,
@@ -201,7 +224,7 @@ split_preferred(Peers) ->
 %% there are more eligible downloaders then we have slots, leave the slots
 %% unchanged. Otherwise, shuffle some of the D slots onto the S slots.
 shuffle_leecher_slots(S, D, Len) ->
-    case lists:max([0, D - Len ]) of
+    case max(0, D - Len) of
         0 -> {S, D};
         N -> {S + N, D - N}
     end.
@@ -211,7 +234,7 @@ shuffle_leecher_slots(S, D, Len) ->
 %% how many slots we need for S. If we need all of them, we simply return.
 %% Otherwise, We have K excess slots we can move from S to D.
 shuffle_seeder_slots(S, D, SLen) ->
-    case lists:max([0, S - SLen]) of
+    case max(0, S - SLen) of
         0 -> {S, D};
         K -> {S - K, D + K}
     end.
@@ -220,10 +243,13 @@ shuffle_seeder_slots(S, D, SLen) ->
 %% for Leechers, say, we push those onto the seeder group and vice versa.
 %% This ensures we use all the slots we can possibly use. We return a set
 %% of the peers we prefer.
-find_preferred_peers(SDowns, SLeechs) ->
-    MaxUploads = upload_slots(),
-    DSlots = lists:max([1, round(MaxUploads * 0.7)]),
-    SSlots = lists:max([1, round(MaxUploads * 0.3)]),
+find_preferred_peers(_SDowns, _SLeechs, 0) ->
+    lager:warning("MaxUploadSlots = 0."),
+    sets:new();
+find_preferred_peers(SDowns, SLeechs, MaxUploadSlots) ->
+    %% This is not accurate.
+    DSlots = max(1, round(MaxUploadSlots * 0.7)),
+    SSlots = max(1, round(MaxUploadSlots * 0.3)),
     {SSlots2, DSlots2} = shuffle_leecher_slots(SSlots, DSlots, length(SDowns)),
     {SSlots3, DSlots3} =
         shuffle_seeder_slots(SSlots2, DSlots2, length(SLeechs)),
@@ -240,13 +266,6 @@ rechoke_unchoke([P | Next], PSet) ->
         false ->
             [P | rechoke_unchoke(Next, PSet)]
     end.
-
-optimistics(PSet) ->
-    MinUp = case application:get_env(etorrent, min_uploads) of
-                {ok, N} -> N;
-                undefined -> ?DEFAULT_OPTIMISTIC_SLOTS
-            end,
-    lists:max([MinUp, upload_slots() - sets:size(PSet)]).
 
 rechoke_choke([], _Count, _Optimistics) ->
     ok;
@@ -305,8 +324,10 @@ split_preferred_peers(
 
 %% @private
 init([]) ->
-    erlang:send_after(?ROUND_TIME, self(), round_tick),
-    {ok, #state{ }}.
+    MaxUploadSlots = calc_max_upload_slots(),
+    MinUploadSlots = etorrent_config:optimistic_slots(),
+    S = #state{ min_upload_slots=MinUploadSlots, max_upload_slots=MaxUploadSlots },
+    {ok, start_round_timer(S)}.
 
 %% @private
 handle_call({monitor, Pid}, _From, S) ->
@@ -314,6 +335,12 @@ handle_call({monitor, Pid}, _From, S) ->
     NewChain = insert_new_peer_into_chain(Pid, S#state.opt_unchoke_chain),
     perform_rechoke(),
     {reply, ok, S#state { opt_unchoke_chain = NewChain }};
+handle_call({set_upload_slots, MinUploadSlots, MaxUploadSlots}, _From, S) ->
+    {reply, ok, S#state{ min_upload_slots=MinUploadSlots,
+                         max_upload_slots=MaxUploadSlots }};
+handle_call({set_round_time, RoundTime}, _From, S) ->
+    {reply, ok, start_round_timer(cancel_round_timer(S#state{ round_time=RoundTime}))};
+
 handle_call(Request, _From, State) ->
     lager:error([unknown_peer_group_call, Request]),
     Reply = ok,
@@ -321,32 +348,27 @@ handle_call(Request, _From, State) ->
 
 %% @private
 handle_cast(rechoke, #state { opt_unchoke_chain = Chain } = S) ->
-    rechoke(Chain),
-    {noreply, S};
-handle_cast(_Msg, State) ->
-    {noreply, State}.
+    rechoke(Chain, S),
+    {noreply, S}.
 
 %% @private
 handle_info(round_tick, S) ->
+    lager:info("Round tick."),
     R = case S#state.round of
         0 ->
             {ok, NS} = advance_optimistic_unchoke(S),
-            rechoke(NS#state.opt_unchoke_chain),
-            {noreply, NS#state { round = 2}};
+            rechoke(NS#state.opt_unchoke_chain, S),
+            2;
         N when is_integer(N) ->
-            rechoke(S#state.opt_unchoke_chain),
-            {noreply, S#state{round = S#state.round - 1}}
+            rechoke(S#state.opt_unchoke_chain, S),
+            S#state.round - 1
     end,
-    erlang:send_after(?ROUND_TIME, self(), round_tick),
-    R;
+    {noreply, start_round_timer(S#state{round=R})};
 handle_info({'DOWN', _Ref, process, Pid, _Reason}, S) ->
     NewChain = lists:delete(Pid, S#state.opt_unchoke_chain),
     %% Rechoke the chain if the peer was among the unchoked
-    rechoke(NewChain),
-    {noreply, S#state { opt_unchoke_chain = NewChain }};
-handle_info(Info, State) ->
-    lager:info([unknown_info_msg, ?MODULE, Info]),
-    {noreply, State}.
+    rechoke(NewChain, S),
+    {noreply, S#state { opt_unchoke_chain = NewChain }}.
 
 %% @private
 terminate(_Reason, _S) ->
@@ -356,3 +378,11 @@ terminate(_Reason, _S) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
+%%====================================================================
+
+start_round_timer(S=#state{round_time=Time}) ->
+    S#state{round_tref = erlang:send_after(Time, self(), round_tick)}.
+
+cancel_round_timer(S=#state{round_tref=TimerRef}) ->
+    erlang:cancel_timer(TimerRef),
+    S#state{round_tref=undefined}.

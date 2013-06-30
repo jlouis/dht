@@ -15,7 +15,7 @@
 -include("etorrent_rate.hrl").
 
 %% API
--export([start_link/7,
+-export([start_link/8,
         choke/1,
         unchoke/1,
         initialize/2,
@@ -39,8 +39,12 @@
          code_change/3,
          format_status/2]).
 
+%% interspection helpers
+-export([has_incoming_requests/1]).
+
 -type torrentid() :: etorrent_types:torrent_id().
 -type pieceindex() :: etorrent_types:piece_index().
+-type ipaddr() :: etorrent_types:ipaddr().
 -type pieceset() :: etorrent_pieceset:t().
 -type peerstate() :: etorrent_peerstate:peerstate().
 -type peerconf() :: etorrent_peerconf:peerconf().
@@ -48,6 +52,7 @@
 -record(state, {
     torrent_id = exit(required) :: integer(),
     info_hash = exit(required) ::  binary(),
+    metadata_size :: non_neg_integer(),
     socket = none  :: none | inet:socket(),
     send_pid :: pid(),
 
@@ -57,7 +62,13 @@
     remote = exit(required) :: peerstate(),
     local  = exit(required) :: peerstate(),
     config = exit(required) :: peerconf(),
-    extensions = etorrent_ext:new([ut_metadata])
+
+    extensions :: term(),
+    reject_after_choke_tref :: term(),
+    %% Does remote peer support DHT?
+    remote_dht :: boolean(),
+    remote_ip :: ipaddr(),
+    remote_port :: inet:port_number()
     }).
 
 %% Default size for a chunk. All clients use this.
@@ -66,6 +77,8 @@
 -define(HIGH_WATERMARK, 30).
 %% Requeue when there are less than this number of pieces in queue
 -define(LOW_WATERMARK, 5).
+%% Reject all incoming requests after this timeout (in ms) passed.
+-define(REJECT_AFTER_CHOKE_TIMEOUT, 30000).
 
 %%====================================================================
 
@@ -101,10 +114,11 @@ group_name(TorrentID) ->
 
 %% @doc Starts the server
 %% @end
-start_link(TrackerUrl, LocalPeerId, InfoHash, Id, {IP, Port}, Caps, Socket)
-  when is_binary(LocalPeerId) ->
-    gen_server:start_link(?MODULE, [TrackerUrl, LocalPeerId, InfoHash,
-                                    Id, {IP, Port}, Caps, Socket], []).
+start_link(TrackerUrl, LocalPeerID, RemotePeerID,
+           InfoHash, Id, {IP, Port}, Caps, Socket)
+  when is_binary(LocalPeerID), is_binary(RemotePeerID) ->
+    gen_server:start_link(?MODULE, [TrackerUrl, LocalPeerID, RemotePeerID,
+                                    InfoHash, Id, {IP, Port}, Caps, Socket], []).
 
 %% @doc Gracefully ask the server to stop.
 %% @end
@@ -124,7 +138,7 @@ unchoke(Pid) ->
     gen_server:cast(Pid, unchoke).
 
 %% @doc Rerun `poll_local_rqueue'.
-%% <p>The intended caller of this function is the {@link etorrent_reordered}</p>
+%% <p>The intended caller of this function is the {@link etorrent_pending}</p>
 %% @end
 update_queue(Pid) ->
     gen_server:cast(Pid, update_queue).
@@ -166,115 +180,18 @@ check_choke(Pid) ->
     gen_server:cast(Pid, check_choke).
 
 
+has_incoming_requests(Pid) ->
+    gen_server:call(Pid, has_incoming_requests).
 
-%% @doc Check if a peer provided an interesting piece.
-%% This function should be called when a have-message is received.
-%% If the piece is interesting and we are not already interested a
-%% status update is sent to the local process to trigger a state
-%% change.
-%% @end
--spec check_local_interest(pieceindex() | pieceset(),
-                           peerstate(), pid()) -> peerstate().
-check_local_interest(Pieces, Local, SendPid) ->
-    case etorrent_peerstate:interesting(Pieces, Local) of
-        Local ->
-            Local;
-        NewLocal ->
-            ok = etorrent_peer_send:interested(SendPid),
-            NewLocal
-    end.
-
-
-%% @doc Check if a peer still provides interesting pieces.
-%% This function should be called when a have-message is sent. If the
-%% peer no longer provides any interesting pieces and we are interested
-%% a status update is sent to the local process to trigger a state change.
-%% @end
--spec recheck_local_interest(pieceindex(), peerstate(),
-                             peerstate(), pid()) -> peerstate().
-recheck_local_interest(Piece, Remote, Local, SendPid) ->
-    case etorrent_peerstate:interesting(Piece, Remote, Local) of
-        Local ->
-            Local;
-        NewLocal ->
-            ok = etorrent_peer_send:not_interested(SendPid),
-            NewLocal
-    end.
-
-
-%% @doc Check the remote peer has become a seeder
-%% This is only worth checking if we are also seeding the torrent.
-%% We are expected to close the connection if both peers are seeders,
-%% exit with reason badarg if we find ourselves in this situation,
-%% it should have been handled elsewhere.
-%% Return an updated copy of the remote state and send a notification
-%% to ourselves if the remote peer became a seeder.
-%% @end
--spec check_remote_seeder(peerstate(), peerstate()) -> peerstate().
-check_remote_seeder(Remote, Local) ->
-    case etorrent_peerstate:seeding(Remote, Local) of
-        Remote ->
-            Remote;
-        _ ->
-            exit(seeder)
-    end.
-
-
-%% @private Check if the local request queue is low on requests.
-%% An updated copy of the local peer state is returned, including any new requests.
--spec poll_local_rqueue(tservices(), pid(), peerstate(), peerstate()) -> peerstate().
-poll_local_rqueue(Download, SendPid, Remote, Local) ->
-    case etorrent_peerstate:needreqs(Local) of
-        false ->
-            Local;
-        true  ->
-            Requests = etorrent_peerstate:requests(Local),
-            Pieces = etorrent_peerstate:pieces(Remote),
-            Needs = etorrent_rqueue:needs(Requests),
-            case etorrent_download:request_chunks(Needs, Pieces, Download) of
-                {ok, assigned} ->
-                    Local;
-                {ok, Chunks} ->
-                    [etorrent_peer_send:request(SendPid, Chunk)
-                    || Chunk <- Chunks],
-                    NewRequests = etorrent_rqueue:push(Chunks, Requests),
-                    etorrent_peerstate:requests(NewRequests, Local)
-            end
-    end.
-
-%% @private Check if a new asynchronous chunk read needs to be started.
-%% A new chunk read should be started when a REQUEST message is pushed into an
-%% empty request queue. The calling code is expected to only call this function
-%% when the local peer is expected to send a PIECE request.
-push_remote_rqueue_hook(TorrentID, Requests) ->
-    case etorrent_rqueue:size(Requests) of
-        1 ->
-            {Piece, Offset, Length} = etorrent_rqueue:peek(Requests),
-            {ok, _} = etorrent_io:aread_chunk(TorrentID, Piece, Offset, Length),
-            ok;
-        N when N > 1 ->
-            ok
-    end.
-
-
-%% @private Check if a new asynchronous chunk read needs to be started.
-%% A new chunk read should be started when a REQUEST message is popped from a non
-%% empty request queue. The calling code is expected to call this function with
-%% the most recent version of the queue.
-pop_remote_rqueue_hook(TorrentID, Requests) ->
-    case etorrent_rqueue:size(Requests) of
-        0 ->
-            ok;
-        N when N > 0 ->
-            {Piece, Offset, Length} = etorrent_rqueue:peek(Requests),
-            {ok, _} = etorrent_io:aread_chunk(TorrentID, Piece, Offset, Length),
-            ok
-    end.
-
+%% ==================================================================
 
 %% @private
-init([TrackerUrl, LocalPeerID, InfoHash, TorrentID, {IP, Port}, Caps, Socket]) ->
-    random:seed(now()),
+init([TrackerUrl, LocalPeerID, RemotePeerID,
+      InfoHash, TorrentID, {IP, Port}, Caps, Socket]) ->
+    lager:info("New peer ~p:~p is known as ~p for #~p. Caps: ~p.",
+               [IP, Port, RemotePeerID, TorrentID, Caps]),
+
+    etorrent_utils:init_random_generator(),
     %% Use socket handle as remote peer-id.
     register_server(TorrentID, Socket),
     Download = etorrent_download:await_servers(TorrentID),
@@ -288,21 +205,38 @@ init([TrackerUrl, LocalPeerID, InfoHash, TorrentID, {IP, Port}, Caps, Socket]) -
     Remote = etorrent_peerstate:new(Numpieces, 2, 250),
 
     Extended = proplists:get_bool(extended_messaging, Caps),
+    Fast     = proplists:get_bool(fast_extension, Caps),
+    %% Does remote peer support DHT?
+    DHT      = proplists:get_bool(dht_support, Caps),
+    [lager:info("Remote peer supports DHT.") || DHT],
     Config0  = etorrent_peerconf:new(),
     Config1  = etorrent_peerconf:localid(LocalPeerID, Config0),
-    Config   = etorrent_peerconf:extended(Extended, Config1),
+    Config2  = etorrent_peerconf:remoteid(RemotePeerID, Config1),
+    Config3  = etorrent_peerconf:extended(Extended, Config2),
+    Config   = etorrent_peerconf:fast(Fast, Config3),
+    IsPrivate = etorrent_info:is_private(TorrentID),
+    ExtNames = [ut_metadata]
+            ++ [ut_pex || etorrent_config:pex()],
+    Exts     = etorrent_ext:new(ExtNames, [private || IsPrivate]),
 
+    MetadataSize = etorrent_info:metadata_size(TorrentID),
 
-    ok = etorrent_table:new_peer(TrackerUrl, IP, Port, TorrentID, self(), leeching),
+    ok = etorrent_table:new_peer(TrackerUrl, IP, Port, TorrentID, self(),
+                                 leeching, Fast, RemotePeerID),
     ok = etorrent_choker:monitor(self()),
     State = #state{
         torrent_id=TorrentID,
         info_hash=InfoHash,
+        metadata_size=MetadataSize,
         socket=Socket,
         download=Download,
         remote=Remote,
         local=Local,
-        config=Config},
+        config=Config,
+        extensions=Exts,
+        remote_dht=DHT,
+        remote_ip=IP,
+        remote_port=Port},
     {ok, State}.
 
 %% @private
@@ -323,6 +257,7 @@ handle_cast({incoming_msg, Msg}, S) ->
         {stop, Reason, NS} -> {stop, Reason, NS}
     end;
 
+%% Block the remote node (send from etorrent_choker).
 handle_cast(choke, State) ->
     #state{
         torrent_id=TorrentID, send_pid=SendPid,
@@ -330,26 +265,37 @@ handle_cast(choke, State) ->
     case etorrent_peerstate:choked(Remote) of
         false ->
             Reqs = etorrent_peerstate:requests(Remote),
-            case etorrent_peerconf:fast(Config) of
-                true ->
-                    [etorrent_peer_send:reject(SendPid, Index, Offset, Length)
-                    || {Index, Offset, Length} <- etorrent_rqueue:to_list(Reqs)];
-                false ->
-                    []
+            {Remote1, RejectTRef} =
+            case {etorrent_peerconf:fast(Config),
+                  etorrent_rqueue:is_empty(Reqs)} of
+                {true, false} ->
+                    %% Will reject incoming requests after the timeout.
+                    {ok, TRef} = timer:send_after(?REJECT_AFTER_CHOKE_TIMEOUT,
+                                                   reject_after_choke_timeout),
+                    lager:debug("Create a reject timeout ~p.", [TRef]),
+                    {Remote, TRef};
+                {false, false} ->
+                    %% Throw away all incoming requests.
+                    NewReqs = etorrent_rqueue:flush(Reqs),
+                    TmpRemote = etorrent_peerstate:requests(NewReqs, Remote),
+                    {TmpRemote, undefined};
+                {_, _} ->
+                    {Remote, undefined}
             end,
             etorrent_peer_states:set_local_choke(TorrentID, self()),
             etorrent_peer_send:choke(SendPid),
-            NewReqs = etorrent_rqueue:flush(Reqs),
-            TmpRemote = etorrent_peerstate:requests(NewReqs, Remote),
-            NewRemote = etorrent_peerstate:choked(true, TmpRemote),
-            NewState = State#state{remote=NewRemote},
+            Remote2 = etorrent_peerstate:choked(true, Remote1),
+            NewState = State#state{remote=Remote2,
+                                   reject_after_choke_tref=RejectTRef},
             {noreply, NewState};
         true ->
             {noreply, State}
     end;
 
 handle_cast(unchoke, State) ->
-    #state{torrent_id=TorrentID, send_pid=SendPid, remote=Remote} = State,
+    #state{torrent_id=TorrentID, send_pid=SendPid, remote=Remote,
+           reject_after_choke_tref=RejectTRef} = State,
+    [timer:cancel(RejectTRef) || RejectTRef =/= undefined],
     case etorrent_peerstate:choked(Remote) of
         false ->
             %% @todo handle duplicate unchoke?
@@ -358,7 +304,8 @@ handle_cast(unchoke, State) ->
             etorrent_peer_states:set_local_unchoke(TorrentID, self()),
             etorrent_peer_send:unchoke(SendPid),
             NewRemote = etorrent_peerstate:choked(false, Remote),
-            NewState = State#state{remote=NewRemote},
+            NewState = State#state{remote=NewRemote,
+                                   reject_after_choke_tref=undefined},
             {noreply, NewState}
     end;
 
@@ -376,6 +323,13 @@ handle_cast(check_choke, State) ->
     end,
     {noreply, State};
 
+%% The chunk manager wants new chunks.
+handle_cast(update_queue, State) ->
+    #state{download=Download, send_pid=SendPid, local=Local, remote=Remote} = State,
+    NewLocal = poll_local_rqueue(Download, SendPid, Remote, Local),
+    NewState = State#state{local=NewLocal},
+    {noreply, NewState};
+
 handle_cast(interested, State) ->
     self() ! {interested, true},
     {noreply, State};
@@ -383,14 +337,21 @@ handle_cast(interested, State) ->
 %% TODO: this cause death of `etorrent_peer_sup' with reason 
 %%       `reached_max_restart_intensity'.
 handle_cast(stop, S) ->
-    {stop, normal, S};
-
-handle_cast(Msg, State) ->
-    lager:error("Unknown handle_cast: ~p", [Msg]),
-    {noreply, State}.
+    {stop, normal, S}.
 
 
 %% @private
+handle_info(reject_after_choke_timeout, State) ->
+    lager:debug("Handle request reject timeout.", []),
+    #state{remote=Remote, send_pid=SendPid} = State,
+    Reqs = etorrent_peerstate:requests(Remote), 
+    [etorrent_peer_send:reject(SendPid, Index, Offset, Length)
+    || {Index, Offset, Length} <- etorrent_rqueue:to_list(Reqs)],
+    NewReqs = etorrent_rqueue:flush(Reqs),
+    Remote1 = etorrent_peerstate:requests(NewReqs, Remote),
+    NewState = State#state{remote=Remote1, reject_after_choke_tref=undefined},
+    {noreply, NewState};
+
 handle_info({chunk, {fetched, Index, Offset, Length, _}}, State) ->
     #state{send_pid=SendPid, local=Local} = State,
     Requests = etorrent_peerstate:requests(Local),
@@ -407,9 +368,11 @@ handle_info({chunk, {fetched, Index, Offset, Length, _}}, State) ->
     {noreply, NewState};
 
 handle_info({chunk, {contents, Index, Offset, Length, Data}}, State) ->
-    #state{torrent_id=TorrentID, send_pid=SendPid, remote=Remote} = State,
+    #state{torrent_id=TorrentID, send_pid=SendPid, remote=Remote,
+           config=Config} = State,
     Requests = etorrent_peerstate:requests(Remote),
     Choked = etorrent_peerstate:choked(Remote),
+    Fast = etorrent_peerconf:fast(Config),
     case etorrent_rqueue:peek(Requests) of
         %% When the remote peer enters the choked state with a non-empty
         %% request queue we are expecting to receive the result of the last
@@ -427,13 +390,16 @@ handle_info({chunk, {contents, Index, Offset, Length, Data}}, State) ->
             NewRemote = etorrent_peerstate:requests(NewRequests, Remote),
             NewState = State#state{remote=NewRemote},
             ok = etorrent_peer_send:piece(SendPid, Index, Offset, Length, Data),
-            % Already in peer_send? It cause double-rating!
+            % Is this call already in peer_send? It causes double-rating!
             % ok = etorrent_torrent:statechange(TorrentID, [{add_upload, Length}]),
             ok = pop_remote_rqueue_hook(TorrentID, NewRequests),
             {noreply, NewState};
         %% Same as clause #2. Peer returned to unchoked state. Non empty queue
         %% while choked is considered invalid. It should have been flushed.
         {_Index, _Offset, _Length} when not Choked ->
+            {noreply, State};
+        %% We still waiting a timeout to reject incoming requests.
+        {_Index, _Offset, _Length} when Choked, Fast ->
             {noreply, State}
     end;
 
@@ -447,13 +413,6 @@ handle_info({piece, {valid, Piece}}, State) ->
     {noreply, NewState};
 
 handle_info({piece, {unassigned, _}}, State) ->
-    #state{download=Download, send_pid=SendPid, local=Local, remote=Remote} = State,
-    NewLocal = poll_local_rqueue(Download, SendPid, Remote, Local),
-    NewState = State#state{local=NewLocal},
-    {noreply, NewState};
-
-%% The chunk manager wants new chunks.
-handle_info(update_queue, State) ->
     #state{download=Download, send_pid=SendPid, local=Local, remote=Remote} = State,
     NewLocal = poll_local_rqueue(Download, SendPid, Remote, Local),
     NewState = State#state{local=NewLocal},
@@ -473,10 +432,6 @@ handle_info({download, Update}, State) ->
             
 handle_info({tcp, _, _}, State) ->
     lager:error("Detected wrong controller for TCP socket"),
-    {noreply, State};
-
-handle_info(Info, State) ->
-    lager:error("Unkonwn handle_info: ~p", [Info]),
     {noreply, State}.
 
 %% @private
@@ -484,13 +439,17 @@ terminate(_Reason, _S) ->
     ok.
 
 %% @private
-handle_call(Request, _From, State) ->
-    lager:error("Unknown handle_call: ~p", [Request]),
-    {noreply, State}.
+handle_call(has_incoming_requests, _From, State=#state{remote=Remote}) ->
+    Requests = etorrent_peerstate:requests(Remote),
+    IsEmpty = etorrent_rqueue:is_empty(Requests),
+    {reply, not IsEmpty, State}.
 
 %% @private
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+
+%% ==================================================================
 
 format_status(_Opt, [_Pdict, S]) ->
     #state{config=Config} = S,
@@ -564,10 +523,12 @@ handle_message(not_interested, State) ->
     #state{torrent_id=TorrentID, remote=Remote} = State,
     ok = etorrent_peer_states:set_not_interested(TorrentID, self()),
     ok = etorrent_peer_control:check_choke(self()),
+    %% FIXME: badarg
     NewRemote = etorrent_peerstate:interested(false, Remote),
     NewState = State#state{remote=NewRemote},
     {ok, NewState};
 
+%% Handle incoming chunk request from wire.
 handle_message({request, Index, Offset, Length}, State) ->
     #state{torrent_id=TorrentID, remote=Remote, config=Config, send_pid=SendPid} = State,
     Requests = etorrent_peerstate:requests(Remote),
@@ -626,9 +587,31 @@ handle_message({cancel, Index, Offset, Length}, State) ->
             NewReqs = etorrent_rqueue:delete(Index, Offset, Length, Reqs),
             NewRemote = etorrent_peerstate:requests(NewReqs, Remote),
             NewState = State#state{remote=NewRemote},
-            {noreply, NewState};
+            {ok, NewState};
         false ->
-            {noreply, State}
+            {ok, State}
+    end;
+
+handle_message({reject_request, Index, Offset, Length}, State) ->
+    %% Reject Request notifies a requesting peer that its request will 
+    %% not be satisfied.
+    #state{download=Download, remote=Remote, config=Config} = State,
+    %% If the fast extension is disabled and a peer receives a reject 
+    %% request then the peer MUST close the connection.
+    etorrent_peerconf:fast(Config) orelse erlang:error(badarg),
+    Reqs = etorrent_peerstate:requests(Remote),
+    case etorrent_rqueue:member(Index, Offset, Length, Reqs) of
+        true ->
+            NewReqs = etorrent_rqueue:delete(Index, Offset, Length, Reqs),
+            Chunks = [{Index, Offset, Length}],
+            ok = etorrent_download:chunks_dropped(Chunks, Download),
+            NewRemote = etorrent_peerstate:requests(NewReqs, Remote),
+            NewState = State#state{remote=NewRemote},
+            {ok, NewState};
+        false ->
+            %% If a peer receives a reject for a request that was never sent
+            %% then the peer SHOULD close the connection.
+            {ok, State}
     end;
 
 handle_message({suggest, Piece}, State) ->
@@ -651,6 +634,11 @@ handle_message({have, Piece}, State) ->
     TmpLocal  = check_local_interest(Piece, Local, SendPid),
     NewRemote = check_remote_seeder(TmpRemote, TmpLocal),
     NewLocal  = poll_local_rqueue(Download, SendPid, NewRemote, TmpLocal),
+    Changed   = etorrent_peerstate:seeder(Remote) =/=
+                etorrent_peerstate:seeder(NewRemote),
+    Changed andalso etorrent_table:statechange_peer(self(), seeder),
+    Progress = etorrent_pieceset:progress(Pieceset),
+    etorrent_table:statechange_peer(self(), {progress, Progress}),
     NewState  = State#state{remote=NewRemote, local=NewLocal},
     {ok, NewState};
 
@@ -660,10 +648,10 @@ handle_message(have_none, State) ->
     NewRemote = etorrent_peerstate:hasnone(Remote),
     Pieceset  = etorrent_peerstate:pieces(NewRemote),
     ok        = etorrent_scarcity:add_peer(TorrentID, Pieceset),
+    etorrent_table:statechange_peer(self(), {progress, 0.0}),
     NewState  = State#state{remote=NewRemote},
     {ok, NewState};
 
-%%IsSeeder andalso etorrent_table:statechange_peer(self(), seeder),
 handle_message(have_all, State) ->
     #state{torrent_id=TorrentID, send_pid=SendPid, download=Download, remote=Remote, local=Local, config=Config} = State,
     etorrent_peerconf:fast(Config) orelse erlang:error(badarg),
@@ -673,6 +661,8 @@ handle_message(have_all, State) ->
     TmpLocal  = check_local_interest(Pieceset, Local, SendPid),
     NewRemote = check_remote_seeder(TmpRemote, TmpLocal),
     NewLocal  = poll_local_rqueue(Download, SendPid, NewRemote, TmpLocal),
+    etorrent_table:statechange_peer(self(), seeder),
+    etorrent_table:statechange_peer(self(), {progress, 1.0}),
     NewState  = State#state{remote=NewRemote, local=NewLocal},
     {ok, NewState};
 
@@ -684,6 +674,9 @@ handle_message({bitfield, Bitfield}, State) ->
     TmpLocal  = check_local_interest(Pieceset, Local, SendPid),
     NewRemote = check_remote_seeder(TmpRemote, TmpLocal),
     NewLocal  = poll_local_rqueue(Download, SendPid, NewRemote, TmpLocal),
+    Progress = etorrent_pieceset:progress(Pieceset),
+    Progress == 100 andalso etorrent_table:statechange_peer(self(), seeder),
+    etorrent_table:statechange_peer(self(), {progress, Progress}),
     NewState  = State#state{remote=NewRemote, local=NewLocal},
     {ok, NewState};
 
@@ -714,6 +707,10 @@ handle_message({extended, 0, Data}, State) ->
     lager:debug("Getting a supported extension list from the peer.", []),
     etorrent_peerconf:extended(Config) orelse erlang:error(badarg),
     {ok, Msg} = etorrent_bcoding:decode(Data),
+    lager:debug("Extended handshake dict: ~p", [Msg]),
+    ClientVersion = proplists:get_value(<<"v">>, Msg),
+    [etorrent_table:statechange_peer(self(), {version, ClientVersion})
+     || is_binary(ClientVersion)],
     Exts2 = etorrent_ext:handle_handshake_respond(Msg, Exts),
     {ok, State#state{extensions=Exts2}};
 
@@ -722,20 +719,41 @@ handle_message({extended, ExtId, Data}, State) ->
     {ok, Msg} = etorrent_ext:decode_msg(ExtId, Data, Exts),
     handle_ext_message(Msg, State);
 
+handle_message({port, PortNum}, State=#state{remote_dht=true,
+                                             remote_ip=RemoteIP}) ->
+    lager:info("Remote DHT-address is ~s.",
+               [etorrent_utils:format_address({RemoteIP, PortNum})]),
+    LocalDHT = etorrent_config:dht(),
+    [etorrent_dht_state:safe_insert_node(RemoteIP, PortNum) || LocalDHT],
+    {ok, State};
+
 handle_message(Unknown, State) ->
     lager:error("Unknown handle_message: ~p", [Unknown]),
     {stop, normal, State}.
 
 
 handle_ext_message({metadata_request, PieceNum}, State) ->
-    #state{torrent_id=TorrentID, extensions=Exts, send_pid=SendPid} = State,
+    #state{torrent_id=TorrentID, extensions=Exts, send_pid=SendPid,
+           metadata_size=MetadataSize} = State,
     %% Get data.
     PieceData = etorrent_info:get_piece(TorrentID, PieceNum),
     %% Form an answer.
-    Answer = {metadata_data, PieceNum, byte_size(PieceData), PieceData},
+    Answer = {metadata_data, PieceNum, MetadataSize, PieceData},
     {ok, Encoded} = etorrent_ext:encode_msg(ut_metadata, Answer, Exts),
     %% Send the answer.
     etorrent_peer_send:ext_msg(SendPid, Encoded),
+    {ok, State};
+handle_ext_message({pex, PL}, State=#state{torrent_id=TorrentID,
+                                           remote_ip=RemoteIP,
+                                           remote_port=RemotePort}) ->
+    lager:debug("Handle PEX-message: ~p", [PL]),
+    Added = proplists:get_value(added, PL),
+    Peers = [{IP, Port} || {IP, Port, _Flags} <- Added],
+    lager:info("Added ~B peers from ~s for ~p.",
+               [length(Peers),
+                etorrent_utils:format_address({RemoteIP, RemotePort}),
+                TorrentID]),
+    etorrent_peer_mgr:add_peers(TorrentID, Peers),
     {ok, State};
 handle_ext_message(_, _State) ->
     error(unknown_extended_message).
@@ -743,19 +761,20 @@ handle_ext_message(_, _State) ->
 % @doc Initialize the connection, depending on the way the connection is
 connection_initialize(incoming, State) ->
     #state{
-        torrent_id=TorrentID,
         socket=Socket,
         info_hash=Infohash,
         local=Local,
         config=Config,
-        extensions=Exts} = State,
+        extensions=Exts,
+        metadata_size=MetadataSize,
+        remote_dht=RemoteDHT} = State,
     Extended = etorrent_peerconf:extended(Config),
     LocalID = etorrent_peerconf:localid(Config),
     Valid = etorrent_peerstate:pieces(Local),
     case etorrent_proto_wire:complete_handshake(Socket, Infohash, LocalID) of
         ok ->
-            SendPid = complete_connection_setup(Socket, TorrentID, Extended, 
-                                                Valid, Exts),
+            SendPid = complete_connection_setup(Socket, Extended, Valid,
+                                                Exts, MetadataSize, RemoteDHT),
             NewState = State#state{send_pid=SendPid},
             {ok, NewState};
         {error, stop} ->
@@ -764,38 +783,145 @@ connection_initialize(incoming, State) ->
 
 connection_initialize(outgoing, State) ->
     #state{
-        torrent_id=TorrentID,
         socket=Socket,
         local=Local,
         config=Config,
-        extensions=Exts} = State,
+        extensions=Exts,
+        metadata_size=MetadataSize,
+        remote_dht=RemoteDHT} = State,
     Extended = etorrent_peerconf:extended(Config),
     Valid = etorrent_peerstate:pieces(Local),
-    SendPid = complete_connection_setup(Socket, TorrentID, Extended, 
-                                        Valid, Exts),
+    SendPid = complete_connection_setup(Socket, Extended, Valid, Exts,
+                                        MetadataSize, RemoteDHT),
     NewState = State#state{send_pid=SendPid},
     {ok, NewState}.
 
 %%--------------------------------------------------------------------
-%% Function: complete_connection_setup(Socket, TorrentId, ExtendedMSG)
-%%              -> SendPid
 %% Description: Do the bookkeeping needed to set up the peer:
 %%    * enable passive messaging mode on the socket.
 %%    * Start the send pid
 %%    * Send off the bitfield
 %%--------------------------------------------------------------------
-complete_connection_setup(Socket, TorrentID, Extended, Valid, Exts) ->
+complete_connection_setup(Socket, Extended, Valid, Exts, MetadataSize,
+                          RemoteDHT) ->
     SendPid = etorrent_peer_send:await_server(Socket),
+    LocalDHT = etorrent_config:dht(),
+    [etorrent_peer_send:port(SendPid, etorrent_config:dht_port())
+     || RemoteDHT, LocalDHT],
     Bitfield = etorrent_pieceset:to_binary(Valid),
-    Extra = add_metadata_size(Exts, TorrentID),
+    Extra = add_metadata_size(Exts, MetadataSize),
     Extended andalso etorrent_peer_send:
         ext_setup(SendPid, etorrent_ext:extension_list(Exts), Extra),
     etorrent_peer_send:bitfield(SendPid, Bitfield),
     SendPid.
 
 
-add_metadata_size(Exts, TorrentID) ->
-    [{<<"metadata_size">>, etorrent_info:metadata_size(TorrentID)}
+add_metadata_size(Exts, MetadataSize) ->
+    [{<<"metadata_size">>, MetadataSize}
     || etorrent_ext:is_locally_supported(ut_metadata, Exts)].
 
         
+%% @private Check if the local request queue is low on requests.
+%% An updated copy of the local peer state is returned, including any new requests.
+-spec poll_local_rqueue(tservices(), pid(), peerstate(), peerstate()) -> peerstate().
+poll_local_rqueue(Download, SendPid, Remote, Local) ->
+    case etorrent_peerstate:needreqs(Local) of
+        false ->
+            Local;
+        true  ->
+            Requests = etorrent_peerstate:requests(Local),
+            Pieces = etorrent_peerstate:pieces(Remote),
+            Needs = etorrent_rqueue:needs(Requests),
+            case etorrent_download:request_chunks(Needs, Pieces, Download) of
+                {ok, assigned} ->
+                    Local;
+                {ok, Chunks} ->
+                    [etorrent_peer_send:request(SendPid, Chunk)
+                    || Chunk <- Chunks],
+                    NewRequests = etorrent_rqueue:push(Chunks, Requests),
+                    etorrent_peerstate:requests(NewRequests, Local)
+            end
+    end.
+
+%% @private Check if a new asynchronous chunk read needs to be started.
+%% A new chunk read should be started when a REQUEST message is pushed into an
+%% empty request queue. The calling code is expected to only call this function
+%% when the local peer is expected to send a PIECE request.
+push_remote_rqueue_hook(TorrentID, Requests) ->
+    case etorrent_rqueue:size(Requests) of
+        1 ->
+            {Piece, Offset, Length} = etorrent_rqueue:peek(Requests),
+            {ok, _} = etorrent_io:aread_chunk(TorrentID, Piece, Offset, Length),
+            ok;
+        N when N > 1 ->
+            ok
+    end.
+
+
+%% @private Check if a new asynchronous chunk read needs to be started.
+%% A new chunk read should be started when a REQUEST message is popped from a non
+%% empty request queue. The calling code is expected to call this function with
+%% the most recent version of the queue.
+pop_remote_rqueue_hook(TorrentID, Requests) ->
+    case etorrent_rqueue:size(Requests) of
+        0 ->
+            ok;
+        N when N > 0 ->
+            {Piece, Offset, Length} = etorrent_rqueue:peek(Requests),
+            {ok, _} = etorrent_io:aread_chunk(TorrentID, Piece, Offset, Length),
+            ok
+    end.
+
+
+%% @doc Check if a peer provided an interesting piece.
+%% This function should be called when a have-message is received.
+%% If the piece is interesting and we are not already interested a
+%% status update is sent to the local process to trigger a state
+%% change.
+%% @end
+-spec check_local_interest(pieceindex() | pieceset(),
+                           peerstate(), pid()) -> peerstate().
+check_local_interest(Pieces, Local, SendPid) ->
+    case etorrent_peerstate:interesting(Pieces, Local) of
+        Local ->
+            Local;
+        NewLocal ->
+            ok = etorrent_peer_send:interested(SendPid),
+            NewLocal
+    end.
+
+
+%% @doc Check if a peer still provides interesting pieces.
+%% This function should be called when a have-message is sent. If the
+%% peer no longer provides any interesting pieces and we are interested
+%% a status update is sent to the local process to trigger a state change.
+%% @end
+-spec recheck_local_interest(pieceindex(), peerstate(),
+                             peerstate(), pid()) -> peerstate().
+recheck_local_interest(Piece, Remote, Local, SendPid) ->
+    case etorrent_peerstate:interesting(Piece, Remote, Local) of
+        Local ->
+            Local;
+        NewLocal ->
+            ok = etorrent_peer_send:not_interested(SendPid),
+            NewLocal
+    end.
+
+
+%% @doc Check the remote peer has become a seeder
+%% This is only worth checking if we are also seeding the torrent.
+%% We are expected to close the connection if both peers are seeders,
+%% exit with reason badarg if we find ourselves in this situation,
+%% it should have been handled elsewhere.
+%% Return an updated copy of the remote state and send a notification
+%% to ourselves if the remote peer became a seeder.
+%% @end
+-spec check_remote_seeder(peerstate(), peerstate()) -> peerstate().
+check_remote_seeder(Remote, Local) ->
+    case etorrent_peerstate:seeding(Remote, Local) of
+        Remote ->
+            Remote;
+        _ ->
+            exit(seeder)
+    end.
+

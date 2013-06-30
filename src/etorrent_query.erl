@@ -26,25 +26,18 @@ peer_list() ->
     merge_peer_states(AllPeers, PeerState).
 
 merge_peer_states(PeerList, StateList) ->
-    merge_by(lists:sort(
-               fun(P1, P2) ->
-                       proplists:get_value(pid, P1) =< proplists:get_value(pid, P2)
-               end,
-               PeerList),
-             lists:sort(
-               fun(SL1, SL2) ->
-                       proplists:get_value(pid, SL1) =< proplists:get_value(pid, SL2)
-               end,
-               StateList),
-             fun(Item1, Item2) ->
-                     {E1, E2} = {proplists:get_value(pid, Item1), proplists:get_value(pid, Item2)},
+    Pid2PeerList  = pid_pairs(PeerList),
+    Pid2StateList = pid_pairs(StateList),
+    merge_by(lists:keysort(1, Pid2PeerList),
+             lists:keysort(1, Pid2StateList),
+             fun({E1, _Item1}, {E2, _Item2}) ->
                      if
                          E1 == E2 -> equal;
                          E1 =< E2 -> less;
                          E1 >= E2 -> greater
                      end
              end,
-             fun (I1, I2) ->
+             fun ({_E1, I1}, {_E2, I2}) ->
                      Merged = lists:umerge(I1, I2),
                      {B1, B2, B3, B4} = proplists:get_value(ip, Merged),
 
@@ -68,6 +61,5 @@ merge_by([I1 | R1], [I2 | R2], CompareFun, MergeFun) ->
              [MergeFun(I1, I2) | merge_by(R1, R2, CompareFun, MergeFun)]
     end.
 
-
-
-
+pid_pairs(PLs) ->
+    [{proplists:get_value(pid, PL), PL} || PL <- PLs].

@@ -110,7 +110,7 @@ token_lifetime() ->
 % Public interface
 %
 start_link(DHTPort) ->
-    gen_server:start({local, srv_name()}, ?MODULE, [DHTPort], []).
+    gen_server:start_link({local, srv_name()}, ?MODULE, [DHTPort], []).
 
 -spec node_port() -> portnum().
 node_port() ->
@@ -311,8 +311,9 @@ dht_iter_search(SearchType, Target, Width, Retry, Retries,
             WithPeers ++ Tmp
     end,
 
+    NewNext2 = lists:usort(NewNext),
     dht_iter_search(SearchType, Target, Width, Retry, NewRetries,
-                    NewNext, NewQueried, NewAlive, NewWithPeers).
+                    NewNext2, NewQueried, NewAlive, NewWithPeers).
 
 
 %
@@ -491,6 +492,7 @@ handle_info({udp, _Socket, IP, Port, Packet}, State) ->
                     NewSent = clear_sent_query(IP, Port, ID, Sent),
                     State#state{sent=NewSent};
                 error ->
+                    %% Handle request.
                     SNID = get_string("id", Params),
                     NID = etorrent_dht:integer_id(SNID),
                     spawn_link(etorrent_dht_state, safe_insert_node, [NID, IP, Port]),
@@ -507,7 +509,7 @@ handle_info(_Msg, State) ->
 terminate(_, _State) ->
     ok.
 
-code_change(_, _, State) ->
+code_change(_, State, _) ->
     {ok, State}.
 
 %% Default args. Returns a proplist of default args
@@ -536,6 +538,7 @@ handle_query('get_peers', Params, IP, Port, MsgID, Self, Tokens) ->
     InfoHash = etorrent_dht:integer_id(etorrent_bcoding:get_value(<<"info_hash">>, Params)),
     lager:debug("Take request get_peers from ~p:~p for ~s.",
                 [IP, Port, integer_hash_to_literal(InfoHash)]),
+    %% TODO: handle non-local requests.
     Values = case etorrent_dht_tracker:get_peers(InfoHash) of
         [] ->
             Nodes = filter_node(IP, Port, etorrent_dht_state:closest_to(InfoHash)),
@@ -557,6 +560,7 @@ handle_query('announce', Params, IP, Port, MsgID, Self, Tokens) ->
     Token = get_string(<<"token">>, Params),
     case is_valid_token(Token, IP, Port, Tokens) of
         true ->
+            %% TODO: handle non-local requests.
             etorrent_dht_tracker:announce(InfoHash, IP, BTPort);
         false ->
             FmtArgs = [IP, Port, Token],

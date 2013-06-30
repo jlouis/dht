@@ -17,7 +17,9 @@
 -include("etorrent_rate.hrl").
 
 %% exported functions
--export([start_link/2]).
+-export([start_link/2,
+        forward_control/1,
+        forward_control/2]).
 
 %% gproc registry entries
 -export([register_server/1,
@@ -44,6 +46,7 @@
 % Set the threshold to be 30 seconds by dividing the count with the rate update
 % interval
 -define(LAST_PIECE_COUNT_THRESHOLD, ((30*1000) / (?RATE_UPDATE))).
+-define(NORMAL_EXIT, begin lager:info("Normal exit"), normal end).
 
 %% =======================================================================
 
@@ -53,12 +56,21 @@
 start_link(TorrentId, Socket) ->
     gen_server:start_link(?MODULE, [TorrentId, Socket], []).
 
+forward_control(Socket) ->
+    forward_control(await_server(Socket), Socket).
+
+forward_control(Socket, Srv) ->
+    case gen_tcp:controlling_process(Socket, Srv) of
+        ok -> gen_server:call(Srv, set_readable);
+        {error, enotconn} -> {error, enotconn}
+    end.
+
+%% =======================================================================
 
 %% @doc Register the local process as the decoder for a socket
 -spec register_server(inet:socket()) -> true.
 register_server(Socket) ->
     etorrent_utils:register(server_name(Socket)).
-
 
 %% @doc Lookup the decoding process for a socket
 -spec lookup_server(inet:socket()) -> pid().
@@ -76,16 +88,12 @@ await_server(Socket) ->
 server_name(Socket) ->
     {etorrent, Socket, decoder}.
 
-
-
+%% =======================================================================
 
 %% @private
 init([TorrentId, Socket]) ->
     register_server(Socket),
-    ok = inet:setopts(Socket, [{active, false}]),
     CPid = etorrent_peer_control:await_server(Socket),
-    erlang:send_after(?RATE_UPDATE, self(), rate_update),
-    etorrent_rlimit:recv(1),
     State = #state{
         socket = Socket,
         rate = etorrent_rate:init(?RATE_FUDGE),
@@ -95,6 +103,11 @@ init([TorrentId, Socket]) ->
 
 
 %% @private
+handle_call(set_readable, _, State=#state{socket=Socket}) ->
+    ok = inet:setopts(Socket, [{active, false}]),
+    erlang:send_after(?RATE_UPDATE, self(), rate_update),
+    etorrent_rlimit:recv(1),
+    {reply, ok, State};
 handle_call(Msg, _, State) ->
     {stop, Msg, State}.
 
@@ -109,15 +122,15 @@ handle_info({rlimit, continue}, State) ->
     #state{socket=Socket} = State,
     case gen_tcp:recv(Socket, 0) of
         {error, closed} ->
-            {stop, normal, State};
+            {stop, ?NORMAL_EXIT, State};
         {error, ebadf} ->
-            {stop, normal, State};
+            {stop, ?NORMAL_EXIT, State};
         {error, einval} ->
-            {stop, normal, State};
+            {stop, ?NORMAL_EXIT, State};
         {error, ehostunreach} ->
-            {stop, normal, State};
+            {stop, ?NORMAL_EXIT, State};
         {error, etimedout} ->
-            {stop, normal, State};
+            {stop, ?NORMAL_EXIT, State};
         {ok, Packet} ->
             PacketSize = byte_size(Packet),
             etorrent_rlimit:recv(PacketSize),
@@ -126,17 +139,18 @@ handle_info({rlimit, continue}, State) ->
     end;
 
 handle_info(rate_update, State) ->
-    #state{id=TorrentID, rate=Rate, last_piece_msg_count=PieceCount} = State,
+    #state{id=TorrentID, rate=Rate, last_piece_msg_count=PieceCount,
+           controller=CPid} = State,
     NewRate = etorrent_rate:update(Rate, 0),
     erlang:send_after(?RATE_UPDATE, self(), rate_update),
     SnubState = is_snubbing_us(State),
     ok = etorrent_peer_states:set_recv_rate(
-            TorrentID, self(), NewRate#peer_rate.rate, SnubState),
+            TorrentID, CPid, NewRate#peer_rate.rate, SnubState),
     NewState = State#state{rate=NewRate, last_piece_msg_count=PieceCount+1},
     {noreply, NewState};
 
 handle_info({tcp_closed, _}, State) ->
-    {stop, normal, State};
+    {stop, ?NORMAL_EXIT, State};
 
 handle_info(Msg, State) ->
     {stop, Msg, State}.
@@ -149,6 +163,8 @@ terminate(_Reason, _State) ->
 %% @private
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+%% =======================================================================
 
 %% @private
 handle_packet(Packet, State) ->

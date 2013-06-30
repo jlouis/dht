@@ -26,7 +26,7 @@
          format_by_chunk/1]).
 
 
-%% @doc
+%% @doc Request chunks to download.
 %% @end
 request(Numchunks, Peerset, Srvpid) ->
     Call = {chunk, {request, Numchunks, Peerset, self()}},
@@ -84,7 +84,8 @@ dropped(Peerpid, Srvpid) ->
 
 
 
-%% @doc
+%% @doc The chunk was recieved, but it is not written yet (not stored).
+%% It is used in the endgame mode.
 %% @end
 -spec fetched(non_neg_integer(), non_neg_integer(),
                    non_neg_integer(), pid(), pid()) -> ok.
