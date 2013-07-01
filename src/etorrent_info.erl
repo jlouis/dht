@@ -42,7 +42,8 @@
          piece_size/2,
          piece_count/1,
          chunk_size/1,
-         is_private/1
+         is_private/1,
+         magnet_link/1
         ]).
 
 %% Metadata API (BEP-9)
@@ -66,6 +67,9 @@
 -define(ROOT_FILE_ID, 0).
 
 -record(state, {
+    info_hash :: non_neg_integer(),
+    torrent_name :: binary(),
+    tracker_tiers :: [[binary()]],
     torrent :: torrent_id(),
     static_file_info :: array(),
     directories :: [file_id()], %% usorted
@@ -232,6 +236,11 @@ file_size(TorrentID, FileID) when is_integer(TorrentID), is_integer(FileID) ->
     {ok, Size} = gen_server:call(DirPid, {size, FileID}),
     Size.
 
+magnet_link(TorrentID) ->
+    DirPid = await_server(TorrentID),
+    {ok, Link} = gen_server:call(DirPid, magnet_link),
+    Link.
+
 
 -spec tree_children(torrent_id(), file_id()) -> [{atom(), term()}].
 tree_children(TorrentID, FileID) when is_integer(TorrentID), is_integer(FileID) ->
@@ -388,11 +397,17 @@ init([TorrentID, Torrent]) ->
     true = register_server(TorrentID),
 
     MetaInfo = etorrent_bcoding:get_value("info", Torrent),
+    Name = iolist_to_binary(etorrent_bcoding:get_info_value("name", Torrent)),
+    TrackerTiers = etorrent_metainfo:get_url(Torrent),
     %% Really? First decode, now encode...
     TorrentBin = iolist_to_binary(etorrent_bcoding:encode(MetaInfo)),
     MetadataSize = byte_size(TorrentBin),
+    <<IntIH:160>> = etorrent_utils:sha(TorrentBin),
 
     InitState = #state{
+        info_hash=IntIH,
+        torrent_name=Name,
+        tracker_tiers=TrackerTiers,
         torrent=TorrentID,
         static_file_info=Static,
         directories=Dirs,
@@ -409,6 +424,10 @@ init([TorrentID, Torrent]) ->
 
 %% @private
 
+handle_call(magnet_link, _, State=#state{info_hash=IntIH, torrent_name=Name,
+            tracker_tiers=TrackerTiers}) ->
+    URL = etorrent_magnet:build_url(IntIH, Name, lists:merge(TrackerTiers)),
+    {reply, {ok, URL}, State};
 handle_call({get_info, FileID}, _, State) ->
     #state{static_file_info=Arr} = State,
     case array:get(FileID, Arr) of
@@ -1584,3 +1603,4 @@ pl_fetch_value(K, PL) ->
         undefined -> error({bad_key, K, PL});
         V -> V
     end.
+

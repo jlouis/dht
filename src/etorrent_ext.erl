@@ -107,7 +107,7 @@ encode_msg(ExtName, Msg, #exts{supported_name2remote_id_and_mod_name = Name2IdMo
 % ======================================================================
 
 %% Skip all locally unsupported extensions.
--spec filter_supported([{BName, Id}], [BName], [MName]) -> [{Name,Id}] when
+-spec filter_supported([{BName, Id}], [BName], [MName]) -> [{Name, {Id,MName}}] when
       BName :: ext_bname(),
       MName :: ext_mod_name(),
       Name :: ext_name(),
@@ -136,13 +136,14 @@ filter_supported([], Xs, _) ->
 
 -ifdef(TEST).
 filter_supported_test_() ->
-    [?_assertEqual(filter_supported([{<<"x">>,1}, {<<"y">>,2}, {<<"z">>,3}],
+    [?_assertEqual([{x,{1,yy}},{y,{2,zz}}],
+                   filter_supported([{<<"x">>,1}, {<<"y">>,2}, {<<"z">>,3}],
                                     [<<"a">>,<<"x">>,<<"y">>],
-                                    [xx,yy,zz]),
-    ,?_assertEqual(filter_supported([],
+                                    [xx,yy,zz]))
+    ,?_assertEqual([],
+                   filter_supported([],
                                     [<<"a">>],
-                                    [xx]),
-                   [])
+                                    [xx]))
     ].
 -endif.
 
