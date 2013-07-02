@@ -209,7 +209,7 @@ assert_total_size(MetadataSize, TotalSize) ->
 
 assert_valid_metadata(MetadataSize, InfoHashBin, Metadata) when
     byte_size(Metadata) =:= MetadataSize ->
-    case crypto:hash(sha, Metadata) of
+    case etorrent_utils:sha(Metadata) of
         InfoHashBin -> ok;
         OtherHash ->
             error({bad_hash, [{expected, InfoHashBin}, {generated, OtherHash}]})

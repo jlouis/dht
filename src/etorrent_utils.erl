@@ -15,7 +15,10 @@
 	 list_shuffle/1, date_str/1, any_to_list/1,
      merge_proplists/2, compare_proplists/2,
      find/2, wait/1, expect/1, shutdown/1, ping/1,
-     first/0, group/2, init_random_generator/0]).
+     first/0, group/2]).
+
+%% crypto function
+-export([init_random_generator/0, sha/1]).
 
 %% "mock-like" functions
 -export([reply/1]).
@@ -444,14 +447,7 @@ format_address(Addr) ->
 
 
 init_random_generator() ->
-    Def = random:seed0(),
-    case get(random_seed) of
-        Def         -> new_seed();
-        undefined   -> new_seed();
-        _           -> ok
-    end.
+    crypto2:init_random_generator().
 
-new_seed() ->
-    <<A1:32, A2:32, A3:32>> = crypto:rand_bytes(12),
-    random:seed(A1, A2, A3),
-    ok.
+sha(Data) ->
+    crypto2:sha(Data).

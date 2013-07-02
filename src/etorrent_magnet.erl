@@ -9,10 +9,13 @@
 -export([handle_completion/5]).
 
 %% Used for testing
-%-export([download_meta_info/2,
-%         build_torrent/2,
+%-export([build_torrent/2,
 %         write_torrent/2,
-%         parse_url/1]).
+%         parse_url/1,
+%         build_url/1]).
+
+%% Used from etorrent_info.
+-export([build_url/3]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -51,6 +54,29 @@ parse_url(Url) ->
         _ ->
             error({unknown_scheme, Scheme, Url})
     end.
+
+build_url({XT, DN, TRs}) ->
+    build_url(XT, DN, TRs).
+
+build_url(XT, DN, TRs) when is_integer(XT), is_list(TRs) ->
+    % magnet:?xt=urn:btih:<info-hash>&dn=<name>&tr=
+    BTIH = integer_info_hash_to_literal(XT),
+    <<"magnet:?xt=urn:btih:", BTIH/binary,
+      (encode_description(DN))/binary,
+      (encode_trackers(TRs))/binary>>.
+
+encode_description(undefined) -> <<>>;
+encode_description(DN) when is_binary(DN) ->
+    QDN = iolist_to_binary(mochiweb_util:quote_plus(DN)),
+    <<"&dn=", QDN/binary>>.
+
+encode_trackers(TRs) ->
+    << <<(encode_tracker(TR))/binary>> || TR <- TRs>>.
+
+encode_tracker(TR) ->
+    QTR = iolist_to_binary(mochiweb_util:quote_plus(TR)),
+    <<"&tr=", QTR/binary>>.
+
 
 analyse_params([{K,V}|Params], XT, DN, TRS) ->
     case K of
@@ -182,3 +208,7 @@ parse_url_test_() ->
                    parse_url(colton_url()))
     ].
 -endif.
+
+integer_info_hash_to_literal(IntIH) when is_integer(IntIH) ->
+    iolist_to_binary(io_lib:format("~40.16.0B", [IntIH])).
+

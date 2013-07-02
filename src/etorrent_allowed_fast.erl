@@ -44,7 +44,7 @@ rnd(0, _X, _Sz, Set) -> {value, Set};
 rnd(K, X, Sz, Set) ->
     %% Start a new round. Each round hashes the previous round to
     %% generate a pseudo-random sequence
-    NX = crypto:hash(sha, X),
+    NX = etorrent_utils:sha(X),
     %% Cut into the current NX sequence.
     cut(K, 0, NX, Sz, Set).
 
