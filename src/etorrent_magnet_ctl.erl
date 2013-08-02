@@ -63,7 +63,7 @@ handle_call(request, _From, State) ->
 handle_cast(msg, State) ->
     {noreply, State}.
 
-handle_info({magnet_peer_ctl, PeerPid, {ready, MetadataSize, PieceCount, IP}},
+handle_info({magnet_peer_ctl, PeerPid, {ready, MetadataSize, PieceCount, _IP}},
             State=#mctl_state{var=Var}) ->
 %   monitor(process, PeerPid),
     lager:debug("Register PeerPid=~p, MetadataSize=~p, PieceCount=~p.",
@@ -81,7 +81,7 @@ handle_info({magnet_peer_ctl, PeerPid, {piece, PieceNum, Piece}},
         etorrent_metadata_variant:save_piece(PeerPid, PieceNum, Piece, Var),
     lager:debug("Progress of ~p is ~p/~p.",
                 [PeerPid, PeerProgress, GlobalProgress]),
-    {TryCheck, Fail2Ban, RequestMore} =
+    {TryCheck, _Fail2Ban, RequestMore} =
     case {GlobalProgress, PeerProgress} of
         {downloaded, downloaded}   -> {true, true, false};
         {downloaded, in_progress}  -> {true, false, true};
