@@ -12,7 +12,6 @@
         ranch,
         cowboy,
         hackney,
-        lhttpc
 %       upnp,
 %       azdht
       ]},

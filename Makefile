@@ -1,12 +1,11 @@
 PROJECT = etorrent_core
 
-DEPS = gproc lager hackney lhttpc cowboy rlimit azdht mdns upnp
+DEPS = gproc lager hackney cowboy rlimit azdht mdns upnp
 TEST_DEPS = meck proper
 
 dep_gproc = https://github.com/uwiger/gproc.git master
 dep_lager = https://github.com/basho/lager.git 2.0.0
 dep_hackney = https://github.com/benoitc/hackney.git master
-dep_lhttpc = https://github.com/esl/lhttpc.git master
 dep_meck = https://github.com/eproxus/meck.git master
 dep_proper = https://github.com/manopapad/proper.git master
 dep_cowboy = https://github.com/extend/cowboy.git master
