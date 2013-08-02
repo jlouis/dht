@@ -219,7 +219,6 @@ valid_path(Bin) when is_binary(Bin) -> valid_path(binary_to_list(Bin));
 valid_path(Path) when is_list(Path) ->
     {ok, RM} = re:compile("^[^/\\.~][^\\/]*$"),
     case re:run(Path, RM, [{capture, none}]) of
-        _       -> true; %% disable check, it is too strict.
         match   -> true;
         nomatch -> false
     end.
