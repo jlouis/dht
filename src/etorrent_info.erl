@@ -947,38 +947,7 @@ filter_by_parent_id(RecList, ParentId) ->
     [Id || #file_info{id=Id, parent_id=ParentId_1} <- RecList,
            ParentId =:= ParentId_1].
 
-%% @private
-%% Warning: It is not optimal.
-%% Warning: Every record in the list MUST be continuous.
-simple_minimize_reclist(RecList) ->
-    RecList1 = lists:usort(fun(X, Y) -> sort_file_key(X) =< sort_file_key(Y) end,
-                           RecList),
-    minimize_(RecList1, []).
-
-sort_file_key(#file_info{position=Pos, size=Size}) ->
-    [Pos, -Size].
-
-
-minimize_([H|T], []) ->
-    minimize_(T, [H]);
-
-
-%% H is a ancestor of the previous element. Skip H.
-minimize_([ #file_info{position=Pos} | T ], 
-    [#file_info{size=PrevSize, position=PrevPos}|_] = Acc)
-    when Pos < (PrevPos + PrevSize) ->
-    minimize_(T, Acc);
-
-minimize_([H|T], Acc) ->
-    minimize_(T, [H|Acc]);
-
-minimize_([], Acc) ->
-    lists:reverse(Acc).
-    
-    
 %% -/\-----------------FILE INFO API----------------------/\-
-
-
 
 -ifdef(TEST).
 
