@@ -23,9 +23,8 @@
 % implemented trackers (most of them)
 % </p>
 % @end
--type http_response() :: {integer(), term(), iolist()}.
--spec request(string()) -> {error, term()} | {ok, http_response()}.
-request(URL) ->
+-spec request(binary()) -> {error, term()} | {ok, integer(), term(), iolist()}.
+request(URL) when is_binary(URL) ->
     Ip = etorrent_config:listen_ip(),
     Options = [{pool, default}, {recv_timeout, 15000},
                {connect_options, case Ip of all -> []; _ -> [{ip, Ip}] end}],
@@ -86,15 +85,16 @@ header_conv(Str) when is_list(Str) -> Str.
 % Variant that decodes the content headers, handling compression.
 content_encoding(Headers) ->
     HeadersDict = hackney_headers:new(Headers),
-    case hackney_headers:get_value("content-encoding", HeadersDict) of
+    case hackney_headers:get_value(<<"content-encoding">>, HeadersDict) of
         <<"gzip">> -> gzip;
         <<"deflate">> -> deflate;
         _ -> identity
     end.
 
-% Find the correct host name in an URL. It revolves around getting the port
-% right.
-decode_host(URL) ->
+%% Find the correct host name in an URL. It revolves around getting the port
+%% right.
+decode_host(URL) when is_binary(URL) -> decode_host(binary_to_list(URL));
+decode_host(URL)                     ->
     {_Scheme, _UserInfo, Host, Port, _Path, _Query} =
         etorrent_http_uri:parse(URL),
     case Port of

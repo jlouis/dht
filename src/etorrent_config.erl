@@ -142,7 +142,7 @@ max_download_rate() -> call(max_download_rate).
 -spec listen_port() -> pos_integer().
 listen_port() -> call(port).
 
--spec listen_ip() -> inet:ip_address().
+-spec listen_ip() -> 'all' | inet:ip_address().
 listen_ip() -> element(2, (optional(listen_ip, any))([])).
 
 -spec logger_dir() -> file_path().

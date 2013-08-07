@@ -334,7 +334,7 @@ contact_tracker_http(Url, TrackerID, Event, S) ->
     RequestUrl = build_tracker_url(Url, Event, S),
     lager:debug("Request: ~p", [RequestUrl]),
     case etorrent_http:request(RequestUrl) of
-        {ok, {200, _, Body}} ->
+        {ok, 200, _, Body} ->
             lager:debug("Tracker returns~n~p", [Body]),
             case etorrent_bcoding:decode(Body) of
                 {ok, BC} ->
@@ -466,7 +466,7 @@ build_tracker_url(Url, Event,
                 false -> "?"
             end,
 
-    lists:concat([Url, Delim, etorrent_http:mk_header(EReq)]).
+    iolist_to_binary([Url, Delim, etorrent_http:mk_header(EReq)]).
 
 %%% Tracker response lookup functions
 response_ips(BC) ->
