@@ -4,3 +4,4 @@ ebin/*.app
 log/*
 .eunit
 doc/
+/.etorrent_core.plt
