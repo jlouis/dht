@@ -31,7 +31,9 @@
          handle_info/2, terminate/2]).
 
 %% The type of torrent records.
--type(torrent_state() :: 'leeching' | 'seeding' | 'paused' | 'unknown' | 'waiting' | 'checking').
+-type torrent_mode() :: 'progress' | 'endgame'.
+-type torrent_state() ::
+        'leeching' | 'seeding' | 'paused' | 'unknown' | 'waiting' | 'checking' | 'partial'.
 -type peer_id() :: etorrent_types:peer_id().
 -type torrent_id() :: etorrent_types:torrent_id().
 
@@ -77,7 +79,7 @@
           peer_id :: peer_id() | undefined,
           %% A rewritten target directory (download_dir).
           directory :: file:filename() | undefined,
-          mode :: progress | endgame,
+          mode :: torrent_mode(),
           state :: torrent_state(),
           is_paused = false :: boolean(),
           is_partial = false:: boolean()}).
@@ -140,16 +142,20 @@ all() ->
 -type alteration() :: unknown
                     | endgame
                     | paused
+                    | checking
                     | continue
+                    | waiting
                     | inc_connected_seeder
                     | inc_connected_leecher
                     | dec_connected_seeder
                     | dec_connected_leecher
+                    | {is_paused, boolean()}
                     | {add_downloaded, integer()}
                     | {add_upload, integer()}
                     | {subtract_left, integer()}
                     | {subtract_left_or_skipped, integer()}
                     | {tracker_report, integer(), integer()}
+                    | {set_mode, torrent_mode()}
                     | {set_wanted, non_neg_integer()}
                     | {set_peer_id, peer_id()}.
 -spec statechange(integer(), [alteration()]) -> ok.
@@ -209,7 +215,7 @@ decrease_not_fetched(Id) ->
     gen_server:call(?SERVER, {decrease, Id}).
 
 
--spec get_mode(torrent_id()) -> boolean().
+-spec get_mode(torrent_id()) -> torrent_mode() | 'undefined'.
 get_mode(Id) ->
     case ets:lookup(?TAB, Id) of
         [T] -> T#torrent.mode;

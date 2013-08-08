@@ -18,8 +18,7 @@
 
 %% exported functions
 -export([start_link/2,
-        forward_control/1,
-        forward_control/2]).
+         forward_control/2]).
 
 %% gproc registry entries
 -export([register_server/1,
@@ -55,9 +54,6 @@
 -spec start_link(integer(), any()) -> ignore | {ok, pid()} | {error, any()}.
 start_link(TorrentId, Socket) ->
     gen_server:start_link(?MODULE, [TorrentId, Socket], []).
-
-forward_control(Socket) ->
-    forward_control(await_server(Socket), Socket).
 
 forward_control(Socket, Srv) ->
     case gen_tcp:controlling_process(Socket, Srv) of

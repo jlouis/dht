@@ -21,6 +21,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
+-type bcode() :: etorrent_types:bcode().
+
 -define(DEFAULT_CONNECT_TIMEOUT, 5000).
 -define(DEFAULT_RECEIVE_TIMEOUT, 5000).
 -define(DEFAULT_AWAIT_TIMEOUT, 25000).
@@ -54,9 +56,6 @@ parse_url(Url) ->
         _ ->
             error({unknown_scheme, Scheme, Url})
     end.
-
-build_url({XT, DN, TRs}) ->
-    build_url(XT, DN, TRs).
 
 build_url(XT, DN, TRs) when is_integer(XT), is_list(TRs) ->
     % magnet:?xt=urn:btih:<info-hash>&dn=<name>&tr=
@@ -98,14 +97,6 @@ xt_to_integer(<<"urn:btih:", Base16:40/binary>>) ->
     list_to_integer(binary_to_list(Base16), 16);
 xt_to_integer(<<"urn:btih:", Base32:32/binary>>) ->
     etorrent_utils:base32_binary_to_integer(Base32).
-
-
--type peerid() :: <<_:160>>.
--type infohash_bin() :: <<_:160>>.
--type infohash_int() :: integer().
--type ipaddr() :: etorrent_types:ipaddr().
--type portnum() :: etorrent_types:portnum().
--type bcode() :: etorrent_types:bcode().
 
 download(Address) ->
     download(Address, []).

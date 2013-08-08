@@ -114,7 +114,7 @@
     %% the `init' and `initializing' functions.
     %% If the FSM state name is `checking', than this field contains the next
     %% state.
-    next_state = started :: paused | started,
+    next_state = started :: paused | started | checking | waiting,
     indexes_to_check :: list(),
     options,
     directory,

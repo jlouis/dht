@@ -19,7 +19,7 @@
          await_server/1]).
 
 
--type infohash() :: etorrent_types:infohash().
+-type infohash() :: binary().
 -type portnum() :: etorrent_types:portnum().
 -type torrent_id() :: etorrent_types:torrent_id().
 -define(ST, "_bittorrent._tcp").
@@ -69,7 +69,9 @@ poller_key() ->
 %% Gproc helpers
 %% ------------------------------------------------------------------------
 
--spec start_link(infohash(), binary()) -> {'ok', pid()}.
+-spec start_link(infohash(), binary()) -> {'ok', Pid} | 'ignore' | {error, Reason} when
+      Pid :: pid(),
+      Reason :: any().
 start_link(InfoHash, TorrentID) when is_binary(InfoHash) ->
     PeerIdBin = etorrent_ctl:local_peer_id(),
     Args = [{infohash, InfoHash}, {torrent_id, TorrentID}, {peer_id, PeerIdBin}],

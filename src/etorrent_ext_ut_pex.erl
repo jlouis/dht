@@ -23,9 +23,7 @@ decode_msg(Msg) when is_binary(Msg) ->
     {pex, PL}.
 
 
-encode_msg({pex, Dict}) ->
-    <<>>.
-
+encode_msg({pex, _Dict}) -> <<>>.
 
 decode_ipv4_list(Bin) ->
     [{{A,B,C,D}, Port} || <<A,B,C,D, Port:16/big>> <= Bin].
@@ -36,10 +34,6 @@ decode_flags(Bin) ->
 
 flags_to_list(X) when is_integer(X) ->
     [Name || {Pos, Name} <- bit_to_name(), is_bit_set(X, Pos)].
-
-flags_to_int(List) when is_list(List) ->
-    PosList = [Pos || {Pos, Name} <- bit_to_name(), lists:member(Name, List)],
-    lists:foldl(fun erlang:'bor'/2, 0, PosList).
 
 %% @doc Is bit `N' is set in `X'.
 is_bit_set(X, N) ->

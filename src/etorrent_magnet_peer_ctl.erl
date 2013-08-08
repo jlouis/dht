@@ -6,11 +6,6 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--type peerid() :: <<_:160>>.
--type infohash_bin() :: <<_:160>>.
--type infohash_int() :: integer().
--type ipaddr() :: etorrent_types:ipaddr().
--type portnum() :: etorrent_types:portnum().
 -type bcode() :: etorrent_types:bcode().
 
 -record(mpeer_state, {
@@ -69,8 +64,8 @@ request_piece(PeerCtl, PieceNum) ->
 %% gen_server Function Definitions
 %% ------------------------------------------------------------------
 
-init([TrackerUrl, LocalPeerId, RemotePeerId, InfoHash,
-      TorrentId, {IP, Port}, Capabilities, Socket]) ->
+init([_TrackerUrl, _LocalPeerId, _RemotePeerId, _InfoHash,
+      TorrentId, {IP, _Port}, Capabilities, Socket]) ->
     lager:debug("Capabilities: ~p~n", [Capabilities]),
     assert_extended_messaging_support(Capabilities),
     etorrent_peer_control:register_server(TorrentId, Socket),
@@ -205,19 +200,6 @@ assert_total_size(TotalSize, TotalSize) ->
     ok;
 assert_total_size(MetadataSize, TotalSize) ->
     error({bad_total_size, [{expected, MetadataSize}, {passed, TotalSize}]}).
-
-
-assert_valid_metadata(MetadataSize, InfoHashBin, Metadata) when
-    byte_size(Metadata) =:= MetadataSize ->
-    case etorrent_utils:sha(Metadata) of
-        InfoHashBin -> ok;
-        OtherHash ->
-            error({bad_hash, [{expected, InfoHashBin}, {generated, OtherHash}]})
-    end;
-assert_valid_metadata(MetadataSize, _InfoHashBin, Metadata) ->
-    error({bad_size, [{expected, MetadataSize},
-                      {generated, byte_size(Metadata)}]}).
-
 
 piece_request_msg(PieceNum) ->
     PL = [{<<"msg_type">>, 0}, {<<"piece">>, PieceNum}],
