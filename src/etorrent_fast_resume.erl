@@ -227,23 +227,16 @@ form_entry(Id, Props) ->
     Dir    = proplists:get_value(directory, Props),
     IsPaused = proplists:get_bool(is_paused, Props),
 
-    MaybeUndefined = [{peer_id, PeerId}
-                     ,{directory, Dir}],
+    MaybeUndefined = [{peer_id, PeerId} ,{directory, Dir}],
     Basic = [{K,V} || {K,V} <- MaybeUndefined, V =/= undefined] ++
-            [{state, State}
-            ,{uploaded, Uploaded}
-            ,{downloaded, Downloaded}],
+            [{state, State} ,{uploaded, Uploaded} ,{downloaded, Downloaded}],
 
-        %% not prepared
-    if State =:= unknown, State =:= fetching ->
-            ignore;
-
-        %% downloaded
-        LeftOrSkipped =:= 0 ->
-            Basic;
-
-        %% not downloaded
-        true ->
+    %% not prepared
+    case State of
+        unknown -> ignore;
+        fetching -> ignore;
+        _Other when LeftOrSkipped == 0 -> Basic;
+        _Other ->
             TorrentPid   = etorrent_torrent_ctl:lookup_server(Id),
             {ok, Valid}  = etorrent_torrent_ctl:valid_pieces(TorrentPid),
             Bitfield     = etorrent_pieceset:to_binary(Valid),
