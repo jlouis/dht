@@ -11,8 +11,6 @@
         crypto2,
         gproc,
         rlimit,
-        ranch,
-        cowboy,
         hackney
       ]},
     {registered, []}, % This is SO wrong
