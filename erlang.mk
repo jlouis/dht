@@ -19,8 +19,11 @@ V ?= 0
 appsrc_verbose_0 = @echo " APP   " $(PROJECT).app.src;
 appsrc_verbose = $(appsrc_verbose_$(V))
 
-erlc_verbose_0 = @echo " ERLC  " $(filter-out %.dtl,$(?F));
+erlc_verbose_0 = @echo " ERLC  " $(filter %.erl %.core,$(?F));
 erlc_verbose = $(erlc_verbose_$(V))
+
+xyrl_verbose_0 = @echo " XYRL  " $(filter %.xrl %.yrl,$(?F));
+xyrl_verbose = $(xyrl_verbose_$(V))
 
 dtl_verbose_0 = @echo " DTL   " $(filter %.dtl,$(?F));
 dtl_verbose = $(dtl_verbose_$(V))
@@ -35,6 +38,9 @@ gen_verbose = $(gen_verbose_$(V))
 
 DEPS_DIR ?= $(CURDIR)/deps
 export DEPS_DIR
+
+REBAR_DEPS_DIR = $(DEPS_DIR)
+export REBAR_DEPS_DIR
 
 ALL_DEPS_DIRS = $(addprefix $(DEPS_DIR)/,$(DEPS))
 ALL_TEST_DEPS_DIRS = $(addprefix $(DEPS_DIR)/,$(TEST_DEPS))
@@ -59,8 +65,14 @@ app: ebin/$(PROJECT).app
 		> ebin/$(PROJECT).app
 
 define compile_erl
-	$(erlc_verbose) ERL_LIBS=deps erlc -v $(ERLC_OPTS) -o ebin/ -pa ebin/ \
-		-I include/ $(COMPILE_FIRST_PATHS) $(1)
+	$(erlc_verbose) ERL_LIBS=$(DEPS_DIR) erlc -v $(ERLC_OPTS) -o ebin/ \
+		-pa ebin/ -I include/ $(COMPILE_FIRST_PATHS) $(1)
+endef
+
+define compile_xyrl
+	$(xyrl_verbose) erlc -v -o ebin/ $(1)
+	$(xyrl_verbose) erlc $(ERLC_OPTS) -o ebin/ ebin/*.erl
+	@rm ebin/*.erl
 endef
 
 define compile_dtl
@@ -74,10 +86,14 @@ define compile_dtl
 		init:stop()'
 endef
 
-ebin/$(PROJECT).app: src/*.erl $(wildcard src/*.core) $(wildcard templates/*.dtl)
+ebin/$(PROJECT).app: src/*.erl $(wildcard src/*.core) \
+		$(wildcard src/*.xrl) $(wildcard src/*.yrl) \
+		$(wildcard templates/*.dtl)
 	@mkdir -p ebin/
-	$(if $(strip $(filter-out %.dtl,$?)), \
-		$(call compile_erl,$(filter-out %.dtl,$?)))
+	$(if $(strip $(filter %.erl %.core,$?)), \
+		$(call compile_erl,$(filter %.erl %.core,$?)))
+	$(if $(strip $(filter %.xrl %.yrl,$?)), \
+		$(call compile_xyrl,$(filter %.xrl %.yrl,$?)))
 	$(if $(strip $(filter %.dtl,$?)), \
 		$(call compile_dtl,$(filter %.dtl,$?)))
 
