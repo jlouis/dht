@@ -11,13 +11,13 @@ dep_proper = https://github.com/manopapad/proper.git master
 dep_ranch  = https://github.com/extend/ranch.git master
 dep_cowboy = https://github.com/extend/cowboy.git master
 dep_rlimit = https://github.com/jlouis/rlimit.git master
-dep_azdht = https://github.com/jlouis/azdht.git master
+dep_azdht = https://github.com/arcusfelis/azdht.git master
 dep_crypto2 = git://github.com/jlouis/crypto2.git master
 dep_mdns = https://github.com/jlouis/mdns.git master
 dep_upnp = https://github.com/jlouis/upnp.git master
 
 ERLC_OPTS = +debug_info +'{parse_transform, lager_transform}'
-PLT_APPS += xmerl ssl crypto mnesia public_key compiler asn1
+PLT_APPS += xmerl ssl crypto mnesia public_key compiler asn1 inets
 
 DIALYZER_OPTS=
 include erlang.mk
