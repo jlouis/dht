@@ -19,7 +19,7 @@
 -type chunk_offset() :: etorrent_types:chunk_offset().
 -type chunk_length() :: etorrent_types:chunk_len().
 -type chunkspec()   :: {piece_index(), chunk_offset(), chunk_length()}.
--type update_query() :: {progress, pid()}.
+-type update_query() :: {progress, pid()} | {set_endgame, pid()}.
 -type mode_name() :: atom().
 
 

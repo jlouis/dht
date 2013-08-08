@@ -119,7 +119,7 @@ handle_call(debug_info, _, State) ->
            pending=Pending} = State,
     Reply = [{assigned_count, gb_trees:size(Assigned)},
              {fetched_count, gb_trees:size(Fetched)},
-             {stored_count, gb_trees:size(Stored)},
+             {stored_count, gb_sets:size(Stored)},
              {pending_pid, Pending}],
     {reply, Reply, State}.
 
