@@ -159,7 +159,7 @@ decode(Packet) ->
             {TID, {scrape_response, decode_scrape(Rest)}};
         error ->
             {TID, {error_response, binary_to_list(Rest)}};
-        Ty ->
+        undefined ->
             {error, "ETorrent: unknown action type " ++ integer_to_list(Ty) ++ "."}
     end.
 
@@ -182,16 +182,11 @@ encode_event(Event) ->
 	paused -> 0
     end.
 
-decode_action(I) ->
-    %% CRASH REPORT Process etorrent_udp_tracker_proto with 0 neighbours exited with reason: no case clause matching 50331648 in etorrent
-    %% etorrent_udp_tracker_proto:decode_action/1 
-    case I of
-	?CONNECT -> connect;
-	?ANNOUNCE -> announce;
-	?SCRAPE -> scrape;
-	?ERROR -> error;
-    _ -> undefined
-    end.
+decode_action(?CONNECT)  -> connect;
+decode_action(?ANNOUNCE) -> announce;
+decode_action(?SCRAPE)   -> scrape;
+decode_action(?ERROR)    -> error;
+decode_action(_)         -> undefined.
 
 decode_scrape( <<>>) -> [];
 decode_scrape(<<Seeders:32/big, Completed:32/big, Leechers:32/big, SCLL/binary>>) ->
