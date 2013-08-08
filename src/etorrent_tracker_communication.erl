@@ -186,8 +186,13 @@ contact_tracker(Tiers, Event, S) ->
         {ok, NS} -> {ok, NS}
     end.
 
-contact_tracker([], _Event, _S, _Acc) ->
-    none;
+-type tier2() :: [{non_neg_integer(), binary()}].
+-spec contact_tracker(Tiers, Event, State, Acc) -> {ok, State} | none when
+      Tiers :: [tier()],
+      Event :: any(),
+      State :: #state{},
+      Acc   :: [tier()].
+contact_tracker([], _Event, _S, _Acc) -> none;
 contact_tracker([Tier | NextTier], Event, S, Acc) ->
     case contact_tracker_tier(Tier, Event, S) of
         {ok, NS, NewTier} ->
@@ -200,8 +205,7 @@ contact_tracker([Tier | NextTier], Event, S, Acc) ->
 contact_tracker_tier(Tier, S, Event) ->
     contact_tracker_tier(Tier, S, Event, []).
 
-contact_tracker_tier([], _Event, _S, _Acc) ->
-    none;
+contact_tracker_tier([], _Event, _S, _Acc) -> none;
 contact_tracker_tier([{TrackerID, Url} = Cur | Next], Event, S, Acc) ->
     etorrent_tracker:statechange(TrackerID, [attempted, {message, undefined}]),
     case

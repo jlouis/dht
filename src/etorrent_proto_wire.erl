@@ -290,12 +290,15 @@ extended_msg_contents() ->
     extended_msg_contents({}).
 
 
--spec extended_msg_contents(list()) -> binary().
+-spec extended_msg_contents(etorrent_bcoding:bcode()) -> binary().
 extended_msg_contents(M) ->
     Port = etorrent_config:listen_port(),
     extended_msg_contents(Port, ?AGENT_TRACKER_STRING, 250, M, []).
 
--spec extended_msg_contents(Mods::list(), Extra::list()) -> binary().
+-spec extended_msg_contents(Mods, Extra) -> binary() when
+      Mods :: etorrent_bcoding:bcode(),
+      Extra :: [{binary(), etorrent_bcoding:bcode()}].
+
 extended_msg_contents(M, Extra) ->
     Port = etorrent_config:listen_port(),
     extended_msg_contents(Port, ?AGENT_TRACKER_STRING, 250, M, Extra).
@@ -421,8 +424,13 @@ encode_fastset([Idx | Rest]) ->
     <<R/binary, Idx:32>>.
 
 
--spec extended_msg_contents(etorrent_types:portnum(), binary(), integer(), 
-                            list(), list()) -> binary().
+-spec extended_msg_contents(etorrent_types:portnum(), Version, ReqQ, 
+                            Mods, Extra) -> binary() when
+      Version :: binary(),
+      ReqQ    :: integer(),
+      Mods    :: etorrent_bcoding:bcode(),
+      Extra   :: [{binary(), etorrent_bcoding:bcode()}].
+
 extended_msg_contents(Port, ClientVersion, ReqQ, M, Extra)
     when is_list(Extra) ->
     iolist_to_binary(

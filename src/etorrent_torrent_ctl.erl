@@ -879,10 +879,9 @@ apply_options(S=#state{options=Options, peer_id=LocalPeerId,
             next_state=NewNextState}.
 
 %% Read information and calculate a set of metrics.
-apply_fast_resume(S=#state{id=Id, torrent=Torrent, hashes=Hashes,
-                           peer_id=LocalPeerId, mode=Mode, options=Options,
-                           registration_options=RegOpts},
-             FastResumePL) ->
+apply_fast_resume(S=#state{id=Id, hashes=Hashes,
+                           peer_id=LocalPeerId, registration_options=RegOpts},
+                  FastResumePL) ->
     ValidPieces = form_valid_pieceset(Hashes, FastResumePL),
     UnwantedFiles = proplists:get_value(unwanted_files, FastResumePL, []),
     %% Get a list of file ids.
@@ -1085,8 +1084,7 @@ to_stage(PL) ->
     end.
 
 
--spec is_valid_piece(torrent_id(), pieceindex(), binary()) -> boolean().
-
+-spec is_valid_piece(torrent_id(), pieceindex(), binary()) -> {boolean(), non_neg_integer()}.
 is_valid_piece(TorrentID, Index, Hashes) ->
     Hash = fetch_hash(Index, Hashes),
     case etorrent_io:check_piece(TorrentID, Index, Hash) of

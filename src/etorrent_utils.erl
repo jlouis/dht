@@ -73,7 +73,7 @@ queue_remove(Item, Q) ->
 %% @doc Permute List1 randomly. Returns the permuted list.
 %%  This functions usage hinges on a seeding of the RNG in Random!
 %% @end
--spec list_shuffle([term()]) -> [term()].
+-spec list_shuffle([A]) -> [A].
 list_shuffle(List) ->
     Randomized = lists:keysort(1, [{random:uniform(), Item} || Item <- List]),
     [Value || {_, Value} <- Randomized].

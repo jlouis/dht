@@ -72,10 +72,10 @@ lookup(Id) ->
 	[M] -> {value, proplistify(M)}
     end.
 
--spec get_url_tiers(TorrentId) -> [{TrackerId, AnnounceURL}] when
-    TorrentId :: non_neg_integer(),
-    TrackerId :: non_neg_integer(),
-    AnnounceURL :: string().
+-spec get_url_tiers(TorrentId) -> [[{TrackerId, AnnounceURL}]] when
+      TorrentId :: non_neg_integer(),
+      TrackerId :: non_neg_integer(),
+      AnnounceURL :: string().
 get_url_tiers(TorrentId) ->
     gen_server:call(?SERVER, {get_url_tiers, TorrentId}).
 
