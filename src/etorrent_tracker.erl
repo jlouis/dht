@@ -15,18 +15,18 @@
          handle_info/2, terminate/2]).
 
 -record(tracker, { 
-        id :: pos_integer() | undefined,
-        sup_pid :: pid(),
-        torrent_id :: pos_integer(),
-        tracker_url :: string(),
-        tier_num :: non_neg_integer(),
+        id :: pos_integer() | undefined | '_' | '$2',
+        sup_pid :: pid() | '_',
+        torrent_id :: pos_integer() | '_' | '$1',
+        tracker_url :: string() | '_' | '$3',
+        tier_num :: non_neg_integer() | '_' | '$1',
         %% Time of previous announce try (it can fail or not).
         %% It will be changed before connection.
-        last_attempted :: erlang:timestamp() | undefined,
+        last_attempted :: erlang:timestamp() | undefined | '_',
         %% It will be changed after success connection.
-        last_announced :: erlang:timestamp() | undefined,
-        message :: undefined | binary(),
-        message_level = normal :: normal | warning | error}).
+        last_announced :: erlang:timestamp() | undefined | '_',
+        message :: undefined | binary() | '_',
+        message_level = normal :: normal | warning | error | '_'}).
 
 -define(SERVER, ?MODULE).
 -define(TAB, ?MODULE).

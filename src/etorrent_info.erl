@@ -78,7 +78,7 @@
     chunk_size = ?DEFAULT_CHUNK_SIZE :: non_neg_integer(),
     piece_count :: non_neg_integer(),
     metadata_size :: non_neg_integer(),
-    metadata_pieces :: [binary()],
+    metadata_pieces :: tuple(),
     is_private :: boolean()
     }).
 

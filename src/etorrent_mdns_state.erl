@@ -26,7 +26,7 @@
     bt_port :: inet:port_nuber()
 }).
 -record(mdns_torrent, {
-    id :: infohash(),
+    id :: infohash() | '_',
     peer_id :: peerid()
 }).
 
@@ -103,17 +103,17 @@ handle_cast({remote_peer_down, PeerId, IP, BTPort},
     ets:match_delete(PT, #mdns_peer{id=PeerId, ip=IP, bt_port=BTPort, _='_'}),
     ets:delete(TT, #mdns_torrent{peer_id=PeerId, _='_'}),
     {noreply, State};
-handle_cast({remote_torrent_up, PeerId, IP, IH},
+handle_cast({remote_torrent_up, PeerId, _IP, IH},
             State=#state{torrent_table=TT}) ->
     lager:debug("Add torrent ~p from ~p.", [IH, PeerId]),
     ets:insert(TT, #mdns_torrent{id=IH, peer_id=PeerId}),
     {noreply, State};
-handle_cast({remote_torrent_down, PeerId, IP, IH},
+handle_cast({remote_torrent_down, PeerId, _IP, IH},
             State=#state{torrent_table=TT}) ->
     lager:debug("Remove torrent ~p from ~p.", [IH, PeerId]),
     ets:delete(TT, #mdns_torrent{id=IH, peer_id=PeerId, _='_'}),
     {noreply, State};
-handle_cast({remote_announce_request, IP}, State) ->
+handle_cast({remote_announce_request, _IP}, State) ->
     {noreply, State}.
 
 %% @private

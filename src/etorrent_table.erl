@@ -59,7 +59,7 @@
 
 -record(peer, {
         % We identify each peer with it's pid.
-        pid :: pid() | '_' | '$1',
+        pid :: pid() | '_' | '$1' | '$2',
         % Which tracker this peer comes from.
         % A tracker is identified by the hash of its url.
         tracker_url_hash :: integer() | '_',
@@ -68,12 +68,12 @@
         % Port of peer in question
         port :: non_neg_integer() | '_',
         % Torrent Id for peer
-        torrent_id :: non_neg_integer() | '_',
+        torrent_id :: non_neg_integer() | '_' | '$1',
         state :: 'seeding' | 'leeching' | '_',
-        is_fast :: boolean(),
+        is_fast :: boolean() | '_',
         peer_id :: peerid(),
-        version = <<"">> :: binary(),
-        progress :: float() % 0.0 .. 1.0
+        version = <<"">> :: binary() | '_',
+        progress :: float() | '_' % 0.0 .. 1.0
 }).
 
 -type tracking_map_state()
@@ -242,7 +242,9 @@ all_peers_of_tracker(Url) ->
 
 %% @doc Change the peer to a seeder
 %% @end
--spec statechange_peer(pid(), seeder) -> ok.
+-spec statechange_peer(Process, Change) -> ok
+    when Process :: pid(),
+         Change  :: seeder | {version, binary()} | {progress, float()}.
 statechange_peer(Pid, seeder) ->
     TorrentId = ets:lookup_element(peers, Pid, #peer.torrent_id),
     etorrent_torrent:statechange(TorrentId, [dec_connected_leecher,
@@ -391,10 +393,12 @@ handle_info({'DOWN', Ref, _, _, _}, S) ->
     case Type of
         peer ->
             [#peer{torrent_id=TorrentId, state=State}] = ets:lookup(peers, X),
-            etorrent_torrent:statechange(TorrentId, [case State of
-                seeding  -> dec_connected_seeder;
-                leeching -> dec_connected_leecher
-            end]),
+            etorrent_torrent:statechange(
+              TorrentId,
+              [case State of
+                   seeding  -> dec_connected_seeder;
+                   leeching -> dec_connected_leecher
+               end]),
             true = ets:delete(peers, X);
         {torrent, Id} ->
             true = ets:delete(tracking_map, Id)

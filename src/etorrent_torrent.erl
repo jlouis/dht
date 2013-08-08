@@ -31,7 +31,7 @@
          handle_info/2, terminate/2]).
 
 %% The type of torrent records.
--type(torrent_state() :: 'leeching' | 'seeding' | 'paused' | 'unknown').
+-type(torrent_state() :: 'leeching' | 'seeding' | 'paused' | 'unknown' | 'waiting' | 'checking').
 -type peer_id() :: etorrent_types:peer_id().
 -type torrent_id() :: etorrent_types:torrent_id().
 
@@ -141,6 +141,10 @@ all() ->
                     | endgame
                     | paused
                     | continue
+                    | inc_connected_seeder
+                    | inc_connected_leecher
+                    | dec_connected_seeder
+                    | dec_connected_leecher
                     | {add_downloaded, integer()}
                     | {add_upload, integer()}
                     | {subtract_left, integer()}

@@ -46,7 +46,7 @@
      terminate/2, code_change/3]).
 
 -type file_path() :: etorrent_types:file_path().
--record(state, { conf :: [{atom(), term()}]}).
+-record(state, { conf :: dict() }).
 
 configuration_specification() ->
     [required(dir),
