@@ -23,6 +23,10 @@
          extended_msg_contents/2,
          initiate_handshake/4]).
 
+-ifdef(TEST).
+-export([extended_msg_contents/5]).
+-endif.
+
 -define(DEFAULT_HANDSHAKE_TIMEOUT, 120000).
 -define(HANDSHAKE_SIZE, 68).
 -define(PROTOCOL_STRING, "BitTorrent protocol").

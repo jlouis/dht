@@ -11,7 +11,7 @@
 
 %%--------------------------------------------------------------------
 suite() ->
-    [{timetrap,{seconds,30}}].
+    [{timetrap,{seconds, 30}}].
 
 %%--------------------------------------------------------------------
 init_per_suite(Config) ->
@@ -55,6 +55,10 @@ end_per_testcase(_TestCase, _Config) ->
 %%--------------------------------------------------------------------
 groups() -> [{magnet, [],
               [magnet_basic]},
+             {metadata_variant, [],
+              [metadata_variant_basic]},
+             {monitor, [],
+              [monitor_basic]},
              {endgame, [],
               [endgame_basic,
                endgame_active_one_fetched,
@@ -62,7 +66,15 @@ groups() -> [{magnet, [],
                endgame_request_list]}].
 
 %%--------------------------------------------------------------------
-all() -> [{group, magnet}].
+all() -> [%{group, endgame},
+          io_basic,
+          timer_basic,
+          bcoding_basic,
+          proto_wire_basic,
+          metainfo_basic,
+          {group, magnet},
+          {group, metadata_variant},
+          {group, monitor}].
 
 %%--------------------------------------------------------------------
     
@@ -145,7 +157,7 @@ endgame_active_one_fetched(_Config) ->
     ok.
 
 endgame_active_one_stored() -> [].
-endgame_active_one_stored(Config) ->
+endgame_active_one_stored(_Config) ->
     %% Spawn a separate process to introduce the chunk into endgame
     Orig = spawn_link(
              fun() ->
@@ -176,7 +188,7 @@ endgame_active_one_stored(Config) ->
     ok.
 
 endgame_request_list() -> [].
-endgame_request_list(Config) ->
+endgame_request_list(_Config) ->
     Pid = spawn_link(
             fun() ->
                     ?pending:register(pending()),
@@ -193,7 +205,7 @@ endgame_request_list(Config) ->
     ok.
 
 endgame_assigned_to_noone_test() -> [].
-endgame_assigned_to_noone_test(Config) ->
+endgame_assigned_to_noone_test(_Config) ->
     Assigned = gb_trees:empty(),
     NewAssigned = ?endgame:add_assigned({1,2,3}, Assigned),
     {1,2,3} = etorrent_utils:find(fun(_) -> true end,
@@ -201,7 +213,7 @@ endgame_assigned_to_noone_test(Config) ->
     ok.
 
 endgame_dropped_and_reassigned_test() -> [].
-endgame_dropped_and_reassigned_test(Config) ->
+endgame_dropped_and_reassigned_test(_Config) ->
     Pid = self(),
     Assigned1 = gb_trees:empty(),
     Assigned2 = ?endgame:add_assigned({1,2,3}, Pid, Assigned1),
@@ -222,7 +234,7 @@ colton_url() ->
 -define(magnet, etorrent_magnet).
 
 magnet_basic() -> [].
-magnet_basic(Config) ->
+magnet_basic(_Config) ->
     {398417223648295740807581630131068684170926268560, undefined, []} =
         ?magnet:parse_url("magnet:?xt=urn:btih:IXE2K3JMCPUZWTW3YQZZOIB5XD6KZIEQ"),
     R = ?magnet:parse_url(colton_url()),
@@ -236,7 +248,7 @@ magnet_basic(Config) ->
     ok.
 
 metadata_variant_basic() -> [].
-metadata_variant_basic(Config) -> 
+metadata_variant_basic(_Config) -> 
     PeerPid1 = list_to_pid("<0.666.0>"),
     V1 = etorrent_metadata_variant:new(),
     V2 = etorrent_metadata_variant:add_peer(PeerPid1, 1, V1),
@@ -305,7 +317,7 @@ monitor_is_member_test() ->
 monitor_one_test() ->
     Set0 = ?monitors:new(),
     Pid  = noop_proc(),
-    Set1 = ?monitors:insert(Pid, 0, Set0),
+    _Set1 = ?monitors:insert(Pid, 0, Set0),
     Pid ! shutdown,
     true = was_monitored(Pid),
     ok.
@@ -314,13 +326,13 @@ monitor_demonitor_one_test() ->
     Set0 = ?monitors:new(),
     Pid  = noop_proc(),
     Set1 = ?monitors:insert(Pid, 0, Set0),
-    Set2 = ?monitors:delete(Pid, Set1),
+    _Set2 = ?monitors:delete(Pid, Set1),
     Pid ! shutdown,
     false = was_monitored(Pid),
     ok.
 
 monitor_basic() -> [].
-monitor_basic(Config) ->
+monitor_basic(_Config) ->
     Set = ?monitors:new(),
     0 = ?monitors:size(Set),
 
@@ -332,55 +344,41 @@ monitor_basic(Config) ->
     monitor_demonitor_one_test(),
     ok.
 
+-define(io, etorrent_io).
+io_basic() -> [].
+io_basic(_Config) ->
+    [{a, 0, 0, 2}, {a, 1, 2, 2}] =
+        ?io:make_piece_map_(2, [{a, 4}]),
+    [{a, 0, 0, 2}, {b, 1, 0, 2}] =
+        ?io:make_piece_map_(2, [{a, 2}, {b, 2}]),
+    [{a, 0, 0, 2}, {a, 1, 2, 1}, {b, 1, 0, 1}] =
+        ?io:make_piece_map_(2, [{a, 3}, {b, 1}]),
 
--ifdef(TEST2).
-piece_map_0_test() ->
-    Size  = 2,
-    Files = [{a, 4}],
-    Map   = [{a, 0, 0, 2}, {a, 1, 2, 2}],
-    ?assertEqual(Map, make_piece_map_(Size, Files)).
+    [{a, 1, 3}] = ?io:chunk_positions(1, 3, [{a, 0, 4}]),
+    [{a, 3, 4}] = ?io:chunk_positions(2, 4, [{a, 1, 8}]),
+    [{a, 5, 1}, {b, 0, 8}] =
+        ?io:chunk_positions(3, 9, [{a, 2, 4}, {b, 0, 10}]),
+    [{b, 5, 5}] = ?io:chunk_positions(8, 5, [{a, 0, 3}, {b, 0, 13}]),
+    ok.
 
-piece_map_1_test() ->
-    Size  = 2,
-    Files = [{a, 2}, {b, 2}],
-    Map   = [{a, 0, 0, 2}, {b, 1, 0, 2}],
-    ?assertEqual(Map, make_piece_map_(Size, Files)).
+metainfo_basic() -> [].
+metainfo_basic(_Config) ->
+    [["http://torrent.ubuntu.com:6969/announce"],
+     ["http://ipv6.torrent.ubuntu.com:6969/announce"]] =
+        etorrent_metainfo:get_http_urls(test_torrent()),
 
-piece_map_2_test() ->
-    Size  = 2,
-    Files = [{a, 3}, {b, 1}],
-    Map   = [{a, 0, 0, 2}, {a, 1, 2, 1}, {b, 1, 0, 1}],
-    ?assertEqual(Map, make_piece_map_(Size, Files)).
+    false = etorrent_metainfo:is_private(test_torrent()),
+    true  = etorrent_metainfo:is_private(test_torrent_private()),
+    ok.
 
-chunk_pos_0_test() ->
-    Offs = 1,
-    Len  = 3,
-    Map  = [{a, 0, 4}],
-    Pos  = [{a, 1, 3}],
-    ?assertEqual(Pos, chunk_positions(Offs, Len, Map)).
-
-chunk_pos_1_test() ->
-    Offs = 2,
-    Len  = 4,
-    Map  = [{a, 1, 8}],
-    Pos  = [{a, 3, 4}],
-    ?assertEqual(Pos, chunk_positions(Offs, Len, Map)). 
-
-chunk_pos_2_test() ->
-    Offs = 3,
-    Len  = 9,
-    Map  = [{a, 2, 4}, {b, 0, 10}],
-    Pos  = [{a, 5, 1}, {b, 0, 8}],
-    ?assertEqual(Pos, chunk_positions(Offs, Len, Map)). 
-
-chunk_post_3_test() ->
-    Offs = 8,
-    Len  = 5,
-    Map  = [{a, 0, 3}, {b, 0, 13}],
-    Pos  = [{b, 5, 5}],
-    ?assertEqual(Pos, chunk_positions(Offs, Len, Map)). 
-    
--endif.
+proto_wire_basic() -> [].
+proto_wire_basic(_Config) ->
+    Expected = <<"d1:mde1:pi1729e4:reqqi100e1:v20:Etorrent v-test-casee">>,
+    Computed = etorrent_proto_wire:extended_msg_contents(
+                 1729, <<"Etorrent v-test-case">>,
+                 100, {}, []),
+    Expected = Computed,
+    ok.
 
 -ifdef(TEST2).
 
@@ -405,109 +403,92 @@ piece_count_test_() ->
 
 -endif.
 
--ifdef(TEST2).
--include_lib("eunit/include/eunit.hrl").
 -define(timer, etorrent_timer).
-
 assertMessage(Msg) ->
     receive
-        Msg ->
-            ?assert(true);
+        Msg -> ok;
         Other ->
-            ?assertEqual(Msg, Other)
-        after 0 ->
-            ?assertEqual(Msg, make_ref())
+            true = Msg == Other
+    after 0 -> exit(assertMessage)
     end.
 
 assertNoMessage() ->
     Ref = {no_message, make_ref()},
     self() ! Ref,
     receive
-        Ref ->
-            ?assert(true);
+        Ref -> ok;
         Other ->
-            ?assertEqual(Ref, Other)
+            true = Ref == Other
     end.
 
-
-%% @doc Run tests inside clean processes.
-timer_test_() ->
-    {spawn, [ ?_test(instant_send_case())
-            , ?_test(instant_timeout_case())
-            , ?_test(step_and_fire_case())
-            , ?_test(cancel_and_step_case())
-            , ?_test(step_and_cancel_case())
-            , ?_test(duplicate_cancel_case())
-            ]}.
-
-
-instant_send_case() ->
+timer_instant_send_case() ->
     {ok, Pid} = ?timer:start_link(instant),
     Msg = make_ref(),
-    Ref = ?timer:send_after(Pid, 1000, self(), Msg),
+    _Ref = ?timer:send_after(Pid, 1000, self(), Msg),
     assertMessage(Msg).
 
-
-instant_timeout_case() ->
+timer_instant_timeout_case() ->
     {ok, Pid} = ?timer:start_link(instant),
     Msg = make_ref(),
     Ref = ?timer:start_timer(Pid, 1000, self(), Msg),
     assertMessage({timeout, Ref, Msg}).
 
-
-step_and_fire_case() ->
+timer_step_and_fire_case() ->
     {ok, Pid} = ?timer:start_link(queue),
     ?timer:send_after(Pid, 1000, self(), a),
     Ref = ?timer:start_timer(Pid, 3000, self(), b),
     ?timer:send_after(Pid, 6000, self(), c),
 
-    ?assertEqual(1000, ?timer:step(Pid)),
-    ?assertEqual(0, ?timer:step(Pid)),
-    ?assertEqual(1, ?timer:fire(Pid)),
+    1000 = ?timer:step(Pid),
+    0 = ?timer:step(Pid),
+    1 = ?timer:fire(Pid),
     assertMessage(a),
 
-    ?assertEqual(2000, ?timer:step(Pid)),
-    ?assertEqual(0, ?timer:step(Pid)),
-    ?assertEqual(1, ?timer:fire(Pid)),
+    2000 = ?timer:step(Pid),
+    0 = ?timer:step(Pid),
+    1 = ?timer:fire(Pid),
     assertMessage({timeout, Ref, b}),
 
-    ?assertEqual(3000, ?timer:step(Pid)),
-    ?assertEqual(0, ?timer:step(Pid)),
-    ?assertEqual(1, ?timer:fire(Pid)),
+    3000 = ?timer:step(Pid),
+    0 = ?timer:step(Pid),
+    1 = ?timer:fire(Pid),
     assertMessage(c).
 
-
-cancel_and_step_case() ->
+timer_cancel_and_step_case() ->
     {ok, Pid} = ?timer:start_link(queue),
     Msg = make_ref(),
     Ref = ?timer:start_timer(Pid, 6000, self(), Msg),
-    ?assertEqual(6000, ?timer:cancel(Pid, Ref)),
-    ?assertEqual(0, ?timer:step(Pid)),
+    6000 = ?timer:cancel(Pid, Ref),
+    0 = ?timer:step(Pid),
     assertNoMessage().
 
-
-step_and_cancel_case() ->
+timer_step_and_cancel_case() ->
     {ok, Pid} = ?timer:start_link(queue),
     Ref = ?timer:send_after(Pid, 500, self(), a),
     500 = ?timer:step(Pid),
-    ?assertEqual(false, ?timer:cancel(Pid, Ref)),
+    false = ?timer:cancel(Pid, Ref),
     assertMessage(a).
 
-
-duplicate_cancel_case() ->
+timer_duplicate_cancel_case() ->
     {ok, Pid} = ?timer:start_link(queue),
     Ref = ?timer:send_after(Pid, 500, self(), b),
-    ?assertEqual(500, ?timer:cancel(Pid, Ref)),
-    ?assertEqual(false, ?timer:cancel(Pid, Ref)).
+    500 = ?timer:cancel(Pid, Ref),
+    false = ?timer:cancel(Pid, Ref).
 
--endif.
+timer_basic() -> [].
+timer_basic(_Config) ->
+    timer_instant_send_case(),
+    timer_step_and_fire_case(),
+    %timer_cancel_and_step_case(),
+    %timer_step_and_cancel_case(),
+    %timer_duplicate_cancel_case(),
+    ok.
 
--ifdef(TEST2).
-decode_test_() ->
-    [?_assertEqual(decode(<<"d8:msg_typei0e5:piecei0ee">>),
-                   {[{<<"msg_type">>, 0}, {<<"piece">>, 0}], <<"">>})].
-
--endif.
+bcoding_basic() -> [].
+bcoding_basic(_Config) ->
+    {[{<<"msg_type">>, 0}, {<<"piece">>, 0}], <<"">>} =
+        etorrent_bcoding2:decode(<<"d8:msg_typei0e5:piecei0ee">>),
+    ok.
 
 -ifdef(TEST2).
 
@@ -2669,11 +2650,6 @@ first_tracker_id_test_() ->
 -include_lib("eunit/include/eunit.hrl").
 -define(piecestate, ?MODULE).
 
-%% @todo reuse
-flush() ->
-    {messages, Msgs} = erlang:process_info(self(), messages),
-    [receive Msg -> Msg end || Msg <- Msgs].
-
 piecestate_test_() ->
     {foreach,local,
         fun() -> flush() end,
@@ -2712,50 +2688,7 @@ test_valid() ->
     ?assertEqual({piece, {valid, 0}}, etorrent_utils:first()).
 
 -endif.
--ifdef(EUNIT2).
 
-test_torrent() ->
-    [{<<"announce">>,
-      <<"http://torrent.ubuntu.com:6969/announce">>},
-     {<<"announce-list">>,
-      [[<<"http://torrent.ubuntu.com:6969/announce">>],
-       [<<"http://ipv6.torrent.ubuntu.com:6969/announce">>]]},
-     {<<"comment">>,<<"Ubuntu CD releases.ubuntu.com">>},
-     {<<"creation date">>,1286702721},
-     {<<"info">>,
-      [{<<"length">>,728754176},
-       {<<"name">>,<<"ubuntu-10.10-desktop-amd64.iso">>},
-       {<<"piece length">>,524288},
-       {<<"pieces">>,
-	<<34,129,182,214,148,202,7,93,69,98,198,49,204,47,61,
-	  110>>}]}].
-
-test_torrent_private() ->
-    T = test_torrent(),
-    I = [{<<"info">>, IL} || {<<"info">>, IL} <- T],
-    H = T -- I,
-    P = [{<<"info">>, IL ++ [{<<"private">>, 1}]} || {<<"info">>, IL} <- T],
-    H ++ P.
-      	  
-get_http_urls_test() ->
-    ?assertEqual([["http://torrent.ubuntu.com:6969/announce"],
-		  ["http://ipv6.torrent.ubuntu.com:6969/announce"]],
-		 get_http_urls(test_torrent())).
-
-is_private_test() ->
-    ?assertEqual(false, is_private(test_torrent())),
-    ?assertEqual(true, is_private(test_torrent_private())).
-
--endif.
--ifdef(EUNIT2).
-
-ext_msg_contents_test() ->
-    Expected = <<"d1:mde1:pi1729e4:reqqi100e1:v20:Etorrent v-test-casee">>,
-    Computed = extended_msg_contents(1729, <<"Etorrent v-test-case">>,
-                                     100, {}, []),
-    ?assertEqual(Expected, Computed).
-
--endif.
 -ifdef(TEST2).
 -include_lib("eunit/include/eunit.hrl").
 
@@ -2803,4 +2736,30 @@ test_valid() ->
 -endif.
 
 
+test_torrent() ->
+    [{<<"announce">>,
+      <<"http://torrent.ubuntu.com:6969/announce">>},
+     {<<"announce-list">>,
+      [[<<"http://torrent.ubuntu.com:6969/announce">>],
+       [<<"http://ipv6.torrent.ubuntu.com:6969/announce">>]]},
+     {<<"comment">>,<<"Ubuntu CD releases.ubuntu.com">>},
+     {<<"creation date">>,1286702721},
+     {<<"info">>,
+      [{<<"length">>,728754176},
+       {<<"name">>,<<"ubuntu-10.10-desktop-amd64.iso">>},
+       {<<"piece length">>,524288},
+       {<<"pieces">>,
+	<<34,129,182,214,148,202,7,93,69,98,198,49,204,47,61,
+	  110>>}]}].
+
+test_torrent_private() ->
+    T = test_torrent(),
+    I = [{<<"info">>, IL} || {<<"info">>, IL} <- T],
+    H = T -- I,
+    P = [{<<"info">>, IL ++ [{<<"private">>, 1}]} || {<<"info">>, IL} <- T],
+    H ++ P.
+
+flush() ->
+    {messages, Msgs} = erlang:process_info(self(), messages),
+    [receive Msg -> Msg end || Msg <- Msgs].
 

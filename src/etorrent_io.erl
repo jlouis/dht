@@ -45,24 +45,26 @@
 
 -define(AWAIT_TIMEOUT, 60*1000).
 
--export([start_link/2,
-	     allocate/1,
-         piece_size/2,
-         piece_sizes/1,
-         read_piece/2,
-         read_chunk/4,
+-export([
+         allocate/1,
          aread_chunk/4,
-         write_chunk/4,
+         await_directory/1,
+         await_open_file/2,
          file_paths/1,
          file_sizes/1,
-         register_directory/1,
          lookup_directory/1,
-         await_directory/1,
-         register_file_server/2,
          lookup_file_server/2,
+         piece_size/2,
+         piece_sizes/1,
+         read_chunk/4,
+         read_piece/2,
+         register_directory/1,
+         register_file_server/2,
          register_open_file/2,
+         start_link/2,
          unregister_open_file/2,
-         await_open_file/2]).
+         write_chunk/4
+        ]).
 
 -export([check_piece/3]).
 
@@ -73,6 +75,10 @@
          terminate/2,
          code_change/3]).
 
+-ifdef(TEST).
+-export([make_piece_map_/2,
+         chunk_positions/3]).
+-endif.
 
 -type block_len() :: etorrent_types:block_len().
 -type block_offset() :: etorrent_types:block_offset().
