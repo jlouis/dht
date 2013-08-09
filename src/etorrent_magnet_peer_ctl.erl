@@ -2,10 +2,6 @@
 -behaviour(gen_server).
 -define(SERVER, ?MODULE).
 
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
-
 -type bcode() :: etorrent_types:bcode().
 
 -record(mpeer_state, {
@@ -242,25 +238,3 @@ piece_count(BlockSize, TotalSize) ->
 
 
 
--ifdef(TEST).
-
-piece_size_test_() ->
-    %% 012|345|67-|
-    [?_assertEqual(3, piece_size(0, 3, 8))
-    ,?_assertEqual(3, piece_size(1, 3, 8))
-    ,?_assertEqual(2, piece_size(2, 3, 8))
-    %% 012|345|678|
-    ,?_assertEqual(3, piece_size(2, 3, 9))
-    ].
-
-piece_count_test_() ->
-    %% 012|345|6--|
-    [?_assertEqual(3, piece_count(3, 7))
-    %% 012|345|67-|
-    ,?_assertEqual(3, piece_count(3, 8))
-    %% 012|345|678|
-    ,?_assertEqual(3, piece_count(3, 9))
-    ,?_assertEqual(2, piece_count(25356))
-    ].
-
--endif.

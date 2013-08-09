@@ -1,6 +1,6 @@
 PROJECT = etorrent_core
 
-DEPS = gproc lager hackney cowboy rlimit azdht mdns upnp ranch crypto2
+DEPS = gproc lager hackney cowboy rlimit azdht mdns upnp ranch crypto2 mochiweb
 TEST_DEPS = meck proper
 
 dep_gproc = https://github.com/uwiger/gproc.git master
@@ -15,11 +15,13 @@ dep_azdht = https://github.com/arcusfelis/azdht.git master
 dep_crypto2 = git://github.com/jlouis/crypto2.git master
 dep_mdns = https://github.com/jlouis/mdns.git master
 dep_upnp = https://github.com/jlouis/upnp.git master
+dep_mochiweb = https://github.com/mochi/mochiweb.git master
 
 ERLC_OPTS = +debug_info +'{parse_transform, lager_transform}'
 PLT_APPS += xmerl ssl crypto mnesia public_key compiler asn1 inets tools
 
 DIALYZER_OPTS=
+CT_SUITES += unit
 include erlang.mk
 
 .PHONY: analyze

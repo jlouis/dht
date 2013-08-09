@@ -1126,32 +1126,11 @@ fetch_hash(Piece, Hashes) ->
 num_hashes(Hashes) ->
     byte_size(Hashes) div 20.
 
-
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
-
-hashes_to_binary_test_() ->
-    Input = [<<1:160>>, <<2:160>>, <<3:160>>],
-    Bin = hashes_to_binary(Input),
-    [?_assertEqual(<<1:160>>, fetch_hash(0, Bin)),
-     ?_assertEqual(<<2:160>>, fetch_hash(1, Bin)),
-     ?_assertEqual(<<3:160>>, fetch_hash(2, Bin)),
-     ?_assertEqual(3, num_hashes(Bin)),
-     ?_assertError(badarg, fetch_hash(-1, Bin)),
-     ?_assertError(badarg, fetch_hash(3, Bin))].
-
-
--endif.
-
-
-
 assert_valid_unwanted(UnwantedPieces, ValidPieces) ->
     UnwantedCount = etorrent_pieceset:capacity(UnwantedPieces),
     ValidCount    = etorrent_pieceset:capacity(ValidPieces),
     [error({assert_valid_unwanted, UnwantedCount, ValidCount})
      || UnwantedCount =/= ValidCount].
-
-
 
 %% Here, we calculating, how much the total and left size will change 
 %% of wanted parts is changed.

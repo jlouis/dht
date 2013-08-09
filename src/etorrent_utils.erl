@@ -3,11 +3,6 @@
 %% @end
 -module(etorrent_utils).
 
--ifdef(TEST).
--include_lib("proper/include/proper.hrl").
--include_lib("eunit/include/eunit.hrl").
--endif.
-
 %% API
 
 %% "stdlib-like" functions
@@ -312,109 +307,6 @@ await(Name, Timeout) ->
 
 %%====================================================================
 
--ifdef(EUNIT).
--define(utils, ?MODULE).
-
-find_nomatch_test() ->
-    False = fun(_) -> false end,
-    ?assertEqual(false, ?utils:find(False, [1,2,3])).
-
-find_match_test() ->
-    Last = fun(E) -> E == 3 end,
-    ?assertEqual(3, ?utils:find(Last, [1,2,3])).
-
-reply_test() ->
-    Pid = spawn_link(fun() ->
-        ?utils:reply(fun(call) -> reply end)
-    end),
-    ?assertEqual(reply, gen_server:call(Pid, call)).
-
-register_test_() ->
-    {setup,
-        fun() -> application:start(gproc) end,
-        fun(_) -> application:stop(gproc) end,
-    [?_test(test_register()),
-     ?_test(test_register_group())
-    ]}.
-
-test_register() ->
-    true = ?utils:register(name),
-    ?assertEqual(self(), ?utils:lookup(name)),
-    ?assertEqual(self(), ?utils:await(name)).
-
-test_register_group() ->
-    ?assertEqual([], ?utils:lookup_members(group)),
-    true = ?utils:register_member(group),
-    ?assertEqual([self()], ?utils:lookup_members(group)),
-    Main = self(),
-    Pid = spawn_link(fun() ->
-        ?utils:register_member(group),
-        Main ! registered,
-        ?utils:expect(die)
-    end),
-    ?utils:expect(registered),
-    ?assertEqual([self(),Pid], lists:sort(?utils:lookup_members(group))),
-    ?utils:unregister_member(group),
-    ?assertEqual([Pid], ?utils:lookup_members(group)),
-    Pid ! die, ?utils:wait(Pid),
-    ?utils:ping(whereis(gproc)),
-    ?assertEqual([], ?utils:lookup_members(group)).
-
-groupby_duplicates_test() ->
-    Inp = [c, a, b, c, a, b],
-    Exp = [{a, [a,a]}, {b, [b,b]}, {c, [c,c]}],
-    Fun = fun(E) -> {E, E} end,
-    ?assertEqual(Exp, ?utils:group(Fun, Inp)).
-
--ifdef(PROPER).
-
-prop_gsplit_split() ->
-    ?FORALL({N, Ls}, {nat(), list(int())},
-	    if
-		N >= length(Ls) ->
-		    {Ls, []} =:= gsplit(N, Ls);
-		true ->
-		    lists:split(N, Ls) =:= gsplit(N, Ls)
-	    end).
-
-prop_group_count() ->
-    ?FORALL(Ls, list(int()),
-	    begin
-		Sorted = lists:sort(Ls),
-		Grouped = group(Sorted),
-		lists:all(
-		  fun({Item, Count}) ->
-			  length([E || E <- Ls,
-				       E =:= Item]) == Count
-		  end,
-		  Grouped)
-	    end).
-
-shuffle_list(List) ->
-    init_random_generator(),
-    {NewList, _} = lists:foldl( fun(_El, {Acc,Rest}) ->
-        RandomEl = lists:nth(random:uniform(length(Rest)), Rest),
-        {[RandomEl|Acc], lists:delete(RandomEl, Rest)}
-    end, {[],List}, List),
-    NewList.
-
-proplist_utils_test() ->
-    Prop1 = lists:zip(lists:seq(1, 15), lists:seq(1, 15)),
-    Prop2 = lists:zip(lists:seq(5, 20), lists:seq(5, 20)),
-    PropFull = lists:zip(lists:seq(1, 20), lists:seq(1, 20)),
-    ?assertEqual(merge_proplists(shuffle_list(Prop1), shuffle_list(Prop2)),
-                 PropFull),
-    ?assert(compare_proplists(Prop1, shuffle_list(Prop1))),
-    ok.
-
-eqc_count_test() ->
-    ?assert(proper:quickcheck(prop_group_count())).
-
-eqc_gsplit_test() ->
-    ?assert(proper:quickcheck(prop_gsplit_split())).
-
--endif.
--endif.
 
 
 %% @doc Convert base32 binary to integer.
@@ -431,20 +323,10 @@ std_dec(I) when I >= $2 andalso I =< $7 -> I - 24;
 std_dec(I) when I >= $a andalso I =< $z -> I - $a;
 std_dec(I) when I >= $A andalso I =< $Z -> I - $A.
 
--ifdef(EUNIT).
-
-base32_binary_to_integer_test_() ->
-    [?_assertEqual(base32_binary_to_integer(<<"IXE2K3JMCPUZWTW3YQZZOIB5XD6KZIEQ">>),
-                   398417223648295740807581630131068684170926268560)
-    ].
-
--endif.
-
 format_address({{A,B,C,D}, Port}) ->
     io_lib:format("~B.~B.~B.~B:~B", [A,B,C,D,Port]);
 format_address(Addr) ->
     io_lib:format("~p", [Addr]).
-
 
 init_random_generator() ->
     crypto2:init_random_generator().

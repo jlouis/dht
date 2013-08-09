@@ -33,11 +33,6 @@
 
 -behaviour(gen_server).
 
--ifdef(TEST).
--include_lib("proper/include/proper.hrl").
--include_lib("eunit/include/eunit.hrl").
--endif.
-
 %% API
 -export([start_link/4, completed/1, update_tracker/1]).
 
@@ -493,15 +488,3 @@ shuffle_tiers(Tiers) ->
 first_tracker_id([[{TrackerID, _URL}|_]|_]) -> TrackerID;
 first_tracker_id([]) -> undefined.
 
-%%% Test
-%%% ----------------------------------------------------------------------
-
--ifdef(TEST).
-
-first_tracker_id_test_() ->
-    [?_assertEqual(10,
-                   first_tracker_id([[{10,"http://bt3.rutracker.org/ann?uk=xxxxxxxxxx"}],
-                                     [{11,"http://retracker.local/announce"}]]))
-    ].
-
--endif.

@@ -137,7 +137,10 @@ $(foreach dep,$(TEST_DEPS),$(eval $(call dep_target,$(dep))))
 build-test-deps: $(ALL_TEST_DEPS_DIRS)
 	@for dep in $(ALL_TEST_DEPS_DIRS) ; do $(MAKE) -C $$dep; done
 
-build-tests: build-test-deps
+build-tests: build-test-deps compile-tests
+
+.PHONY: compile-tests
+compile-tests:
 	$(gen_verbose) ERL_LIBS=deps erlc -v $(ERLC_OPTS) -o test/ \
 		$(wildcard test/*.erl test/*/*.erl) -pa ebin/
 
@@ -153,7 +156,9 @@ CT_SUITES ?=
 CT_SUITES_FULL = $(addsuffix _SUITE,$(CT_SUITES))
 
 tests: ERLC_OPTS += -DTEST=1 +'{parse_transform, eunit_autoexport}'
-tests: clean deps app build-tests
+tests: clean deps app build-tests ct
+
+ct:
 	@mkdir -p logs/
 	@$(CT_RUN) -suite $(CT_SUITES_FULL)
 	$(gen_verbose) rm -f test/*.beam

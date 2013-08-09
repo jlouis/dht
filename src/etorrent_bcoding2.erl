@@ -5,10 +5,6 @@
 -module(etorrent_bcoding2).
 -author("Uvarov Mochael <arcusfelis@gmail.com>").
 
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
-
 %% API
 -export([decode/1]).
 
@@ -75,9 +71,3 @@ decode_dict_items(Bin, Accum) when is_binary(Bin) ->
                         decode_dict_items(Rest2, [{Key, Value} | Accum])
     end.
 
--ifdef(TEST).
-decode_test_() ->
-    [?_assertEqual(decode(<<"d8:msg_typei0e5:piecei0ee">>),
-                   {[{<<"msg_type">>, 0}, {<<"piece">>, 0}], <<"">>})].
-
--endif.

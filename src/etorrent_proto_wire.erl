@@ -8,11 +8,6 @@
 
 -include("etorrent_version.hrl").
 
--ifdef(TEST).
--include_lib("proper/include/proper.hrl").
--include_lib("eunit/include/eunit.hrl").
--endif.
-
 -export([incoming_packet/2,
          send_msg/2,
          decode_bitfield/2,
@@ -440,15 +435,6 @@ extended_msg_contents(Port, ClientVersion, ReqQ, M, Extra)
          {<<"reqq">>, ReqQ},
          {<<"m">>, M}] ++ Extra)).
 
--ifdef(EUNIT).
-
-ext_msg_contents_test() ->
-    Expected = <<"d1:mde1:pi1729e4:reqqi100e1:v20:Etorrent v-test-casee">>,
-    Computed = extended_msg_contents(1729, <<"Etorrent v-test-case">>,
-                                     100, {}, []),
-    ?assertEqual(Expected, Computed).
-
--endif.
 
 
 

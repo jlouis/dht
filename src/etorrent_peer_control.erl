@@ -451,7 +451,6 @@ handle_info({'DOWN', _Ref, process, Pid, normal}, #state { child_procs = CP } = 
     %% One of our children are dead, so we should close down
     [P ! stop || P <- CP],
     {stop, normal, State}.
-            
 
 %% @private
 terminate(_Reason, _S) ->

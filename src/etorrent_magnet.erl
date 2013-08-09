@@ -9,6 +9,9 @@
 -export([handle_completion/5]).
 
 %% Used for testing
+-ifdef(TEST).
+-export([parse_url/1]).
+-endif.
 %-export([build_torrent/2,
 %         write_torrent/2,
 %         parse_url/1,
@@ -16,10 +19,6 @@
 
 %% Used from etorrent_info.
 -export([build_url/3]).
-
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
 
 -type bcode() :: etorrent_types:bcode().
 
@@ -175,30 +174,6 @@ add_trackers([[T|_]|_]=Teers) ->
     Teers1 = [[iolist_to_binary(Tracker) || Tracker <- Teer] || Teer <- Teers],
     [{<<"announce">>, iolist_to_binary(T)}, {<<"announce-list">>, Teers1}];
 add_trackers([]) -> [].
-
-
--ifdef(TEST).
-
-colton_url() ->
-    "magnet:?xt=urn:btih:b48ed25b01668963e1f0ff782be383c5e7060eb4&"
-    "dn=Jonathan+Coulton+-+Discography&"
-    "tr=udp%3A%2F%2Ftracker.openbittorrent.com%3A80&"
-    "tr=udp%3A%2F%2Ftracker.publicbt.com%3A80&"
-    "tr=udp%3A%2F%2Ftracker.istole.it%3A6969&"
-    "tr=udp%3A%2F%2Ftracker.ccc.de%3A80".
-
-parse_url_test_() ->
-    [?_assertEqual({398417223648295740807581630131068684170926268560, undefined, []},
-                   parse_url("magnet:?xt=urn:btih:IXE2K3JMCPUZWTW3YQZZOIB5XD6KZIEQ"))
-    ,?_assertEqual({1030803369114085151184244669493103882218552823476,
-                                   "Jonathan Coulton - Discography",
-                                   ["udp://tracker.publicbt.com:80",
-                                    "udp://tracker.openbittorrent.com:80",
-                                    "udp://tracker.istole.it:6969",
-                                    "udp://tracker.ccc.de:80"]},
-                   parse_url(colton_url()))
-    ].
--endif.
 
 integer_info_hash_to_literal(IntIH) when is_integer(IntIH) ->
     iolist_to_binary(io_lib:format("~40.16.0B", [IntIH])).

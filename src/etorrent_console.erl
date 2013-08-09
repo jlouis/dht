@@ -245,19 +245,4 @@ pretty_speed(BPS) ->
 
 
 
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
-
-
-sort_records_test_() ->
-    Unsorted = [#torrent{id=1}, #torrent{id=3}, #torrent{id=2}],
-    Sorted = sort_records(Unsorted),
-    [R1, R2, R3] = Sorted,
-
-    [?_assertEqual(R1#torrent.id, 1)
-    ,?_assertEqual(R2#torrent.id, 2)
-    ,?_assertEqual(R3#torrent.id, 3)
-    ].
-
--endif.
 
