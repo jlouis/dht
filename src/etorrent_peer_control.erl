@@ -50,26 +50,27 @@
 -type peerconf() :: etorrent_peerconf:peerconf().
 -type tservices() :: etorrent_download:tservices().
 -record(state, {
-    torrent_id = exit(required) :: integer(),
-    info_hash = exit(required) ::  binary(),
-    metadata_size :: non_neg_integer(),
-    socket = none  :: none | inet:socket(),
-    send_pid :: pid(),
+          child_procs = [] :: [pid()],
+          torrent_id = exit(required) :: integer(),
+          info_hash = exit(required) ::  binary(),
+          metadata_size :: non_neg_integer(),
+          socket = none  :: none | inet:socket(),
+          send_pid :: pid(),
 
-    download = exit(required) :: tservices(),
-    rate :: etorrent_rate:rate(),
+          download = exit(required) :: tservices(),
+          rate :: etorrent_rate:rate(),
 
-    remote = exit(required) :: peerstate(),
-    local  = exit(required) :: peerstate(),
-    config = exit(required) :: peerconf(),
+          remote = exit(required) :: peerstate(),
+          local  = exit(required) :: peerstate(),
+          config = exit(required) :: peerconf(),
 
-    extensions :: term(),
-    reject_after_choke_tref :: term(),
-    %% Does remote peer support DHT?
-    remote_dht :: boolean(),
-    remote_ip :: ipaddr(),
-    remote_port :: inet:port_number()
-    }).
+          extensions :: term(),
+          reject_after_choke_tref :: term(),
+          %% Does remote peer support DHT?
+          remote_dht :: boolean(),
+          remote_ip :: ipaddr(),
+          remote_port :: inet:port_number()
+         }).
 
 %% Default size for a chunk. All clients use this.
 -define(DEFAULT_CHUNK_SIZE, 16384).
@@ -225,22 +226,27 @@ init([TrackerUrl, LocalPeerID, RemotePeerID,
                                  leeching, Fast, RemotePeerID),
     ok = etorrent_choker:monitor(self()),
 
-    {ok, _RecvPid} = etorrent_peer_recv:start_link(TorrentID, Socket),
-    {ok, _SendPid} = etorrent_peer_send:start_link(Socket, TorrentID, false),
+    {ok, RecvPid} = etorrent_peer_recv:start_link(TorrentID, Socket),
+    {ok, SendPid} = etorrent_peer_send:start_link(Socket, TorrentID, false),
+
+    erlang:monitor(process, RecvPid),
+    erlang:monitor(process, SendPid),
 
     State = #state{
-        torrent_id=TorrentID,
-        info_hash=InfoHash,
-        metadata_size=MetadataSize,
-        socket=Socket,
-        download=Download,
-        remote=Remote,
-        local=Local,
-        config=Config,
-        extensions=Exts,
-        remote_dht=DHT,
-        remote_ip=IP,
-        remote_port=Port},
+               torrent_id=TorrentID,
+               info_hash=InfoHash,
+               metadata_size=MetadataSize,
+               socket=Socket,
+               download=Download,
+               remote=Remote,
+               local=Local,
+               config=Config,
+               extensions=Exts,
+               remote_dht=DHT,
+               remote_ip=IP,
+               remote_port=Port,
+               child_procs = [SendPid, RecvPid]
+              },
     {ok, State}.
 
 %% @private
@@ -436,7 +442,16 @@ handle_info({download, Update}, State) ->
             
 handle_info({tcp, _, _}, State) ->
     lager:error("Detected wrong controller for TCP socket"),
-    {noreply, State}.
+    {noreply, State};
+handle_info({'DOWN', _Ref, process, Pid, normal}, #state { child_procs = CP } = State) ->
+    lager:debug("Closing Controller due to child exit"),
+    %% Note: If the exit reason is not 'normal' then the link should
+    %% reap us.
+    true = lists:member(Pid, CP), % It must be one of the guys we are monitoring
+    %% One of our children are dead, so we should close down
+    [P ! stop || P <- CP],
+    {stop, normal, State}.
+            
 
 %% @private
 terminate(_Reason, _S) ->

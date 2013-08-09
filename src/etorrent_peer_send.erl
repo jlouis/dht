@@ -272,7 +272,8 @@ handle_info({rlimit, continue}, State) ->
                     {stop, Reason, State}
             end
     end;
-
+handle_info(stop, State) ->
+    {stop, normal, State};
 handle_info(Msg, State) ->
     {stop, Msg, State}.
 

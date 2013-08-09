@@ -147,7 +147,8 @@ handle_info(rate_update, State) ->
 
 handle_info({tcp_closed, _}, State) ->
     {stop, ?NORMAL_EXIT, State};
-
+handle_info(stop, State) ->
+    {stop, normal, State};
 handle_info(Msg, State) ->
     {stop, Msg, State}.
 
