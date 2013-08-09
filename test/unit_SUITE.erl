@@ -59,6 +59,9 @@ groups() -> [{magnet, [],
               [metadata_variant_basic]},
              {monitor, [],
               [monitor_basic]},
+             {info, [],
+              [info_byte_ranges,
+               info_piece_size]},
              {endgame, [],
               [endgame_basic,
                endgame_active_one_fetched,
@@ -66,15 +69,16 @@ groups() -> [{magnet, [],
                endgame_request_list]}].
 
 %%--------------------------------------------------------------------
-all() -> [%{group, endgame},
-          io_basic,
+all() -> [io_basic,
           timer_basic,
           bcoding_basic,
           proto_wire_basic,
           metainfo_basic,
           {group, magnet},
           {group, metadata_variant},
-          {group, monitor}].
+          {group, monitor},
+          {group, info},
+          {group, endgame}].
 
 %%--------------------------------------------------------------------
     
@@ -792,48 +796,40 @@ file_name_to_ids(Arr) ->
 
 -endif.
 
--ifdef(TEST2).
-
-byte_ranges_to_mask_test_() ->
+-define(info, etorrent_info).
+info_byte_ranges() -> [].
+info_byte_ranges(_Config) ->
     %% Bytes:  |0123|4567|89AB|
     %% Pieces: |0   |1   |2   |
     %% Set:    |---x|xxxx|xxx-|
-    [?_assertEqual(<<2#010:3>>, byte_ranges_to_mask([{3,8}], 0, 4, 12,
-                                                    false, <<>>)),
+    <<2#010:3>> = ?info:byte_ranges_to_mask([{3,8}], 0, 4, 12, false, <<>>),
     %% Bytes:  |0123|4567|89AB|
     %% Pieces: |0   |1   |2   |
     %% Set:    |---x|xxxx|xxxx|
-     ?_assertEqual(<<2#011:3>>, byte_ranges_to_mask([{3,9}], 0, 4, 12,
-                                                    false, <<>>)),
+    <<2#011:3>> = ?info:byte_ranges_to_mask([{3,9}], 0, 4, 12, false, <<>>),
     %% Bytes:  |0123|4567|89A-|
     %% Pieces: |0   |1   |2   |
     %% Set:    |---x|xxxx|xxx-|
-     ?_assertEqual(<<2#011:3>>, byte_ranges_to_mask([{3,8}], 0, 4, 11,
-                                                    false, <<>>))
-    ].
+    <<2#011:3>> = ?info:byte_ranges_to_mask([{3,8}], 0, 4, 11, false, <<>>),
+    ok.
 
--endif.
-
--ifdef(TEST2).
-
-calc_piece_size_test_() ->
+info_piece_size() -> [].
+info_piece_size(_Config) ->
     %% PieceNum, PieceSize, TotalSize, PieceCount
     %% Bytes:  |0123|4567|89AB|
     %% Pieces: |0   |1   |2   |
-    [?_assertEqual(4, calc_piece_size(0, 4, 12, 3)),
-     ?_assertEqual(4, calc_piece_size(1, 4, 12, 3)),
-     ?_assertEqual(4, calc_piece_size(2, 4, 12, 3)),
-     ?_assertError(function_clause, calc_piece_size(3, 4, 12, 3)),
-     ?_assertError(function_clause, calc_piece_size(-1, 4, 12, 3)),
+    4 = ?info:calc_piece_size(0, 4, 12, 3),
+    4 = ?info:calc_piece_size(1, 4, 12, 3),
+    4 = ?info:calc_piece_size(2, 4, 12, 3),
+    test_server:call_crash(1000, ?info, calc_piece_size, [3, 4, 12, 3]),
+    test_server:call_crash(1000, ?info, calc_piece_size, [-1, 4, 12, 3]),
 
     %% Bytes:  |0123|4567|89A-|
     %% Pieces: |0   |1   |2   |
-     ?_assertEqual(4, calc_piece_size(0, 4, 11, 3)),
-     ?_assertEqual(4, calc_piece_size(1, 4, 11, 3)),
-     ?_assertEqual(3, calc_piece_size(2, 4, 11, 3))
-    ].
-
--endif.
+    4 = ?info:calc_piece_size(0, 4, 11, 3),
+    4 = ?info:calc_piece_size(1, 4, 11, 3),
+    3 = ?info:calc_piece_size(2, 4, 11, 3),
+    ok.
 
 -ifdef(TEST2).
 -define(set, ?MODULE).

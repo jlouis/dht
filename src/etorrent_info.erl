@@ -53,6 +53,10 @@
 	terminate/2,
 	code_change/3]).
 
+-ifdef(TEST).
+-export([byte_ranges_to_mask/6,
+         calc_piece_size/4]).
+-endif.
 
 -type bcode() :: etorrent_types:bcode().
 -type torrent_id() :: etorrent_types:torrent_id().
@@ -1024,9 +1028,6 @@ byte_ranges_to_mask([], FromPiece, PLen, TLen, _IsGreedy, Bin) ->
     PTotal = byte_to_piece_count(TLen, PLen),
     PAfter = PTotal - FromPiece,
     <<Bin/binary, 0:PAfter>>.
-
-
-
 
 calc_piece_size(PieceNum, PieceSize, TotalSize, PieceCount)
         when (PieceNum + 1) =:= PieceCount ->
