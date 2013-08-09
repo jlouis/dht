@@ -17,7 +17,7 @@ dep_mdns = https://github.com/jlouis/mdns.git master
 dep_upnp = https://github.com/jlouis/upnp.git master
 
 ERLC_OPTS = +debug_info +'{parse_transform, lager_transform}'
-PLT_APPS += xmerl ssl crypto mnesia public_key compiler asn1 inets
+PLT_APPS += xmerl ssl crypto mnesia public_key compiler asn1 inets tools
 
 DIALYZER_OPTS=
 include erlang.mk
