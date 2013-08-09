@@ -44,10 +44,9 @@ start_child(LocalPeerId, RemotePeerId, InfoHash, TorrentId,
 start_child(TrackerUrl, LocalPeerId, RemotePeerId, InfoHash, TorrentId,
             {IP, Port}, Capabilities, Socket)
         when is_integer(TorrentId) ->
-    GroupPid = gproc:lookup_local_name({torrent, TorrentId, peer_pool_sup}),
-    is_pid(GroupPid) orelse error({dead_pool, GroupPid, TorrentId}),
     Params = [TrackerUrl, LocalPeerId, RemotePeerId, InfoHash,
               TorrentId, {IP, Port}, Capabilities, Socket],
+    GroupPid = group_pid(TorrentId),
     case supervisor:start_child(GroupPid, Params) of
         {ok, _Pid} ->
             RecvPid = etorrent_peer_recv:await_server(Socket),
@@ -64,6 +63,14 @@ start_child(TrackerUrl, LocalPeerId, RemotePeerId, InfoHash, TorrentId,
 init([Id]) ->
     gproc:add_local_name({torrent, Id, peer_pool_sup}),
     ChildSpec = {child,
-                 {etorrent_peer_sup, start_link, []},
-                 temporary, infinity, supervisor, [etorrent_peer_sup]},
+                 {etorrent_peer_control, start_link, []},
+                 temporary, 10*1000, worker, [etorrent_peer_control]},
     {ok, {{simple_one_for_one, 50, 3600}, [ChildSpec]}}.
+
+%% --------------------------------------------------
+group_pid(Id) ->
+    case gproc:lookup_local_name({torrent, Id, peer_pool_sup}) of
+        Pid when is_pid(Pid) -> Pid;
+        Otherwise -> error({dead_pool, Otherwise, Id})
+    end.
+

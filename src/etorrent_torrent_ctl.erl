@@ -989,21 +989,21 @@ start_networking(S=#state{id=Id, torrent=Torrent, valid=ValidPieces, wishes=Wish
 
     %% Start the progress manager
     {ok, ProgressPid} =
-    case etorrent_torrent_sup:start_progress(
-          Sup,
-          Id,
-          Torrent,
-          ValidPieces,
-          Masks,
-          UnwantedPieces) of
-        {ok, Pid} ->
-            {ok, Pid}; 
-        {error, {already_started, Pid}} ->
-            %% It is a rare case. For example, etorrent_torrent_sup restarted
-            %% all active children.
-            lager:debug("Progress manager is already started for ~p.", [Id]),
-            {ok, Pid}
-    end,
+        case etorrent_torrent_sup:start_progress(
+               Sup,
+               Id,
+               Torrent,
+               ValidPieces,
+               Masks,
+               UnwantedPieces) of
+            {ok, Pid} ->
+                {ok, Pid}; 
+            {error, {already_started, Pid}} ->
+                %% It is a rare case. For example, etorrent_torrent_sup restarted
+                %% all active children.
+                lager:debug("Progress manager is already started for ~p.", [Id]),
+                {ok, Pid}
+        end,
 
     %% Update the tracking map. This torrent has been started.
     %% Altering this state marks the point where we will accept
@@ -1016,17 +1016,14 @@ start_networking(S=#state{id=Id, torrent=Torrent, valid=ValidPieces, wishes=Wish
     %% Start the tracker
     {ok, TrackerPid} =
         case etorrent_torrent_sup:start_child_tracker(
-              S#state.parent_pid,
-              S#state.info_hash,
-              S#state.peer_id,
-              Id,
-              S#state.options) of
-            {ok, Pid1} ->
-                {ok, Pid1}; 
-            {error, {already_started, Pid1}} ->
-                {ok, Pid1};
-            {error, trackerless} ->
-                {ok, undefined}
+               S#state.parent_pid,
+               S#state.info_hash,
+               S#state.peer_id,
+               Id,
+               S#state.options) of
+            {ok, Pid1}                       -> {ok, Pid1}; 
+            {error, {already_started, Pid1}} -> {ok, Pid1};
+            {error, trackerless}             -> {ok, undefined}
         end,
 
     {ok, Timer} = timer:send_interval(10000, check_completed),

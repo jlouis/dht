@@ -208,7 +208,7 @@ init([TrackerUrl, LocalPeerID, RemotePeerID,
     Fast     = proplists:get_bool(fast_extension, Caps),
     %% Does remote peer support DHT?
     DHT      = proplists:get_bool(dht_support, Caps),
-    [lager:info("Remote peer supports DHT.") || DHT],
+    [lager:debug("Remote peer supports DHT.") || DHT],
     Config0  = etorrent_peerconf:new(),
     Config1  = etorrent_peerconf:localid(LocalPeerID, Config0),
     Config2  = etorrent_peerconf:remoteid(RemotePeerID, Config1),
@@ -224,6 +224,10 @@ init([TrackerUrl, LocalPeerID, RemotePeerID,
     ok = etorrent_table:new_peer(TrackerUrl, IP, Port, TorrentID, self(),
                                  leeching, Fast, RemotePeerID),
     ok = etorrent_choker:monitor(self()),
+
+    {ok, _RecvPid} = etorrent_peer_recv:start_link(TorrentID, Socket),
+    {ok, _SendPid} = etorrent_peer_send:start_link(Socket, TorrentID, false),
+
     State = #state{
         torrent_id=TorrentID,
         info_hash=InfoHash,

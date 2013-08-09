@@ -186,7 +186,6 @@ contact_tracker(Tiers, Event, S) ->
         {ok, NS} -> {ok, NS}
     end.
 
--type tier2() :: [{non_neg_integer(), binary()}].
 -spec contact_tracker(Tiers, Event, State, Acc) -> {ok, State} | none when
       Tiers :: [tier()],
       Event :: any(),

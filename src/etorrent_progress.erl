@@ -350,15 +350,8 @@ stored_chunks(TorrentID) ->
 
 
 %% @private
-init(Serverargs) ->
-    Args = orddict:from_list(Serverargs),
-    TorrentID = orddict:fetch(torrentid, Args),
+init([TorrentID, ChunkSize, PiecesValid, PieceSizes, _, Wishes, Unwanted]) ->
     true = register_server(TorrentID),
-    ChunkSize = orddict:fetch(chunksize, Args),
-    PiecesValid = orddict:fetch(fetched, Args),
-    PieceSizes = orddict:fetch(piecesizes, Args),
-    Wishes = proplists:get_value(user_wishes, Serverargs, []),
-
     TorrentPid = etorrent_torrent_ctl:await_server(TorrentID),
     _ScarcityPid = etorrent_scarcity:await_server(TorrentID),
     Pending = etorrent_pending:await_server(TorrentID),
@@ -388,7 +381,6 @@ init(Serverargs) ->
     ChunkSets = array:from_orddict(ChunkList),
 
     PiecePriority = init_priority(TorrentID, unassigned, PiecesInvalid),
-    PiecesUnwanted = proplists:get_value(unwanted, Serverargs, PiecesNone),
 
     InitState = #state{
         torrent_id=TorrentID,
@@ -402,7 +394,7 @@ init(Serverargs) ->
         pieces_begun=PiecesNone,
         pieces_assigned=PiecesNone,
         pieces_stored=PiecesNone,
-        pieces_unwanted=PiecesUnwanted,
+        pieces_unwanted=Unwanted,
         %% Initially, the sets of assigned and stored chunks are equal.
         %% Chunksets are empty for valid pieces, and full for invalid ones.
         chunks_assigned=ChunkSets,

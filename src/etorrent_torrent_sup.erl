@@ -165,7 +165,7 @@ progress_spec(TorrentID, Torrent, ValidPieces, Wishes, UnwantedPieces) ->
     Args = [TorrentID, ChunkSize, ValidPieces, PieceSizes, lookup, 
             Wishes, UnwantedPieces],
     {chunk_mgr,
-        {etorrent_progress, start_link, Args},
+        {etorrent_progress, start_link, [Args]},
         transient, 20000, worker, [etorrent_progress]}.
 
 endgame_spec(TorrentID) ->
