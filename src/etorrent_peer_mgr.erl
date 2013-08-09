@@ -99,8 +99,7 @@ init([LocalPeerId]) ->
     {ok, #state{ local_peer_id = LocalPeerId }}.
 
 handle_call(_Request, _From, State) ->
-    error(badarg),
-    {reply, ok, State}.
+    {stop, badarg, {error, badarg}, State}.
 
 handle_cast({add_peers, TrackerUrl, IPList}, S) ->
     lager:debug("Add peers ~p.", [IPList]),

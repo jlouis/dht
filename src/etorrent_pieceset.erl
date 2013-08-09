@@ -39,7 +39,7 @@
     csize :: non_neg_integer() | none,
     elements :: binary()}).
 
--opaque t() :: #pieceset{}.
+-type t() :: #pieceset{}.
 -export_type([t/0]).
 
 %% @doc

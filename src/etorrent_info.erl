@@ -242,7 +242,7 @@ magnet_link(TorrentID) ->
     Link.
 
 
--spec tree_children(torrent_id(), file_id()) -> [{atom(), term()}].
+-spec tree_children(torrent_id(), file_id()) -> [[{atom(), term()}]].
 tree_children(TorrentID, FileID) when is_integer(TorrentID), is_integer(FileID) ->
     %% get children
     DirPid = await_server(TorrentID),
@@ -854,10 +854,10 @@ make_mask(From, Size, PLen, TLen) ->
 -spec make_mask(From, Size, PLen, TLen, IsGreedy) -> Mask when
     From :: non_neg_integer(),
     Size :: non_neg_integer(),
-    PLen :: non_neg_integer(),
-    TLen :: non_neg_integer(),
+    PLen :: pos_integer(),
+    TLen :: pos_integer(),
     IsGreedy :: boolean(),
-    Mask :: pieceset().
+    Mask :: bitstring().
 
 %% @private
 make_mask(From, Size, PLen, TLen, IsGreedy)
@@ -1278,17 +1278,17 @@ mask_to_filelist_int(Mask, Arr, true) ->
             [0];
         #file_info{children=SubFileIds} ->
             mask_to_filelist_rec(SubFileIds, Mask, Arr, #file_info.pieces)
-    end;
-mask_to_filelist_int(Mask, Arr, false) ->
-    Root = array:get(?ROOT_FILE_ID, Arr),
-    case Root of
-        %% Everything is unwanted.
-        #file_info{distinct_pieces=Mask} ->
-            [0];
-        #file_info{children=SubFileIds} ->
-            mask_to_filelist_rec(SubFileIds, Mask, Arr,
-                                 #file_info.distinct_pieces)
     end.
+%% mask_to_filelist_int(Mask, Arr, false) ->
+%%     Root = array:get(?ROOT_FILE_ID, Arr),
+%%     case Root of
+%%         %% Everything is unwanted.
+%%         #file_info{distinct_pieces=Mask} ->
+%%             [0];
+%%         #file_info{children=SubFileIds} ->
+%%             mask_to_filelist_rec(SubFileIds, Mask, Arr,
+%%                                  #file_info.distinct_pieces)
+%%     end.
 
 %% Matching all files starting from Root recursively.
 mask_to_filelist_rec([FileId|FileIds], Mask, Arr, PieceField) ->

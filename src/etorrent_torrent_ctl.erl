@@ -108,7 +108,7 @@
     tracker_pid :: pid(),
     progress    :: pid(),
     wishes = [] :: [#wish{}],
-    interval    :: timer:interval(),
+    interval    :: 'undefined' | timer:tref(),
     mode = progress :: 'progress' | 'endgame' | atom(),
     %% This field is for passing `paused' flag beetween
     %% the `init' and `initializing' functions.

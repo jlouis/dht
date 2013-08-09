@@ -33,6 +33,7 @@
 
 %% Decoded.
 -type bcode() :: etorrent_types:bcode().
+-export_type([bcode/0]).
 
 %%====================================================================
 %% API

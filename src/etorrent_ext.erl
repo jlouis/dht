@@ -23,8 +23,8 @@
 -record(exts, {
         local_id2name      :: tuple(ext_name()),
         local_id2mod_name  :: tuple(ext_name()),
-        bnames :: ordset:ordset(ext_bname()),
-        mod_names :: ordset:ordset(ext_mod_name()),
+        bnames :: ordsets:ordset(ext_bname()),
+        mod_names :: ordsets:ordset(ext_mod_name()),
         supported_name2remote_id_and_mod_name :: dict(),
         all_bname2remote_id = orddict:new() :: orddict:orddict(),
         m :: list({ext_bname(), ext_id()})
@@ -151,9 +151,9 @@ filter_supported_test_() ->
 
 
 %% Arguments are sorted by the 1st field.
-%% Too extensions with the same name, it is strange. Skip the first.
-update_ord_dict([{Name,_}, [{Name,_}|_]=News], Olds) ->
-    update_ord_dict(News, Olds);
+%% Two extensions with the same name, is strange. Skip the first.
+update_ord_dict([{Name,_}, {Name,_} = H|T], Olds) ->
+    update_ord_dict([H|T], Olds);
 %% Disable this extension.
 update_ord_dict([{Name,0}|News], [{Name,_}|Olds]) ->
     update_ord_dict(News, Olds);
@@ -165,7 +165,7 @@ update_ord_dict([{Name,Id}|News], [{Name,_}|Olds]) ->
 update_ord_dict([{NewName,_}|_]=News, [{OldName,_}=Old|Olds])
     when NewName > OldName ->
     [Old|update_ord_dict(News, Olds)];
-%% Skip unsettiong command. Strange.
+%% Skip unsetting command. Strange.
 update_ord_dict([{_,0}|News], [_|_]=Olds) ->
     update_ord_dict(News, Olds);
 %% Keep this extension as is.

@@ -56,7 +56,6 @@
 
 %% peer API
 -export([start_link/1,
-         start_link/7,
          mark_valid/2]).
 
 %% stats API
@@ -247,34 +246,9 @@ server_name(TorrentID) ->
 
 %% @doc Start a new torrent progress server
 %% @end
--spec start_link([serverarg()]) -> {ok, pid()}.
+-spec start_link([serverarg()]) -> {ok, pid()} | ignore | {error, any()}.
 start_link(Args) ->
     gen_server:start_link(?MODULE, Args, []).
-
-
-%% @doc
-%% Start a new chunk server for a set of pieces, a subset of the
-%% pieces may already have been fetched.
-%% @end
--spec start_link(TorrentID, ChunkSize, Fetched, Sizes, TorrentPid, 
-                 Wishes, Unwanted) -> ok when
-    TorrentID  :: torrent_id(),
-    ChunkSize  :: non_neg_integer(),
-    Fetched    :: pieceset(),
-    Sizes      :: term(),
-    TorrentPid :: pid(),
-    Wishes     :: [pieceset()],
-    Unwanted   :: pieceset() | undefined.
-start_link(TorrentID, ChunkSize, Fetched, Sizes, TorrentPid, Wishes, Unwanted) ->
-    Args = 
-        [{unwanted, Unwanted} || Unwanted =/= undefined] ++ [
-        {torrentid, TorrentID},
-        {chunksize, ChunkSize},
-        {fetched, Fetched},
-        {piecesizes, Sizes},
-        {torrentpid, TorrentPid},
-        {user_wishes, Wishes}],
-    start_link(Args).
 
 %% @doc
 %% Mark a piece as completly stored to disk and validated.

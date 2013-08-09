@@ -19,7 +19,7 @@
          await_server/1]).
 
 
--type infohash() :: etorrent_types:infohash().
+-type infohash() :: binary().
 -type portnum() :: etorrent_types:portnum().
 -type torrent_id() :: etorrent_types:torrent_id().
 
@@ -64,7 +64,7 @@ poller_key() ->
 %% Gproc helpers
 %% ------------------------------------------------------------------------
 
--spec start_link(infohash(), binary()) -> {'ok', pid()}.
+-spec start_link(infohash(), binary()) -> {'ok', pid()} | 'ignore' | {'error', any()}.
 start_link(InfoHash, TorrentID) when is_binary(InfoHash) ->
     Args = [{infohash, InfoHash}, {torrent_id, TorrentID}],
     gen_server:start_link(?MODULE, Args, []).

@@ -23,7 +23,7 @@
 -record(mdns_peer, {
     id :: peerid(),
     ip :: inet:ip_address(),
-    bt_port :: inet:port_nuber()
+    bt_port :: inet:port_number()
 }).
 -record(mdns_torrent, {
     id :: infohash() | '_',
@@ -33,8 +33,8 @@
 -record(state, {
     %% HEX-string, 40 characters.
     my_peer_id :: string(),
-    torrent_table :: ets:table(),
-    peer_table :: ets:table()
+    torrent_table :: ets:tab(),
+    peer_table :: ets:tab()
 }).
 
 srv_name() ->

@@ -147,7 +147,7 @@ find_node(IP, Port, Target)  ->
 %
 %
 -spec get_peers(ipaddr(), portnum(), infohash()) ->
-    {nodeid(), token(), list(peerinfo()), list(nodeinfo())}.
+    {nodeid(), token(), list(peerinfo()), list(nodeinfo())} | {error, any()}.
 get_peers(IP, Port, InfoHash)  ->
     Call = {get_peers, IP, Port, InfoHash},
     case gen_server:call(srv_name(), Call) of
