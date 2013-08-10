@@ -7,9 +7,13 @@
 
 -define(METADATA_BLOCK_BYTE_SIZE, 16384). %% 16KiB (16384 Bytes)
 
+-define(chunkstate, etorrent_chunkstate).
 -define(endgame, etorrent_endgame).
 -define(pending, etorrent_pending).
--define(chunkstate, etorrent_chunkstate).
+-define(piecestate, etorrent_piecestate).
+-define(progress, etorrent_progress).
+-define(scarcity, etorrent_scarcity).
+-define(timer, etorrent_timer).
 
 %%--------------------------------------------------------------------
 suite() ->
@@ -19,6 +23,7 @@ suite() ->
 init_per_suite(Config) ->
     crypto:start(),
     ok = application:start(gproc),
+    ct:pal(debug, "~p", [application:which_applications()]),
     Config.
 
 %%--------------------------------------------------------------------
@@ -27,10 +32,11 @@ end_per_suite(_Config) ->
     ok.
 
 %%--------------------------------------------------------------------
+
 init_per_group(endgame, Config) ->
     etorrent_utils:register(?MODULE),
-    {ok, PPid} = ?pending:start_link(testid()),
-    {ok, EPid} = ?endgame:start_link(testid()),
+    {ok, PPid} = ?pending:start_link(?config(test_id, Config)),
+    {ok, EPid} = ?endgame:start_link(?config(test_id, Config)),
     ok = ?pending:receiver(EPid, PPid),
     ok = ?pending:register(PPid),
     [{ppid, PPid},
@@ -48,6 +54,8 @@ end_per_group(_GroupName, _Config) ->
     ok.
 
 %%--------------------------------------------------------------------
+init_per_testcase(piecestate_basic_2, Config) ->
+	[{test_id, 2} | Config];
 init_per_testcase(dht_state, Config) ->
     Priv = ?config(priv_dir, Config),
     Empty = test_server:temp_name(Priv),
@@ -65,7 +73,6 @@ init_per_testcase(_TestCase, Config) ->
     Config.
 
 %%--------------------------------------------------------------------
-
 end_per_testcase(dht_state, Config) ->
     ok = file:delete(?config(empty, Config)),
     ok = file:delete(?config(valid, Config)),
@@ -102,6 +109,10 @@ all() -> [io_basic,
           bcoding_basic,
           proto_wire_basic,
           metainfo_basic,
+          piecestate_basic,
+	 piecestate_basic_2,
+          communication_basic,
+	 progress_basic,
           {group, magnet},
           {group, metadata_variant},
           {group, monitor},
@@ -111,48 +122,47 @@ all() -> [io_basic,
 
 %%--------------------------------------------------------------------
     
-testid() -> 0.
-testpid() -> ?endgame:lookup_server(testid()).
+testpid(Config) -> ?endgame:lookup_server(?config(test_id, Config)).
 testset() -> etorrent_pieceset:from_list([0], 8).
-pending() -> ?pending:lookup_server(testid()).
+pending(Config) -> ?pending:lookup_server(?config(test_id, Config)).
 mainpid() -> etorrent_utils:lookup(?MODULE).
 
 endgame_basic() -> [].
-endgame_basic(_Config) ->
-    true = is_pid(?endgame:lookup_server(testid())),
-    true = is_pid(?endgame:await_server(testid())),
+endgame_basic(Config) ->
+    true = is_pid(?endgame:lookup_server(?config(test_id, Config))),
+    true = is_pid(?endgame:await_server(?config(test_id, Config))),
 
     Pid1 = spawn_link(
              fun() ->
-                     ?pending:register(pending()),
-                     ?chunkstate:assigned(0, 0, 1, self(), testpid()),
+                     ?pending:register(pending(Config)),
+                     ?chunkstate:assigned(0, 0, 1, self(), testpid(Config)),
                      mainpid() ! assigned,
                      etorrent_utils:expect(die)
              end),
     etorrent_utils:expect(assigned),
-    {ok, [{0, 0, 1}]} = ?chunkstate:request(1, testset(), testpid()),
-    {ok, assigned} = ?chunkstate:request(1, testset(), testpid()),
+    {ok, [{0, 0, 1}]} = ?chunkstate:request(1, testset(), testpid(Config)),
+    {ok, assigned} = ?chunkstate:request(1, testset(), testpid(Config)),
     Pid1 ! die, etorrent_utils:wait(Pid1),
 
     Pid2 = spawn_link(
              fun() ->
-                     ?pending:register(pending()),
-                     ?chunkstate:assigned(0, 0, 1, self(), testpid()),
-                     ?chunkstate:dropped(0, 0, 1, self(), testpid()),
+                     ?pending:register(pending(Config)),
+                     ?chunkstate:assigned(0, 0, 1, self(), testpid(Config)),
+                     ?chunkstate:dropped(0, 0, 1, self(), testpid(Config)),
                      mainpid() ! dropped,
                      etorrent_utils:expect(die)
              end),
     etorrent_utils:expect(dropped),
-    {ok, [{0, 0, 1}]} = ?chunkstate:request(1, testset(), testpid()),
+    {ok, [{0, 0, 1}]} = ?chunkstate:request(1, testset(), testpid(Config)),
     Pid2 ! die, etorrent_utils:wait(Pid2).
 
 endgame_active_one_fetched() -> [].
-endgame_active_one_fetched(_Config) ->
+endgame_active_one_fetched(Config) ->
     %% Spawn a separate process to introduce the chunk into endgame
     Orig = spawn_link(
              fun() ->
-                     ?pending:register(pending()),
-                     ?chunkstate:assigned(0, 0, 1, self(), testpid()),
+                     ?pending:register(pending(Config)),
+                     ?chunkstate:assigned(0, 0, 1, self(), testpid(Config)),
                      mainpid() ! assigned,
                      etorrent_utils:expect(die)
              end),
@@ -162,9 +172,9 @@ endgame_active_one_fetched(_Config) ->
         fun() ->
                 spawn_link(
                   fun() ->
-                          ?pending:register(pending()),
-                          {ok, [{0,0,1}]} = ?chunkstate:request(1, testset(), testpid()),
-                          ?chunkstate:fetched(0, 0, 1, self(), testpid()),
+                          ?pending:register(pending(Config)),
+                          {ok, [{0,0,1}]} = ?chunkstate:request(1, testset(), testpid(Config)),
+                          ?chunkstate:fetched(0, 0, 1, self(), testpid(Config)),
                           mainpid() ! fetched,
                           etorrent_utils:expect(die)
                   end)
@@ -173,29 +183,29 @@ endgame_active_one_fetched(_Config) ->
     Pid1 = Fetch(),
     etorrent_utils:expect(fetched),
     %% Expect endgame to not send out requests for the fetched chunk
-    {ok, assigned} = ?chunkstate:request(1, testset(), testpid()),
+    {ok, assigned} = ?chunkstate:request(1, testset(), testpid(Config)),
     Pid0 ! die, etorrent_utils:wait(Pid0),
-    etorrent_utils:ping([pending(), testpid()]),
+    etorrent_utils:ping([pending(Config), testpid(Config)]),
     
-    {ok, assigned} = ?chunkstate:request(1, testset(), testpid()),
+    {ok, assigned} = ?chunkstate:request(1, testset(), testpid(Config)),
     
     %% Expect endgame to not send out requests if two peers have fetched the request
-    {ok, assigned} = ?chunkstate:request(1, testset(), testpid()),
+    {ok, assigned} = ?chunkstate:request(1, testset(), testpid(Config)),
     Pid1 ! die, etorrent_utils:wait(Pid1),
-    etorrent_utils:ping([pending(), testpid()]),
+    etorrent_utils:ping([pending(Config), testpid(Config)]),
     
     %% Expect endgame to send out request if the chunk is dropped before it's stored
-    {ok, [{0, 0, 1}]} = ?chunkstate:request(1, testset(), testpid()),
+    {ok, [{0, 0, 1}]} = ?chunkstate:request(1, testset(), testpid(Config)),
     Orig ! die, etorrent_utils:wait(Orig),
     ok.
 
 endgame_active_one_stored() -> [].
-endgame_active_one_stored(_Config) ->
+endgame_active_one_stored(Config) ->
     %% Spawn a separate process to introduce the chunk into endgame
     Orig = spawn_link(
              fun() ->
-                     ?pending:register(pending()),
-                     ?chunkstate:assigned(0, 0, 1, self(), testpid()),
+                     ?pending:register(pending(Config)),
+                     ?chunkstate:assigned(0, 0, 1, self(), testpid(Config)),
                      mainpid() ! assigned,
                      etorrent_utils:expect(die)
              end),
@@ -204,35 +214,35 @@ endgame_active_one_stored(_Config) ->
     %% Spawn a process that aquires the chunk from endgame and marks it as stored
     Pid = spawn_link(
             fun() ->
-                    ?pending:register(pending()),
-                    {ok, [{0,0,1}]} = ?chunkstate:request(1, testset(), testpid()),
-                    ?chunkstate:fetched(0, 0, 1, self(), testpid()),
-                    ?chunkstate:stored(0, 0, 1, self(), testpid()),
+                    ?pending:register(pending(Config)),
+                    {ok, [{0,0,1}]} = ?chunkstate:request(1, testset(), testpid(Config)),
+                    ?chunkstate:fetched(0, 0, 1, self(), testpid(Config)),
+                    ?chunkstate:stored(0, 0, 1, self(), testpid(Config)),
                     mainpid() ! stored,
                     etorrent_utils:expect(die)
             end),
     etorrent_utils:expect(stored),
-    {ok, assigned} = ?chunkstate:request(1, testset(), testpid()),
+    {ok, assigned} = ?chunkstate:request(1, testset(), testpid(Config)),
     Pid ! die, etorrent_utils:wait(Pid),
-    etorrent_utils:ping([pending(), testpid()]),
+    etorrent_utils:ping([pending(Config), testpid(Config)]),
 
-    {ok, assigned} = ?chunkstate:request(1, testset(), testpid()),
+    {ok, assigned} = ?chunkstate:request(1, testset(), testpid(Config)),
     Orig ! die, etorrent_utils:wait(Orig),
     ok.
 
 endgame_request_list() -> [].
-endgame_request_list(_Config) ->
+endgame_request_list(Config) ->
     Pid = spawn_link(
             fun() ->
-                    ?pending:register(pending()),
-                    ?chunkstate:assigned(0, 0, 1, self(), testpid()),
-                    ?chunkstate:assigned(0, 1, 1, self(), testpid()),
-                    ?chunkstate:fetched(0, 1, 1, self(), testpid()),
+                    ?pending:register(pending(Config)),
+                    ?chunkstate:assigned(0, 0, 1, self(), testpid(Config)),
+                    ?chunkstate:assigned(0, 1, 1, self(), testpid(Config)),
+                    ?chunkstate:fetched(0, 1, 1, self(), testpid(Config)),
                     mainpid() ! assigned,
                     etorrent_utils:expect(die)
             end),
     etorrent_utils:expect(assigned),
-    Requests = ?chunkstate:requests(testpid()),
+    Requests = ?chunkstate:requests(testpid(Config)),
     Pid ! die, etorrent_utils:wait(Pid),
     [{Pid,{0,0,1}}, {Pid,{0,1,1}}] = lists:sort(Requests),
     ok.
@@ -431,7 +441,6 @@ magnet_size(_Config) ->
     2 = etorrent_magnet_peer_ctl:piece_count(25356),
     ok.
    
--define(timer, etorrent_timer).
 assertMessage(Msg) ->
     receive
         Msg -> ok;
@@ -1412,7 +1421,7 @@ hashes_to_binary_test_() ->
 
 
 testid() -> 0.
-testpid() -> ?pending:await_server(testid()).
+testpid(Config) -> ?pending:await_server(testid()).
 
 setup_env() ->
     {ok, Pid} = ?pending:start_link(testid()),
@@ -1449,22 +1458,22 @@ test_registers() ->
     ?assert(is_pid(?pending:lookup_server(testid()))).
 
 test_register_peer() ->
-    ?assertEqual(ok, ?pending:register(testpid())).
+    ?assertEqual(ok, ?pending:register(testpid(Config))).
 
 test_register_twice() ->
-    ?assertEqual(ok, ?pending:register(testpid())),
-    ?assertEqual(error, ?pending:register(testpid())).
+    ?assertEqual(ok, ?pending:register(testpid(Config))),
+    ?assertEqual(error, ?pending:register(testpid(Config))).
 
 test_assigned_dropped() ->
     Main = self(),
     Pid = spawn_link(fun() ->
-        ok = ?pending:register(testpid()),
+        ok = ?pending:register(testpid(Config)),
         Main ! assign,
         ?expect(die)
     end),
     ?expect(assign),
-    ?chunks:assigned(0, 0, 1, Pid, testpid()),
-    ?chunks:assigned(0, 1, 1, Pid, testpid()),
+    ?chunks:assigned(0, 0, 1, Pid, testpid(Config)),
+    ?chunks:assigned(0, 1, 1, Pid, testpid(Config)),
     Pid ! die,
     ?wait(Pid),
     ?expect({chunk, {dropped, 0, 0, 1, Pid}}),
@@ -1473,16 +1482,16 @@ test_assigned_dropped() ->
 test_stored_not_dropped() ->
     Main = self(),
     Pid = spawn_link(fun() ->
-        ok = ?pending:register(testpid()),
+        ok = ?pending:register(testpid(Config)),
         Main ! assign,
         ?expect(store),
-        ?chunks:stored(0, 0, 1, self(), testpid()),
+        ?chunks:stored(0, 0, 1, self(), testpid(Config)),
         Main ! stored,
         ?expect(die)
     end),
     ?expect(assign),
-    ?chunks:assigned(0, 0, 1, Pid, testpid()),
-    ?chunks:assigned(0, 1, 1, Pid, testpid()),
+    ?chunks:assigned(0, 0, 1, Pid, testpid(Config)),
+    ?chunks:assigned(0, 1, 1, Pid, testpid(Config)),
     Pid ! store,
     ?expect(stored),
     Pid ! die,
@@ -1492,16 +1501,16 @@ test_stored_not_dropped() ->
 test_dropped_not_dropped() ->
     Main = self(),
     Pid = spawn_link(fun() ->
-        ok = ?pending:register(testpid()),
+        ok = ?pending:register(testpid(Config)),
         Main ! assign,
         ?expect(drop),
-        ?chunks:dropped(0, 0, 1, self(), testpid()),
+        ?chunks:dropped(0, 0, 1, self(), testpid(Config)),
         Main ! dropped,
         ?expect(die)
     end),
     ?expect(assign),
-    ?chunks:assigned(0, 0, 1, Pid, testpid()),
-    ?chunks:assigned(0, 1, 1, Pid, testpid()),
+    ?chunks:assigned(0, 0, 1, Pid, testpid(Config)),
+    ?chunks:assigned(0, 1, 1, Pid, testpid(Config)),
     Pid ! drop,
     ?expect(dropped),
     Pid ! die,
@@ -1511,16 +1520,16 @@ test_dropped_not_dropped() ->
 test_drop_all_for_pid() ->
     Main = self(),
     Pid = spawn_link(fun() ->
-        ok = ?pending:register(testpid()),
+        ok = ?pending:register(testpid(Config)),
         Main ! assign,
         ?expect(drop),
-        ?chunks:dropped(self(), testpid()),
+        ?chunks:dropped(self(), testpid(Config)),
         Main ! dropped,
         ?expect(die)
     end),
     ?expect(assign),
-    ?chunks:assigned(0, 0, 1, Pid, testpid()),
-    ?chunks:assigned(0, 1, 1, Pid, testpid()),
+    ?chunks:assigned(0, 0, 1, Pid, testpid(Config)),
+    ?chunks:assigned(0, 1, 1, Pid, testpid(Config)),
     Pid ! drop, ?expect(dropped),
     Pid ! die, ?wait(Pid),
     self() ! none,
@@ -1529,15 +1538,15 @@ test_drop_all_for_pid() ->
 test_change_receiver() ->
     Main = self(),
     Pid = spawn_link(fun() ->
-        ?pending:receiver(self(), testpid()),
+        ?pending:receiver(self(), testpid(Config)),
         {peer, Peer} = ?first(),
-        ?chunks:assigned(0, 0, 1, Peer, testpid()),
-        ?chunks:assigned(0, 1, 1, Peer, testpid()),
-        ?pending:receiver(Main, testpid()),
+        ?chunks:assigned(0, 0, 1, Peer, testpid(Config)),
+        ?chunks:assigned(0, 1, 1, Peer, testpid(Config)),
+        ?pending:receiver(Main, testpid(Config)),
         ?expect(die)
     end),
     Peer = spawn_link(fun() ->
-        ?pending:register(testpid()),
+        ?pending:register(testpid(Config)),
         Pid ! {peer, self()},
         ?expect(die)
     end),
@@ -1547,22 +1556,22 @@ test_change_receiver() ->
     Peer ! die, ?wait(Peer).
 
 test_drop_on_down() ->
-    Peer = spawn_link(fun() -> ?pending:register(testpid()) end),
+    Peer = spawn_link(fun() -> ?pending:register(testpid(Config)) end),
     ?wait(Peer),
-    ?chunks:assigned(0, 0, 1, Peer, testpid()),
+    ?chunks:assigned(0, 0, 1, Peer, testpid(Config)),
     ?expect({chunk, {dropped, 0, 0, 1, Peer}}).
 
 test_request_list() ->
     Main = self(),
     Pid = spawn_link(fun() ->
-        ?pending:register(testpid()),
-        ?chunks:assigned(0, 0, 1, self(), testpid()),
-        ?chunks:assigned(0, 1, 1, self(), testpid()),
+        ?pending:register(testpid(Config)),
+        ?chunks:assigned(0, 0, 1, self(), testpid(Config)),
+        ?chunks:assigned(0, 1, 1, self(), testpid(Config)),
         Main ! assigned,
         etorrent_utils:expect(die)
     end),
     etorrent_utils:expect(assigned),
-    Requests = ?chunks:requests(testpid()),
+    Requests = ?chunks:requests(testpid(Config)),
     Pid ! die, etorrent_utils:wait(Pid),
     ?assertEqual([{Pid,{0,0,1}}, {Pid,{0,1,1}}], lists:sort(Requests)).
 
@@ -2285,81 +2294,58 @@ member_delete_test() ->
 
 -endif.
 
--ifdef(TEST2).
--define(progress, ?MODULE).
--define(scarcity, etorrent_scarcity).
--define(timer, etorrent_timer).
--define(pending, etorrent_pending).
--define(chunkstate, etorrent_chunkstate).
--define(piecestate, etorrent_piecestate).
--define(endgame, etorrent_endgame).
 
-chunk_server_test_() ->
-    {setup, local,
-        fun() ->
-            application:start(gproc),
-            etorrent_torrent_ctl:register_server(testid()) end,
-        fun(_) -> application:stop(gproc) end,
-    {foreach, local,
-        fun setup_env/0,
-        fun teardown_env/1,
-    [?_test(lookup_registered_case()),
-     ?_test(unregister_case()),
-     ?_test(register_two_case()),
-     ?_test(double_check_env()),
-     ?_test(assigned_case()),
-     ?_test(assigned_valid_case()),
-     ?_test(request_one_case()),
-     ?_test(mark_dropped_case()),
-     ?_test(mark_all_dropped_case()),
-     ?_test(drop_none_on_exit_case()),
-     ?_test(drop_all_on_exit_case()),
-     ?_test(marked_stored_not_dropped_case()),
-     ?_test(mark_valid_not_stored_case()),
-     ?_test(mark_valid_stored_case()),
-     ?_test(all_stored_marks_stored_case()),
-     ?_test(get_all_request_case()),
-     ?_test(unassigned_to_assigned_case()),
-     ?_test(trigger_endgame_case())
-     ]}}.
+scarcity(Config) ->
+    ?scarcity:lookup_server(?config(test_id, Config)).
 
+progress(Config) ->
+    ?progress:lookup_server(?config(test_id, Config)).
 
-testid() -> 2.
+endgame(Config)  ->
+    ?endgame:lookup_server(?config(test_id, Config)).
 
-setup_env() ->
+piecestate_teardown(Config) ->
+    ok = etorrent_utils:shutdown(?config(time, Config)),
+    ok = etorrent_utils:shutdown(?config(epid, Config)),
+    ok = etorrent_utils:shutdown(?config(ppid, Config)),
+    ok = etorrent_utils:shutdown(?config(spid, Config)),
+    ok = etorrent_utils:shutdown(?config(cpid, Config)),
+    ok.
+
+piecestate_setup(Config) ->
+    etorrent_torrent_ctl:register_server( ?config(test_id, Config) ),
     Sizes = [{0, 2}, {1, 2}, {2, 2}],
-    Valid = etorrent_pieceset:empty(length(Sizes)),
+    Valid = etorrent_pieceset:empty( length(Sizes) ),
     Wishes = [],
+
     {ok, Time} = ?timer:start_link(queue),
-    {ok, PPid} = ?pending:start_link(testid()),
-    {ok, EPid} = ?endgame:start_link(testid()),
-    {ok, SPid} = ?scarcity:start_link(testid(), Time, 8),
-    {ok, CPid} = ?progress:start_link(testid(), 1, Valid, Sizes, self(), Wishes),
+    {ok, PPid} = ?pending:start_link( ?config(test_id, Config) ),
+    {ok, EPid} = ?endgame:start_link( ?config(test_id, Config) ),
+    {ok, SPid} = ?scarcity:start_link( ?config(test_id, Config) ),
+    {ok, CPid} = ?progress:start_link( [ ?config(test_id, Config) , 1, Valid, Sizes, self(), Wishes, []] ),
+
     ok = ?pending:register(PPid),
     ok = ?pending:receiver(CPid, PPid),
-    {Time, EPid, PPid, SPid, CPid}.
+    [{time, Time}, {epid, EPid}, {ppid, PPid}, {spid, SPid}, {cpid, CPid} | Config].
 
-scarcity() -> ?scarcity:lookup_server(testid()).
-pending()  -> ?pending:lookup_server(testid()).
-progress() -> ?progress:lookup_server(testid()).
-endgame()  -> ?endgame:lookup_server(testid()).
+piecestate_wrap(Thunk, Config) ->
+    NewConfig = piecestate_setup(Config),
+    R = Thunk(Config),
+    piecestate_teardown(NewConfig),
+    R.
 
-teardown_env({Time, EPid, PPid, SPid, CPid}) ->
-    ok = etorrent_utils:shutdown(Time),
-    ok = etorrent_utils:shutdown(EPid),
-    ok = etorrent_utils:shutdown(PPid),
-    ok = etorrent_utils:shutdown(SPid),
-    ok = etorrent_utils:shutdown(CPid).
+piecestate_basic_2() -> [].
+piecestate_basic_2(Config) ->
+    piecestate_wrap(fun piecestate_lookup_registered_case/1, Config),
+    ok.
 
-double_check_env() ->
-    ?assert(is_pid(scarcity())),
-    ?assert(is_pid(pending())),
-    ?assert(is_pid(progress())),
-    ?assert(is_pid(endgame())).
+piecestate_lookup_registered_case(_Config) ->
+    ct:pal(debug, "~p", [application:which_applications()]),
+    true = ?progress:register_server(0),
+    Self = self(),
+    Self = ?progress:lookup_server(0).
 
-lookup_registered_case() ->
-    ?assertEqual(true, ?progress:register_server(0)),
-    ?assertEqual(self(), ?progress:lookup_server(0)).
+-ifdef(TEST2).
 
 unregister_case() ->
     ?assertEqual(true, ?progress:register_server(1)),
@@ -2509,6 +2495,7 @@ trigger_endgame_case() ->
     ok = ?chunkstate:fetched(2, 1, 1, self(), endgame()),
     ?assertEqual(ok, etorrent_utils:ping(endgame())).
 
+-endif.
 
 %% Directory Structure:
 %%
@@ -2522,73 +2509,56 @@ trigger_endgame_case() ->
 %%  5  /Dir2/File3    [3,4]
 %%
 %% Check that wishlist [2, 1, 3] will be minimized to [2, 1]
-minimize_masks_test_() ->
+progress_basic() -> [].
+progress_basic(_Config) ->
     Empty = etorrent_pieceset:new(4),
     Dir1  = etorrent_pieceset:from_bitstring(<<2#1100:4>>),
     File1 = etorrent_pieceset:from_bitstring(<<2#1000:4>>),
     File2 = etorrent_pieceset:from_bitstring(<<2#0100:4>>),
-    Dir2 = File3 = etorrent_pieceset:from_bitstring(<<2#0011:4>>),
+    etorrent_pieceset:from_bitstring(<<2#0011:4>>),
 
     Masks = [File1, Dir1, File2],
     Union = Empty,
     
-    Masks1 = minimize_masks(Masks, Union, []),
-    [?_assertEqual(Masks1, [File1,Dir1])
-    ].
+    Masks1 = etorrent_progress:minimize_masks(Masks, Union, []),
+    Masks1 = [File1, Dir1],
+    ok.
 
--endif.
+communication_basic() -> [].
+communication_basic(_Config) ->
+    10 = etorrent_tracker_communication:first_tracker_id(
+           [[{10,"http://bt3.rutracker.org/ann?uk=xxxxxxxxxx"}],
+            [{11,"http://retracker.local/announce"}]]),
+    ok.
 
--ifdef(TEST2).
+piecestate_basic() -> [].
+piecestate_basic(_Config) ->
+    ok = ?piecestate:invalid(0, [self(), self()]),
+    {piece, {invalid, 0}} = etorrent_utils:first(),
+    {piece, {invalid, 0}} = etorrent_utils:first(),
+    _ = test_server:messages_get(),
+    
+    ok = ?piecestate:invalid([0,1], self()),
+    {piece, {invalid, 0}} = etorrent_utils:first(),
+    {piece, {invalid, 1}} = etorrent_utils:first(),
+    _ = test_server:messages_get(),
+    
+    ok = ?piecestate:invalid(0, self()),
+    {piece, {invalid, 0}} = etorrent_utils:first(),
+    _ = test_server:messages_get(),
+    
+    ok = ?piecestate:unassigned(0, self()),
+    {piece, {unassigned, 0}} = etorrent_utils:first(),
+    _ = test_server:messages_get(),
+    
+    ok = ?piecestate:stored(0, self()),
+    {piece, {stored, 0}} = etorrent_utils:first(),
+    _ = test_server:messages_get(),
+    
+    ok = ?piecestate:valid(0, self()),
+    {piece, {valid, 0}} = etorrent_utils:first(),
 
-first_tracker_id_test_() ->
-    [?_assertEqual(10,
-                   first_tracker_id([[{10,"http://bt3.rutracker.org/ann?uk=xxxxxxxxxx"}],
-                                     [{11,"http://retracker.local/announce"}]]))
-    ].
-
--endif.
--ifdef(TEST2).
--include_lib("eunit/include/eunit.hrl").
--define(piecestate, ?MODULE).
-
-piecestate_test_() ->
-    {foreach,local,
-        fun() -> flush() end,
-        fun(_) -> flush() end,
-        [?_test(test_notify_pid_list()),
-         ?_test(test_notify_piece_list()),
-         ?_test(test_invalid()),
-         ?_test(test_unassigned()),
-         ?_test(test_stored()),
-         ?_test(test_valid())]}.
-
-test_notify_pid_list() ->
-    ?assertEqual(ok, ?piecestate:invalid(0, [self(), self()])),
-    ?assertEqual({piece, {invalid, 0}}, etorrent_utils:first()),
-    ?assertEqual({piece, {invalid, 0}}, etorrent_utils:first()).
-
-test_notify_piece_list() ->
-    ?assertEqual(ok, ?piecestate:invalid([0,1], self())),
-    ?assertEqual({piece, {invalid, 0}}, etorrent_utils:first()),
-    ?assertEqual({piece, {invalid, 1}}, etorrent_utils:first()).
-
-test_invalid() ->
-    ?assertEqual(ok, ?piecestate:invalid(0, self())),
-    ?assertEqual({piece, {invalid, 0}}, etorrent_utils:first()).
-
-test_unassigned() ->
-    ?assertEqual(ok, ?piecestate:unassigned(0, self())),
-    ?assertEqual({piece, {unassigned, 0}}, etorrent_utils:first()).
-
-test_stored() ->
-    ?assertEqual(ok, ?piecestate:stored(0, self())),
-    ?assertEqual({piece, {stored, 0}}, etorrent_utils:first()).
-
-test_valid() ->
-    ?assertEqual(ok, ?piecestate:valid(0, self())),
-    ?assertEqual({piece, {valid, 0}}, etorrent_utils:first()).
-
--endif.
+    ok.
 
 dht_state() -> [].
 dht_state(Config) ->

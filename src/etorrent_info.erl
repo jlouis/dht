@@ -1228,7 +1228,7 @@ mask_to_size(Mask, TLen, PLen) ->
 %% Local tests since there is a record here
 
 el(List, Pos) ->
-    Children  = [element(Pos, X) || X <- List].
+    [element(Pos, X) || X <- List].
 
 test_directories_1() -> 
     Rec = add_directories(
@@ -1242,7 +1242,7 @@ test_directories_1() ->
     Positions = el(Rec, #file_info.position),
     Children  = el(Rec, #file_info.children),
 
-    [Root|Elems] = Rec,
+    [_|Elems] = Rec,
     MinNames  = el(lists:sort(Elems), #file_info.name),
     
     %% {NumberOfFile, Name, Size, Position, ChildNumbers}
@@ -1268,7 +1268,7 @@ test_directories_1() ->
     ok.
 
 test_directories_2() ->
-    [Root|_] = X =
+    [Root|_] =
         add_directories(
            [#file_info{position=0, size=3, name=
                            "BBC.7.BigToe/Eoin Colfer. Artemis Fowl/artemis_04.mp3"},

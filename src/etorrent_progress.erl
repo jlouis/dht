@@ -76,6 +76,9 @@
          lookup_server/1,
          await_server/1]).
 
+-ifdef(TEST).
+-export([minimize_masks/3]).
+-endif.
 
 %% gen_server callbacks
 -export([init/1,
