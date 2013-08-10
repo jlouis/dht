@@ -5,6 +5,8 @@
 
 -include_lib("common_test/include/ct.hrl").
 
+-define(METADATA_BLOCK_BYTE_SIZE, 16384). %% 16KiB (16384 Bytes)
+
 -define(endgame, etorrent_endgame).
 -define(pending, etorrent_pending).
 -define(chunkstate, etorrent_chunkstate).
@@ -15,6 +17,7 @@ suite() ->
 
 %%--------------------------------------------------------------------
 init_per_suite(Config) ->
+    crypto:start(),
     ok = application:start(gproc),
     Config.
 
@@ -45,23 +48,48 @@ end_per_group(_GroupName, _Config) ->
     ok.
 
 %%--------------------------------------------------------------------
+init_per_testcase(dht_state, Config) ->
+    Priv = ?config(priv_dir, Config),
+    Empty = test_server:temp_name(Priv),
+    Valid = test_server:temp_name(Priv),
+    TestId = etorrent_dht:random_id(),
+    
+    ok = file:write_file(Empty, <<>>),
+    ok = etorrent_dht_state:dump_state(Valid, TestId, []),
+    
+    [{no_file, test_server:temp_name(Priv)},
+     {empty, Empty},
+     {valid, Valid},
+     {test_id, TestId} | Config];
 init_per_testcase(_TestCase, Config) ->
     Config.
 
 %%--------------------------------------------------------------------
+
+end_per_testcase(dht_state, Config) ->
+    ok = file:delete(?config(empty, Config)),
+    ok = file:delete(?config(valid, Config)),
+    ok;
 end_per_testcase(_TestCase, _Config) ->
     ok.
 
 %%--------------------------------------------------------------------
 groups() -> [{magnet, [],
-              [magnet_basic]},
+              [magnet_basic,
+               magnet_size]},
              {metadata_variant, [],
               [metadata_variant_basic]},
              {monitor, [],
               [monitor_basic]},
              {info, [],
               [info_byte_ranges,
-               info_piece_size]},
+               info_piece_size,
+               info_make_mask,
+               info_metadata_pieces,
+               info_directories,
+               info_last_piece]},
+             {dht, [],
+              [dht_state]},
              {endgame, [],
               [endgame_basic,
                endgame_active_one_fetched,
@@ -78,6 +106,7 @@ all() -> [io_basic,
           {group, metadata_variant},
           {group, monitor},
           {group, info},
+          {group, dht},
           {group, endgame}].
 
 %%--------------------------------------------------------------------
@@ -384,29 +413,24 @@ proto_wire_basic(_Config) ->
     Expected = Computed,
     ok.
 
--ifdef(TEST2).
-
-piece_size_test_() ->
+magnet_size() -> [].
+magnet_size(_Config) ->
     %% 012|345|67-|
-    [?_assertEqual(3, piece_size(0, 3, 8))
-    ,?_assertEqual(3, piece_size(1, 3, 8))
-    ,?_assertEqual(2, piece_size(2, 3, 8))
+    3 = etorrent_magnet_peer_ctl:piece_size(0, 3, 8),
+    3 = etorrent_magnet_peer_ctl:piece_size(1, 3, 8),
+    2 = etorrent_magnet_peer_ctl:piece_size(2, 3, 8),
     %% 012|345|678|
-    ,?_assertEqual(3, piece_size(2, 3, 9))
-    ].
+    3 = etorrent_magnet_peer_ctl:piece_size(2, 3, 9),
 
-piece_count_test_() ->
     %% 012|345|6--|
-    [?_assertEqual(3, piece_count(3, 7))
+    3 = etorrent_magnet_peer_ctl:piece_count(3, 7),
     %% 012|345|67-|
-    ,?_assertEqual(3, piece_count(3, 8))
+    3 = etorrent_magnet_peer_ctl:piece_count(3, 8),
     %% 012|345|678|
-    ,?_assertEqual(3, piece_count(3, 9))
-    ,?_assertEqual(2, piece_count(25356))
-    ].
-
--endif.
-
+    3 = etorrent_magnet_peer_ctl:piece_count(3, 9),
+    2 = etorrent_magnet_peer_ctl:piece_count(25356),
+    ok.
+   
 -define(timer, etorrent_timer).
 assertMessage(Msg) ->
     receive
@@ -494,173 +518,143 @@ bcoding_basic(_Config) ->
         etorrent_bcoding2:decode(<<"d8:msg_typei0e5:piecei0ee">>),
     ok.
 
--ifdef(TEST2).
-
-make_mask_test_() ->
-    F = fun make_mask/4,
+-define(info, etorrent_info).
+info_make_mask() -> [].
+info_make_mask(_Config) ->
+    F = fun ?info:make_mask/4,
     % make_index(From, Size, PLen, TLen)
     %% |0123|4567|89--|
     %% |--xx|x---|----|
-    [?_assertEqual(<<2#110:3>>        , F(2, 3,  4, 10))
+    <<2#110:3>> = F(2, 3,  4, 10),
     %% |012|345|678|9--|
     %% |--x|xx-|---|---|
-    ,?_assertEqual(<<2#1100:4>>       , F(2, 3,  3, 10))
+    <<2#1100:4>> = F(2, 3,  3, 10),
     %% |01|23|45|67|89|
     %% |--|xx|x-|--|--|
-    ,?_assertEqual(<<2#01100:5>>      , F(2, 3,  2, 10))
+    <<2#01100:5>> = F(2, 3,  2, 10),
     %% |0|1|2|3|4|5|6|7|8|9|
     %% |-|-|x|x|x|-|-|-|-|-|
-    ,?_assertEqual(<<2#0011100000:10>>, F(2, 3,  1, 10))
-    ,?_assertEqual(<<1:1>>            , F(2, 3, 10, 10))
-    ,?_assertEqual(<<1:1, 0:1>>       , F(2, 3,  9, 10))
+    <<2#0011100000:10>> = F(2, 3,  1, 10),
+    <<1:1>> = F(2, 3, 10, 10),
+    <<1:1, 0:1>> = F(2, 3,  9, 10),
     %% |012|345|678|9A-|
     %% |xxx|xx-|---|---|
-    ,?_assertEqual(<<2#1100:4>>       , F(0, 5,  3, 11))
+    <<2#1100:4>> = F(0, 5,  3, 11),
     %% |012|345|678|9A-|
     %% |---|---|--x|---|
-    ,?_assertEqual(<<2#0010:4>>       , F(8, 1,  3, 11))
+    <<2#0010:4>> = F(8, 1,  3, 11),
     %% |012|345|678|9A-|
     %% |---|---|--x|x--|
-    ,?_assertEqual(<<2#0011:4>>       , F(8, 2,  3, 11))
-    ,?_assertEqual(<<-1:30>>, F(0, 31457279,  1048576, 31457280))
-    ,?_assertEqual(<<-1:30>>, F(0, 31457280,  1048576, 31457280))
-    ].
+    <<2#0011:4>> = F(8, 2,  3, 11),
+    <<-1:30>> = F(0, 31457279,  1048576, 31457280),
+    <<-1:30>> = F(0, 31457280,  1048576, 31457280),
 
-make_ungreedy_mask_test_() ->
-    F = fun(From, Size, PLen, TLen) -> 
-            make_mask(From, Size, PLen, TLen, false) end,
+    G = fun(From, Size, PLen, TLen) -> 
+                ?info:make_mask(From, Size, PLen, TLen, false) end,
     % make_index(From, Size, PLen, TLen, false)
     %% |0123|4567|89A-|
     %% |--xx|x---|----|
-    [?_assertEqual(<<2#000:3>>        , F(2, 3,  4, 11))
+    <<2#000:3>> = G(2, 3,  4, 11),
     %% |0123|4567|89A-|
     %% |--xx|xxxx|xx--|
-    ,?_assertEqual(<<2#010:3>>        , F(2, 8,  4, 11))
-    ].
+    <<2#010:3>> = G(2, 8,  4, 11),
+    ok.
 
-add_directories_test_() ->
-    Rec = add_directories(
-        [#file_info{position=0, size=3, name="test/t1.txt"}
-        ,#file_info{position=3, size=2, name="t2.txt"}
-        ,#file_info{position=5, size=1, name="dir1/dir/x.x"}
-        ,#file_info{position=6, size=2, name="dir1/dir/x.y"}
-        ]),
-    Names = el(Rec, #file_info.name),
-    Sizes = el(Rec, #file_info.size),
-    Positions = el(Rec, #file_info.position),
-    Children  = el(Rec, #file_info.children),
-
-    [Root|Elems] = Rec,
-    MinNames  = el(simple_minimize_reclist(Elems), #file_info.name),
-    
-    %% {NumberOfFile, Name, Size, Position, ChildNumbers}
-    List = [{0, "",             8, 0, [1, 3, 4]}
-           ,{1, "test",         3, 0, [2]}
-           ,{2, "test/t1.txt",  3, 0, []}
-           ,{3, "t2.txt",       2, 3, []}
-           ,{4, "dir1",         3, 5, [5]}
-           ,{5, "dir1/dir",     3, 5, [6, 7]}
-           ,{6, "dir1/dir/x.x", 1, 5, []}
-           ,{7, "dir1/dir/x.y", 2, 6, []}
-        ],
-    ExpNames = el(List, 2),
-    ExpSizes = el(List, 3),
-    ExpPositions = el(List, 4),
-    ExpChildren  = el(List, 5),
-    
-    [?_assertEqual(Names, ExpNames)
-    ,?_assertEqual(Sizes, ExpSizes)
-    ,?_assertEqual(Positions, ExpPositions)
-    ,?_assertEqual(Children,  ExpChildren)
-    ,?_assertEqual(MinNames, ["test", "t2.txt", "dir1"])
-    ].
-
-
-el(List, Pos) ->
-    Children  = [element(Pos, X) || X <- List].
-
-
-
-add_directories_test() ->
-    [Root|_] = X=
-    add_directories(
-        [#file_info{position=0, size=3, name=
-    "BBC.7.BigToe/Eoin Colfer. Artemis Fowl/artemis_04.mp3"}
-        ,#file_info{position=3, size=2, name=
-    "BBC.7.BigToe/Eoin Colfer. Artemis Fowl. The Arctic Incident/artemis2_03.mp3"}
-        ]),
-    ?assertMatch(#file_info{position=0, size=5}, Root).
-
-% H = {file_info,undefined,
-%           "BBC.7.BigToe/Eoin Colfer. Artemis Fowl. The Arctic Incident/artemis2_03.mp3",
-%           undefined,file,[],0,5753284,1633920175,undefined}
-% NextDir =  "BBC.7.BigToe/Eoin Colfer. Artemis Fowl/. The Arctic Incident
-
-
-metadata_pieces_test_() ->
-    crypto:start(),
-    TorrentBin = crypto:rand_bytes(100000),
-    Pieces = metadata_pieces(TorrentBin, 0, byte_size(TorrentBin)),
-    [Last|InitR] = lists:reverse(Pieces),
-    F = fun(Piece) -> byte_size(Piece) =:= ?METADATA_BLOCK_BYTE_SIZE end,
-    [?_assertEqual(iolist_to_binary(Pieces), TorrentBin)
-    ,?_assert(byte_size(Last) =< ?METADATA_BLOCK_BYTE_SIZE)
-    ,?_assert(lists:all(F, InitR))
-    ].
-
--endif.
-
-
-
--ifdef(TEST2).
-check_last_piece_test_() ->
+info_byte_ranges() -> [].
+info_byte_ranges(_Config) ->
     %% Bytes:  |0123|4567|89AB|
     %% Pieces: |0   |1   |2   |
     %% Set:    |---x|xxxx|xxx-|
-    [{"The last piece is not full.",
-      ?_assertEqual(0, check_last_piece(3, 8, 4, 12))},
+    <<2#010:3>> = ?info:byte_ranges_to_mask([{3,8}], 0, 4, 12, false, <<>>),
     %% Bytes:  |0123|4567|89AB|
     %% Pieces: |0   |1   |2   |
-    %% Set:    |---x|xxxx|xxx-|
-     {"The last piece has a standard size.",
-      ?_assertEqual(0, check_last_piece(3, 9, 4, 12))},
+    %% Set:    |---x|xxxx|xxxx|
+    <<2#011:3>> = ?info:byte_ranges_to_mask([{3,9}], 0, 4, 12, false, <<>>),
     %% Bytes:  |0123|4567|89A-|
     %% Pieces: |0   |1   |2   |
     %% Set:    |---x|xxxx|xxx-|
-    ?_assertEqual(1, check_last_piece(3, 8, 4, 11))
-    ].
+    <<2#011:3>> = ?info:byte_ranges_to_mask([{3,8}], 0, 4, 11, false, <<>>),
+    ok.
 
-byte_to_piece_count_beetween_test_() ->
-    [?_assertEqual(3, byte_to_piece_count_beetween(3, 8,  4,  20, true))
-    ,?_assertEqual(0, byte_to_piece_count_beetween(0, 0,  10, 20, true))
-    ,?_assertEqual(1, byte_to_piece_count_beetween(0, 1,  10, 20, true))
-    ,?_assertEqual(1, byte_to_piece_count_beetween(0, 9,  10, 20, true))
-    ,?_assertEqual(1, byte_to_piece_count_beetween(0, 10, 10, 20, true))
-    ,?_assertEqual(2, byte_to_piece_count_beetween(0, 11, 10, 20, true))
-    ,?_assertEqual(2, byte_to_piece_count_beetween(1, 10, 10, 20, true))
-    ,?_assertEqual(2, byte_to_piece_count_beetween(1, 11, 10, 20, true))
+info_piece_size() -> [].
+info_piece_size(_Config) ->
+    %% PieceNum, PieceSize, TotalSize, PieceCount
+    %% Bytes:  |0123|4567|89AB|
+    %% Pieces: |0   |1   |2   |
+    4 = ?info:calc_piece_size(0, 4, 12, 3),
+    4 = ?info:calc_piece_size(1, 4, 12, 3),
+    4 = ?info:calc_piece_size(2, 4, 12, 3),
+    test_server:call_crash(1000, ?info, calc_piece_size, [3, 4, 12, 3]),
+    test_server:call_crash(1000, ?info, calc_piece_size, [-1, 4, 12, 3]),
 
-    ,?_assertEqual(1, byte_to_piece_count_beetween(0, 4,  4, 20, false))
-    ,?_assertEqual(1, byte_to_piece_count_beetween(3, 8,  4, 20, false))
-    ,?_assertEqual(1, byte_to_piece_count_beetween(2030, 1156,
-                                                   524288, 600000, true))
+    %% Bytes:  |0123|4567|89A-|
+    %% Pieces: |0   |1   |2   |
+    4 = ?info:calc_piece_size(0, 4, 11, 3),
+    4 = ?info:calc_piece_size(1, 4, 11, 3),
+    3 = ?info:calc_piece_size(2, 4, 11, 3),
+    ok.
+
+info_directories() -> [].
+info_directories(_Config) ->
+    ?info:test_directories_1(),
+    ?info:test_directories_2(),
+    ok.
+    
+info_metadata_pieces() -> [].
+info_metadata_pieces(_Config) -> 
+    TorrentBin = crypto:rand_bytes(100000),
+    Pieces = ?info:metadata_pieces(TorrentBin, 0, byte_size(TorrentBin)),
+    [Last|InitR] = lists:reverse(Pieces),
+    F = fun(Piece) -> byte_size(Piece) =:= ?METADATA_BLOCK_BYTE_SIZE end,
+
+    true = iolist_to_binary(Pieces) == TorrentBin,
+    true = byte_size(Last) =< ?METADATA_BLOCK_BYTE_SIZE,
+    true = lists:all(F, InitR),
+    ok.
+
+info_last_piece() -> [].
+info_last_piece(_Config) ->
+    %% Bytes:  |0123|4567|89AB|
+    %% Pieces: |0   |1   |2   |
+    %% Set:    |---x|xxxx|xxx-|
+    ct:pal(debug, "The last piece is not full."),
+    0 = ?info:check_last_piece(3, 8, 4, 12),
+    %% Bytes:  |0123|4567|89AB|
+    %% Pieces: |0   |1   |2   |
+    %% Set:    |---x|xxxx|xxx-|
+    ct:pal(debug, "The last piece has a standard size."),
+    0 = ?info:check_last_piece(3, 9, 4, 12),
+    %% Bytes:  |0123|4567|89A-|
+    %% Pieces: |0   |1   |2   |
+    %% Set:    |---x|xxxx|xxx-|
+    1 = ?info:check_last_piece(3, 8, 4, 11),
+
+    
+    3 = ?info:byte_to_piece_count_beetween(3, 8,  4,  20, true),
+    0 = ?info:byte_to_piece_count_beetween(0, 0,  10, 20, true),
+    1 = ?info:byte_to_piece_count_beetween(0, 1,  10, 20, true),
+    1 = ?info:byte_to_piece_count_beetween(0, 9,  10, 20, true),
+    1 = ?info:byte_to_piece_count_beetween(0, 10, 10, 20, true),
+    2 = ?info:byte_to_piece_count_beetween(0, 11, 10, 20, true),
+    2 = ?info:byte_to_piece_count_beetween(1, 10, 10, 20, true),
+    2 = ?info:byte_to_piece_count_beetween(1, 11, 10, 20, true),
+
+    1 = ?info:byte_to_piece_count_beetween(0, 4,  4, 20, false),
+    1 = ?info:byte_to_piece_count_beetween(3, 8,  4, 20, false),
+    1 = ?info:byte_to_piece_count_beetween(2030, 1156, 524288, 600000, true),
     %% From: 2030 Size 1156 PLen 524288 Res -1
     %% test the heuristic.
-    ,?_assertEqual(0, byte_to_piece_count_beetween(2030, 1156,
-                                                   524288, 600000, false))
+    0 = ?info:byte_to_piece_count_beetween(2030, 1156, 524288, 600000, false),
    
     %% Bytes:  |0123|4567|89A-|
     %% Pieces: |0   |1   |2   |
     %% Set:    |----|----|xxx-|
-    ,?_assertEqual(1, byte_to_piece_count_beetween(8, 3, 4, 11, false))
+    1 = ?info:byte_to_piece_count_beetween(8, 3, 4, 11, false),
     %% Bytes:  |0123|4567|89A-|
     %% Pieces: |0   |1   |2   |
     %% Set:    |----|----|xx--|
-    ,?_assertEqual(0, byte_to_piece_count_beetween(8, 2, 4, 11, false))
-    ].
-
--endif.
-
+    0 = ?info:byte_to_piece_count_beetween(8, 2, 4, 11, false),
+    ok.
 
 -ifdef(TEST2).
 mask_to_size_test_() ->
@@ -794,44 +788,6 @@ file_name_to_ids(Arr) ->
     F = fun(FileId, #file_info{name=Name}, Acc) -> [{Name, FileId}|Acc] end,
     dict:from_list(array:sparse_foldl(F, [], Arr)).
 
--endif.
-
--define(info, etorrent_info).
-info_byte_ranges() -> [].
-info_byte_ranges(_Config) ->
-    %% Bytes:  |0123|4567|89AB|
-    %% Pieces: |0   |1   |2   |
-    %% Set:    |---x|xxxx|xxx-|
-    <<2#010:3>> = ?info:byte_ranges_to_mask([{3,8}], 0, 4, 12, false, <<>>),
-    %% Bytes:  |0123|4567|89AB|
-    %% Pieces: |0   |1   |2   |
-    %% Set:    |---x|xxxx|xxxx|
-    <<2#011:3>> = ?info:byte_ranges_to_mask([{3,9}], 0, 4, 12, false, <<>>),
-    %% Bytes:  |0123|4567|89A-|
-    %% Pieces: |0   |1   |2   |
-    %% Set:    |---x|xxxx|xxx-|
-    <<2#011:3>> = ?info:byte_ranges_to_mask([{3,8}], 0, 4, 11, false, <<>>),
-    ok.
-
-info_piece_size() -> [].
-info_piece_size(_Config) ->
-    %% PieceNum, PieceSize, TotalSize, PieceCount
-    %% Bytes:  |0123|4567|89AB|
-    %% Pieces: |0   |1   |2   |
-    4 = ?info:calc_piece_size(0, 4, 12, 3),
-    4 = ?info:calc_piece_size(1, 4, 12, 3),
-    4 = ?info:calc_piece_size(2, 4, 12, 3),
-    test_server:call_crash(1000, ?info, calc_piece_size, [3, 4, 12, 3]),
-    test_server:call_crash(1000, ?info, calc_piece_size, [-1, 4, 12, 3]),
-
-    %% Bytes:  |0123|4567|89A-|
-    %% Pieces: |0   |1   |2   |
-    4 = ?info:calc_piece_size(0, 4, 11, 3),
-    4 = ?info:calc_piece_size(1, 4, 11, 3),
-    3 = ?info:calc_piece_size(2, 4, 11, 3),
-    ok.
-
--ifdef(TEST2).
 -define(set, ?MODULE).
 
 new_test() ->
@@ -977,10 +933,6 @@ subtract_test_() ->
     , ?_assertEqual(subtract(21, 5, T0), {T0, []})
     ].
 
--endif.
-
-
--ifdef(TEST2).
 -define(chunkstate, ?MODULE).
 
 flush() ->
@@ -1081,9 +1033,6 @@ test_forward() ->
     Slave ! die,
     etorrent_utils:wait(Ref).
 
--endif.
-
--ifdef(TEST2).
 -include_lib("eunit/include/eunit.hrl").
 -define(scarcity, ?MODULE).
 -define(pieceset, etorrent_pieceset).
@@ -1251,13 +1200,6 @@ local_unwatch_case({N, Time, Pid}) ->
             ?assert(true)
     end.
 
--endif.
-
-%%====================================================================
-%% Tests
-%%====================================================================
--ifdef(TEST2).
-
 allowed_fast_1_test() ->
     N = 16#AA,
     InfoHash = list_to_binary(lists:duplicate(20, N)),
@@ -1271,10 +1213,6 @@ allowed_fast_2_test() ->
     {value, PieceSet} = allowed_fast(1313, {80,4,4,200}, 9, InfoHash),
     Pieces = lists:sort(sets:to_list(PieceSet)),
     ?assertEqual([287, 353, 376, 431, 508, 808, 1059, 1188, 1217], Pieces).
-
--endif.
-
--ifdef(TEST2).
 
 fetch_id(Params) ->
     etorrent_bcoding:get_value(<<"id">>, Params).
@@ -1450,9 +1388,7 @@ qc(Gen) ->
     end.
 
 -endif. %% EQC
--endif.
 
--ifdef(TEST2).
 -include_lib("eunit/include/eunit.hrl").
 
 hashes_to_binary_test_() ->
@@ -1466,9 +1402,6 @@ hashes_to_binary_test_() ->
      ?_assertError(badarg, fetch_hash(3, Bin))].
 
 
--endif.
-
--ifdef(TEST2).
 -include_lib("eunit/include/eunit.hrl").
 -define(pending, ?MODULE).
 -define(chunks, etorrent_chunkstate).
@@ -1633,10 +1566,6 @@ test_request_list() ->
     Pid ! die, etorrent_utils:wait(Pid),
     ?assertEqual([{Pid,{0,0,1}}, {Pid,{0,1,1}}], lists:sort(Requests)).
 
--endif.
-
--ifdef(TEST2).
-
 infohash_test_() ->
     FileName =
     filename:join(code:lib_dir(etorrent_core),
@@ -1752,11 +1681,7 @@ test_write_info() ->
     {ok, [{<<"a">>, 1}]} = ?MODULE:read_info(Infohash).
 
 
--endif.
 
-
-
--ifdef(TEST2).
 -include_lib("eunit/include/eunit.hrl").
 -define(state, ?MODULE).
 -define(pset, etorrent_pieceset).
@@ -1861,9 +1786,6 @@ request_update_test() ->
     S1 = ?state:requests(NewReqs, S0),
     ?assertEqual(NewReqs, ?state:requests(S1)).
 
--endif.
-
--ifdef(TEST2).
 filter_supported_test_() ->
     [?_assertEqual([{x,{1,yy}},{y,{2,zz}}],
                    filter_supported([{<<"x">>,1}, {<<"y">>,2}, {<<"z">>,3}],
@@ -1874,10 +1796,7 @@ filter_supported_test_() ->
                                     [<<"a">>],
                                     [xx]))
     ].
--endif.
 
-
--ifdef(TEST2).
 update_ord_dict_test_() ->
     [{"Add 3 new extensions."
     ,?_assertEqual(update_ord_dict([{<<"x">>,1}, {<<"y">>,2}, {<<"z">>,3}],
@@ -2618,21 +2537,7 @@ minimize_masks_test_() ->
     ].
 
 -endif.
--ifdef(TEST2).
--include_lib("eunit/include/eunit.hrl").
 
-
-sort_records_test_() ->
-    Unsorted = [#torrent{id=1}, #torrent{id=3}, #torrent{id=2}],
-    Sorted = sort_records(Unsorted),
-    [R1, R2, R3] = Sorted,
-
-    [?_assertEqual(R1#torrent.id, 1)
-    ,?_assertEqual(R2#torrent.id, 2)
-    ,?_assertEqual(R3#torrent.id, 3)
-    ].
-
--endif.
 -ifdef(TEST2).
 
 first_tracker_id_test_() ->
@@ -2685,52 +2590,19 @@ test_valid() ->
 
 -endif.
 
--ifdef(TEST2).
--include_lib("eunit/include/eunit.hrl").
+dht_state() -> [].
+dht_state(Config) ->
+    {_, _}  = dht_state_load(?config(no_file, Config)),
+    {_, _}  = dht_state_load(?config(empty, Config)),
+    {Id, _} = dht_state_load(?config(valid, Config)),
+    Id = ?config(test_id, Config),
+    ok.
 
-setup() ->
-    put(nofile, test_server:temp_name("/tmp/etorrent_test")),
-    put(empty,  test_server:temp_name("/tmp/etorrent_test")),
-    put(valid,  test_server:temp_name("/tmp/etorrent_test")),
-    put(testid, etorrent_dht:random_id()),
-    ok = file:write_file(get(empty), <<>>),
-    ok = dump_state(get(valid), get(testid), []).
-
-teardown(_) ->
-    file:delete(get(empty)),
-    file:delete(get(valid)).
-
-dht_state_test_() ->
-    {setup, local,
-        fun setup/0,
-        fun teardown/1,
-    [?_test(test_nofile()),
-     ?_test(test_empty()),
-     ?_test(test_valid())]}.
-
-test_nofile() ->
-    Return = load_state(get(nofile)),
-    ?assertMatch({_, _}, Return),
-    {ID, Nodes} = Return,
-    ?assert(is_integer(ID)),
-    ?assert(is_list(Nodes)).
-
-test_empty() ->
-    Return = load_state(get(empty)),
-    ?assertMatch({_, _}, Return),
-    {ID, Nodes} = Return,
-    ?assert(is_integer(ID)),
-    ?assert(is_list(Nodes)).
-
-test_valid() ->
-    Return = load_state(get(valid)),
-    ?assertMatch({_, _}, Return),
-    {ID, Nodes} = Return,
-    ?assertEqual(get(testid), ID),
-    ?assert(is_list(Nodes)).
-
--endif.
-
+dht_state_load(X) ->
+    {Id, Nodes} = Ret = etorrent_dht_state:load_state(X),
+    true = is_integer(Id),
+    true = is_list(Nodes),
+    Ret.
 
 test_torrent() ->
     [{<<"announce">>,

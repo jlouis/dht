@@ -35,6 +35,11 @@
 -export([start_link/8]).
 -export([request_piece/2]).
 
+-ifdef(TEST).
+-export([piece_size/3,
+         piece_count/1, piece_count/2]).
+-endif.
+
 %% ------------------------------------------------------------------
 %% gen_server Function Exports
 %% ------------------------------------------------------------------

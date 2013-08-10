@@ -55,7 +55,13 @@
 
 -ifdef(TEST).
 -export([byte_ranges_to_mask/6,
-         calc_piece_size/4]).
+         calc_piece_size/4,
+         make_mask/4, make_mask/5,
+         metadata_pieces/3,
+         check_last_piece/4,
+         test_directories_1/0,
+         test_directories_2/0,
+         byte_to_piece_count_beetween/5]).
 -endif.
 
 -type bcode() :: etorrent_types:bcode().
@@ -80,7 +86,6 @@
     metadata_pieces :: tuple(),
     is_private :: boolean()
     }).
-
 
 -record(file_info, {
     id :: file_id(),
@@ -1219,4 +1224,59 @@ mask_to_size(Mask, TLen, PLen) ->
             end
     end.
 
+-ifdef(TEST).
+%% Local tests since there is a record here
 
+el(List, Pos) ->
+    Children  = [element(Pos, X) || X <- List].
+
+test_directories_1() -> 
+    Rec = add_directories(
+        [#file_info{position=0, size=3, name="test/t1.txt"}
+        ,#file_info{position=3, size=2, name="t2.txt"}
+        ,#file_info{position=5, size=1, name="dir1/dir/x.x"}
+        ,#file_info{position=6, size=2, name="dir1/dir/x.y"}
+        ]),
+    Names = el(Rec, #file_info.name),
+    Sizes = el(Rec, #file_info.size),
+    Positions = el(Rec, #file_info.position),
+    Children  = el(Rec, #file_info.children),
+
+    [Root|Elems] = Rec,
+    MinNames  = el(lists:sort(Elems), #file_info.name),
+    
+    %% {NumberOfFile, Name, Size, Position, ChildNumbers}
+    List = [{0, "",             8, 0, [1, 3, 4]}
+           ,{1, "test",         3, 0, [2]}
+           ,{2, "test/t1.txt",  3, 0, []}
+           ,{3, "t2.txt",       2, 3, []}
+           ,{4, "dir1",         3, 5, [5]}
+           ,{5, "dir1/dir",     3, 5, [6, 7]}
+           ,{6, "dir1/dir/x.x", 1, 5, []}
+           ,{7, "dir1/dir/x.y", 2, 6, []}
+        ],
+    ExpNames = el(List, 2),
+    ExpSizes = el(List, 3),
+    ExpPositions = el(List, 4),
+    ExpChildren  = el(List, 5),
+
+    ExpNames = Names,
+    ExpSizes = Sizes,
+    ExpPositions = Positions,
+    ExpChildren = Children,
+    ["test", "t2.txt", "dir1"] = MinNames,
+    ok.
+
+test_directories_2() ->
+    [Root|_] = X =
+        add_directories(
+           [#file_info{position=0, size=3, name=
+                           "BBC.7.BigToe/Eoin Colfer. Artemis Fowl/artemis_04.mp3"},
+            #file_info{position=3, size=2, name=
+                           "BBC.7.BigToe/Eoin Colfer. Artemis Fowl. The Arctic Incident/artemis2_03.mp3"}
+           ]),
+    
+    #file_info{position=0, size=5} = Root,
+    ok.
+
+-endif.
