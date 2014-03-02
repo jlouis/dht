@@ -40,7 +40,7 @@
 %% future timeout should occur.
 %%
 %% @end
--module(etorrent_dht_state).
+-module(dht_bt_state).
 -behaviour(gen_server).
 -define(K, 8).
 -define(in_range(Dist, Min, Max), ((Dist >= Min) andalso (Dist < Max))).

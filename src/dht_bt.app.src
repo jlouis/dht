@@ -1,0 +1,21 @@
+{application, dht_bt, [
+	{description, "BitTorrent DHT code"},
+	{vsn, "0.0.1"},
+	{modules, []},
+	{registered, []},
+	{applications, [
+		kernel,
+		stdlib,
+	]},
+	{mod, {dht_bt_app, []}},
+	{env, [
+	  %% Port to use
+	  {port, 3723},
+	  
+	  %% The file in which to store the current DHT application state
+	  {state_file, "dht.state.bin"},
+	  
+	  %% The "bootstrap nodes to start off the DHT from"
+	  {bootstrap_nodes, ["router.utorrent.com:6881"]}
+	]}
+]}.

@@ -1,7 +1,7 @@
 %% @author Magnus Klaar <magnus.klaar@sgsstudentbostader.se>
 %% @doc TODO
 %% @end
--module(etorrent_dht_net).
+-module(dht_bt_net).
 
 -behaviour(gen_server).
 
@@ -70,8 +70,8 @@
 
 -record(state, {
     socket :: inet:socket(),
-    sent   :: gb_tree(),
-    tokens :: queue()
+    sent   :: gb_trees:tree(),
+    tokens :: queue:queue()
 }).
 
 %

@@ -2,7 +2,7 @@
 %% @doc This module provides few helpers and supervise the DHT processes.
 %% Starts two workers: {@link etorrent_dht_state} and {@link etorrent_dht_net}.
 %% @end
--module(etorrent_dht).
+-module(dht_bt).
 -export([integer_id/1,
          list_id/1,
          random_id/0,

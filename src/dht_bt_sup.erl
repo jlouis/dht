@@ -1,4 +1,4 @@
--module(etorrent_dht_sup).
+-module(dht_bt_sup).
 -behaviour(supervisor).
 -export([start_link/0]).
 
@@ -8,10 +8,11 @@
 %% ------------------------------------------------------------------
 
 start_link() ->
-    DHTPort = etorrent_config:dht_port(),
-    StateFile = etorrent_config:dht_state_file(),
-    BootstapNodes = etorrent_config:dht_bootstrap_nodes(),
-    start_link(DHTPort, StateFile, BootstapNodes).
+    DHTPort = read_config(port),
+    StateFile = read_config(state_file),
+    BootstrapNodes = read_config(bootstrap_nodes),
+    
+    start_link(DHTPort, StateFile, BootstrapNodes).
 
 start_link(DHTPort, StateFile, BootstapNodes) ->
     SupName = {local, etorrent_dht_sup},
@@ -29,8 +30,14 @@ init(Args) ->
     etorrent_dht_tracker:create_common_resources(),
     {ok, {{one_for_all, 1, 60}, [
         {dht_state_srv,
-            {etorrent_dht_state, start_link, [File, BootstapNodes]},
+            {dht_bt_state, start_link, [File, BootstapNodes]},
             permanent, 2000, worker, dynamic},
         {dht_socket_srv,
-            {etorrent_dht_net, start_link, [Port]},
+            {dht_bt_net, start_link, [Port]},
             permanent, 1000, worker, dynamic}]}}.
+%% ------------------------------------------------------------------
+
+%% read_config/1 is a way to obtain stuff from the environment which can't fail
+read_config(Option) ->
+    {ok, Val} = application:get_env(dht_bt, Option),
+    Val.
