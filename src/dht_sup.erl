@@ -1,3 +1,5 @@
+%%% @doc Main supervisor for the DHT code
+%%% @end
 -module(dht_sup).
 -behaviour(supervisor).
 -export([start_link/0]).
@@ -21,10 +23,10 @@ start_link() ->
 init(#{ port := Port, file := StateFile, bootstrap := BootstrapNodes}) ->
     ets:new(?TAB, [named_table, public, bag]),
     {ok, {{one_for_all, 1, 60}, [
-        {dht_state_srv,
+        {state,
             {dht_state, start_link, [StateFile, BootstrapNodes]},
             permanent, 2000, worker, dynamic},
-        {dht_socket_srv,
+        {network,
             {dht_net, start_link, [Port]},
             permanent, 1000, worker, dynamic}]}}.
 %% ------------------------------------------------------------------

@@ -1,5 +1,5 @@
 %% @author Magnus Klaar <magnus.klaar@sgsstudentbostader.se>
-%% @doc TODO
+%% @doc DHT networking code
 %% @end
 -module(dht_net).
 
@@ -32,7 +32,9 @@
 %     the infohash.
 
 % Public interface
--export([start_link/1,
+-export([start_link/1]).
+
+-export([
          node_port/0,
          ping/2,
          find_node/3,
@@ -52,7 +54,7 @@
 -type dht_qtype() :: etorrent_types:dht_qtype().
 -type ipaddr() :: etorrent_types:ipaddr().
 -type nodeid() :: etorrent_types:nodeid().
--type portnum() :: etorrent_types:portnum().
+-type portnum() :: non_neg_integer().
 -type transaction() :: etorrent_types:transaction().
 
 % gen_server callbacks
@@ -82,42 +84,31 @@
 %
 % Contansts and settings
 %
-srv_name() ->
-   dht_socket_server.
-
-query_timeout() ->
-    2000.
-
-search_width() ->
-    32.
-
-search_retries() ->
-    4.
+query_timeout() -> 2000.
+search_width() -> 32.
+search_retries() -> 4.
 
 socket_options() ->
-    [list, inet, {active, true}]
-    ++ case etorrent_config:listen_ip() of all -> []; IP -> [{ip, IP}] end.
+    {ok, Base} = application:get_env(dht, listen_opts),
+    [list, inet, {active, true} | Base].
 
-token_lifetime() ->
-    5*60*1000.
+token_lifetime() -> 5*60*1000.
 
 %
 % Public interface
 %
 start_link(DHTPort) ->
-    gen_server:start_link({local, srv_name()}, ?MODULE, [DHTPort], []).
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [DHTPort], []).
 
+%% @doc node_port/0 returns the (UDP) port number to which the DHT system is bound.
+%% @end
 -spec node_port() -> portnum().
 node_port() ->
-    gen_server:call(srv_name(), {get_node_port}).
+    gen_server:call(?MODULE, get_node_port).
 
-
-%
-%
-%
 -spec ping(ipaddr(), portnum()) -> pang | nodeid().
 ping(IP, Port) ->
-    case gen_server:call(srv_name(), {ping, IP, Port}) of
+    case gen_server:call(?MODULE, {ping, IP, Port}) of
         timeout -> pang;
         Values ->
             _ID = decode_response(ping, Values)
@@ -129,7 +120,7 @@ ping(IP, Port) ->
 -spec find_node(ipaddr(), portnum(), nodeid()) ->
     {'error', 'timeout'} | {nodeid(), list(nodeinfo())}.
 find_node(IP, Port, Target)  ->
-    case gen_server:call(srv_name(), {find_node, IP, Port, Target}) of
+    case gen_server:call(?MODULE, {find_node, IP, Port, Target}) of
         timeout ->
             {error, timeout};
         Values  ->
@@ -145,7 +136,7 @@ find_node(IP, Port, Target)  ->
     {nodeid(), token(), list(peerinfo()), list(nodeinfo())} | {error, any()}.
 get_peers(IP, Port, InfoHash)  ->
     Call = {get_peers, IP, Port, InfoHash},
-    case gen_server:call(srv_name(), Call) of
+    case gen_server:call(?MODULE, Call) of
         timeout ->
             {error, timeout};
         Values ->
@@ -318,18 +309,15 @@ dht_iter_search(SearchType, Target, Width, Retry, Retries,
     {'error', 'timeout'} | nodeid().
 announce(IP, Port, InfoHash, Token, BTPort) ->
     Announce = {announce, IP, Port, InfoHash, Token, BTPort},
-    case gen_server:call(srv_name(), Announce) of
+    case gen_server:call(?MODULE, Announce) of
         timeout -> {error, timeout};
         Values ->
             decode_response(announce, Values)
     end.
 
-%
-%
-%
 -spec return(ipaddr(), portnum(), transaction(), list()) -> 'ok'.
 return(IP, Port, ID, Response) ->
-    ok = gen_server:call(srv_name(), {return, IP, Port, ID, Response}).
+    ok = gen_server:call(?MODULE, {return, IP, Port, ID, Response}).
 
 init([DHTPort]) ->
     {ok, Socket} = gen_udp:open(DHTPort, socket_options()),
@@ -387,9 +375,7 @@ handle_call({return, IP, Port, ID, Values}, _From, State) ->
     end,
     {reply, ok, State};
 
-handle_call({get_node_port}, _From, State) ->
-    #state{
-        socket=Socket} = State,
+handle_call(get_node_port, _From, #state { socket = Socket } = State) ->
     {ok, {_, Port}} = inet:sockname(Socket),
     {reply, Port, State};
 
@@ -566,9 +552,11 @@ handle_query('announce', Params, IP, Port, MsgID, Self, Tokens) ->
 unique_message_id(IP, Port, Open) ->
     IntID = random:uniform(16#FFFF),
     MsgID = <<IntID:16>>,
-    IsLocal  = gb_trees:is_defined(tkey(IP, Port, MsgID), Open),
-    if IsLocal -> unique_message_id(IP, Port, Open);
-       true    -> MsgID
+    case gb_trees:is_defined(tkey(IP, Port, MsgID), Open) of
+        true ->
+            %% That MsgID is already in use, recurse and try again
+            unique_message_id(IP, Port, Open);
+        false -> MsgID
     end.
 
 store_sent_query(IP, Port, ID, Client, Timeout, Open) ->
