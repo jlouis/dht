@@ -1,3 +1,5 @@
 *.beam
 deps/
 ebin/*.app
+.dht_bt.plt
+src/dialyzer.out
