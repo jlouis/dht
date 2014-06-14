@@ -134,7 +134,7 @@ find_node(IP, Port, Target)  ->
             {error, timeout};
         Values  ->
             {ID, Nodes} = decode_response(find_node, Values),
-            etorrent_dht_state:log_request_success(ID, IP, Port),
+            dht_state:log_request_success(ID, IP, Port),
             {ID, Nodes}
     end.
 
@@ -165,7 +165,7 @@ get_peers(IP, Port, InfoHash)  ->
 find_node_search(NodeID) ->
     Width = search_width(),
     Retry = search_retries(),
-    Nodes = etorrent_dht_state:closest_to(NodeID, Width),
+    Nodes = dht_state:closest_to(NodeID, Width),
     dht_iter_search(find_node, NodeID, Width, Retry, Nodes).
 
 -spec find_node_search(nodeid(), list(nodeinfo())) -> list(nodeinfo()).
@@ -179,7 +179,7 @@ find_node_search(NodeID, Nodes) ->
 get_peers_search(InfoHash) ->
     Width = search_width(),
     Retry = search_retries(),
-    Nodes = etorrent_dht_state:closest_to(InfoHash, Width), 
+    Nodes = dht_state:closest_to(InfoHash, Width), 
     dht_iter_search(get_peers, InfoHash, Width, Retry, Nodes).
 
 -spec get_peers_search(infohash(), list(nodeinfo())) ->
@@ -191,7 +191,7 @@ get_peers_search(InfoHash, Nodes) ->
     
 
 dht_iter_search(SearchType, Target, Width, Retry, Nodes)  ->
-    WithDist = [{etorrent_dht:distance(ID, Target), ID, IP, Port} || {ID, IP, Port} <- Nodes],
+    WithDist = [{dht:distance(ID, Target), ID, IP, Port} || {ID, IP, Port} <- Nodes],
     dht_iter_search(SearchType, Target, Width, Retry, 0, WithDist,
                     gb_sets:empty(), gb_sets:empty(), []).
 
@@ -268,8 +268,8 @@ dht_iter_search(SearchType, Target, Width, Retry, Retries,
     end || {_, Res} <- Successful],
     AllNodes  = lists:flatten(NodeLists),
     NewNodes  = [Node || Node <- AllNodes, not gb_sets:is_member(Node, NewQueried)],
-    NewNext   = [{etorrent_dht:distance(ID, Target), ID, IP, Port}
-                ||{ID, IP, Port} <- etorrent_dht:closest_to(Target, NewNodes, Width)],
+    NewNext   = [{dht:distance(ID, Target), ID, IP, Port}
+                ||{ID, IP, Port} <- dht:closest_to(Target, NewNodes, Width)],
 
     % Check if the closest node in the work queue is closer
     % to the target than the closest responsive node that was
@@ -353,19 +353,19 @@ handle_call({ping, IP, Port}, From, State) ->
     do_send_query('ping', Args, IP, Port, From, State);
 
 handle_call({find_node, IP, Port, Target}, From, State) ->
-    LTarget = etorrent_dht:list_id(Target),
+    LTarget = dht:list_id(Target),
     Args = [{<<"target">>, list_to_binary(LTarget)} | common_values()],
     do_send_query('find_node', Args, IP, Port, From, State);
 
 handle_call({get_peers, IP, Port, InfoHash}, From, State) ->
-    LHash = list_to_binary(etorrent_dht:list_id(InfoHash)),
+    LHash = list_to_binary(dht:list_id(InfoHash)),
     Args  = [{<<"info_hash">>, LHash}| common_values()],
     ok = lager:debug("Send get_peers to ~p:~p for ~s.",
                 [IP, Port, integer_hash_to_literal(InfoHash)]),
     do_send_query('get_peers', Args, IP, Port, From, State);
 
 handle_call({announce, IP, Port, InfoHash, Token, BTPort}, From, State) ->
-    LHash = list_to_binary(etorrent_dht:list_id(InfoHash)),
+    LHash = list_to_binary(dht:list_id(InfoHash)),
     Args = [
         {<<"info_hash">>, LHash},
         {<<"port">>, BTPort},
@@ -449,7 +449,7 @@ handle_info({udp, _Socket, IP, Port, Packet}, State) ->
     #state{
         sent=Sent,
         tokens=Tokens} = State,
-    Self = etorrent_dht_state:node_id(),
+    Self = dht_state:node_id(),
     NewState = case (catch decode_msg(Packet)) of
         {'EXIT', _} ->
             ok = lager:error("Invalid packet from ~w:~w: ~w", [IP, Port, Packet]),
@@ -489,8 +489,8 @@ handle_info({udp, _Socket, IP, Port, Packet}, State) ->
                 error ->
                     %% Handle request.
                     SNID = get_string("id", Params),
-                    NID = etorrent_dht:integer_id(SNID),
-                    spawn_link(etorrent_dht_state, safe_insert_node, [NID, IP, Port]),
+                    NID = dht:integer_id(SNID),
+                    spawn_link(dht_state, safe_insert_node, [NID, IP, Port]),
                     HandlerArgs = [Method, Params, IP, Port, ID, Self, Tokens],
                     spawn_link(?MODULE, handle_query, HandlerArgs),
                     State
@@ -509,11 +509,11 @@ code_change(_, State, _) ->
 
 %% Default args. Returns a proplist of default args
 common_values() ->
-    Self = etorrent_dht_state:node_id(),
+    Self = dht_state:node_id(),
     common_values(Self).
 
 common_values(Self) ->
-    LSelf = etorrent_dht:list_id(Self),
+    LSelf = dht:list_id(Self),
     [{<<"id">>, list_to_binary(LSelf)}].
 
 -spec handle_query(dht_qtype(), etorrent_types:bcode(), ipaddr(),
@@ -523,20 +523,20 @@ handle_query('ping', _, IP, Port, MsgID, Self, _Tokens) ->
     return(IP, Port, MsgID, common_values(Self));
 
 handle_query('find_node', Params, IP, Port, MsgID, Self, _Tokens) ->
-    Target = etorrent_dht:integer_id(benc:get_value(<<"target">>, Params)),
-    CloseNodes = filter_node(IP, Port, etorrent_dht_state:closest_to(Target)),
+    Target = dht:integer_id(benc:get_value(<<"target">>, Params)),
+    CloseNodes = filter_node(IP, Port, dht_state:closest_to(Target)),
     BinCompact = node_infos_to_compact(CloseNodes),
     Values = [{<<"nodes">>, BinCompact}],
     return(IP, Port, MsgID, common_values(Self) ++ Values);
 
 handle_query('get_peers', Params, IP, Port, MsgID, Self, Tokens) ->
-    InfoHash = etorrent_dht:integer_id(benc:get_value(<<"info_hash">>, Params)),
+    InfoHash = dht:integer_id(benc:get_value(<<"info_hash">>, Params)),
     ok = lager:debug("Take request get_peers from ~p:~p for ~s.",
                 [IP, Port, integer_hash_to_literal(InfoHash)]),
     %% TODO: handle non-local requests.
-    Values = case etorrent_dht_tracker:get_peers(InfoHash) of
+    Values = case dht_tracker:get_peers(InfoHash) of
         [] ->
-            Nodes = filter_node(IP, Port, etorrent_dht_state:closest_to(InfoHash)),
+            Nodes = filter_node(IP, Port, dht_state:closest_to(InfoHash)),
             BinCompact = node_infos_to_compact(Nodes),
             [{<<"nodes">>, BinCompact}];
         Peers ->
@@ -548,7 +548,7 @@ handle_query('get_peers', Params, IP, Port, MsgID, Self, Tokens) ->
     return(IP, Port, MsgID, common_values(Self) ++ Token ++ Values);
 
 handle_query('announce', Params, IP, Port, MsgID, Self, Tokens) ->
-    InfoHash = etorrent_dht:integer_id(benc:get_value(<<"info_hash">>, Params)),
+    InfoHash = dht:integer_id(benc:get_value(<<"info_hash">>, Params)),
     ok = lager:info("Announce from ~p:~p for ~s~n",
                 [IP, Port, integer_hash_to_literal(InfoHash)]),
     BTPort = benc:get_value(<<"port">>,   Params),
@@ -556,7 +556,7 @@ handle_query('announce', Params, IP, Port, MsgID, Self, Tokens) ->
     case is_valid_token(Token, IP, Port, Tokens) of
         true ->
             %% TODO: handle non-local requests.
-            etorrent_dht_tracker:announce(InfoHash, IP, BTPort);
+            dht_tracker:announce(InfoHash, IP, BTPort);
         false ->
             FmtArgs = [IP, Port, Token],
             lager:error("Invalid token from ~w:~w ~w", FmtArgs)
@@ -660,14 +660,14 @@ decode_msg(InMsg) ->
     end.
 
 decode_response(ping, Values) ->
-     etorrent_dht:integer_id(benc:get_value(<<"id">>, Values));
+     dht:integer_id(benc:get_value(<<"id">>, Values));
 decode_response(find_node, Values) ->
-    ID = etorrent_dht:integer_id(benc:get_value(<<"id">>, Values)),
+    ID = dht:integer_id(benc:get_value(<<"id">>, Values)),
     BinNodes = benc:get_value(<<"nodes">>, Values),
     Nodes = compact_to_node_infos(BinNodes),
     {ID, Nodes};
 decode_response(get_peers, Values) ->
-    ID = etorrent_dht:integer_id(benc:get_value(<<"id">>, Values)),
+    ID = dht:integer_id(benc:get_value(<<"id">>, Values)),
     Token = benc:get_value(<<"token">>, Values),
     NoPeers = make_ref(),
     MaybePeers = benc:get_value(<<"values">>, Values, NoPeers),
@@ -683,7 +683,7 @@ decode_response(get_peers, Values) ->
     end,
     {ID, Token, Peers, Nodes};
 decode_response(announce, Values) ->
-    etorrent_dht:integer_id(benc:get_value(<<"id">>, Values)).
+    dht:integer_id(benc:get_value(<<"id">>, Values)).
 
 
 
