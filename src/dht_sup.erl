@@ -1,4 +1,4 @@
--module(dht_bt_sup).
+-module(dht_sup).
 -behaviour(supervisor).
 -export([start_link/0]).
 
@@ -15,7 +15,7 @@ start_link() ->
     start_link(DHTPort, StateFile, BootstrapNodes).
 
 start_link(DHTPort, StateFile, BootstapNodes) ->
-    SupName = {local, etorrent_dht_sup},
+    SupName = {local, dht_sup},
     SupArgs = [{port, DHTPort},
                {file, StateFile},
                {bootstap_nodes, BootstapNodes}],

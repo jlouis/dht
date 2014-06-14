@@ -40,7 +40,7 @@
 %% future timeout should occur.
 %%
 %% @end
--module(dht_bt_state).
+-module(dht_state).
 -behaviour(gen_server).
 -define(K, 8).
 -define(in_range(Dist, Min, Max), ((Dist >= Min) andalso (Dist < Max))).
@@ -240,10 +240,10 @@ spawn_keepalive(ID, IP, Port) ->
 %
 -spec safe_ping(IP::ipaddr(), Port::portnum()) -> pang | nodeid().
 safe_ping(IP, Port) ->
-    etorrent_dht_net:ping(IP, Port).
+    dht_net:ping(IP, Port).
 
 %
-% unsafe_ping overrides the behaviour of etorrent_dht_net:ping/2 by
+% unsafe_ping overrides the behaviour of dht_net:ping/2 by
 % avoiding to issue ping queries to nodes that are unlikely to
 % be reachable. If a node has not been queried before, a safe_ping
 % will always be performed.
@@ -260,7 +260,7 @@ unsafe_ping(IP, Port) ->
                     RandNode = random_node_tag(),
                     DelSpec = [{{'_', RandNode}, [], [true]}],
                     _ = ets:select_delete(unreachable_tab(), DelSpec),
-                    lager:debug("~p:~p is unreachable.", [IP, Port]),
+                    ok = lager:debug("~p:~p is unreachable.", [IP, Port]),
                     ets:insert(unreachable_tab(), {{IP, Port}, RandNode}),
                     pang;
                 NodeID ->
@@ -282,7 +282,7 @@ refresh(Range, Inactive, Active) ->
 do_refresh(_, [], _) ->
     ok; % @todo - perform a find_node_search here?
 do_refresh(Range, [{ID, IP, Port}|T], IDs) ->
-    Continue = case etorrent_dht_net:find_node(IP, Port, ID) of
+    Continue = case dht_net:find_node(IP, Port, ID) of
         {error, timeout} ->
             true;
         {_, CloseNodes} ->
@@ -326,7 +326,7 @@ unreachable_tab() ->
     etorrent_dht_unreachable_cache_tab.
 
 random_node_tag() ->
-    etorrent_utils:init_random_generator(),
+    random:seed(erlang:now()),
     random:uniform(max_unreachable()).
 
 %% @private
@@ -609,7 +609,7 @@ handle_info({inactive_node, InputID, IP, Port}, State) ->
                        State;
                    true ->
                        if HasTimed ->
-                               lager:debug("Node at ~w:~w timed out", [IP, Port]),
+                               ok = lager:debug("Node at ~w:~w timed out", [IP, Port]),
                                spawn_keepalive(ID, IP, Port);
                           true ->
                                ok
@@ -648,7 +648,7 @@ handle_info({inactive_bucket, Range}, State) ->
                    true ->
                        BMembers   = b_members(Range, Self, Buckets),
                        if HasTimed ->
-                               lager:debug("Bucket timed out"),
+                               ok = lager:debug("Bucket timed out"),
                                _ = spawn_refresh(Range,
                                                  inactive_nodes(BMembers, NTimeout, NTimers),
                                                  active_nodes(BMembers, NTimeout, NTimers));
@@ -689,15 +689,15 @@ load_state(Filename) ->
             case (catch load_state_(BinState)) of
                 {'EXIT', Reason}  ->
                     ErrorArgs = [Filename, Reason],
-                    lager:error(ErrorFmt, ErrorArgs),
+                    ok = lager:error(ErrorFmt, ErrorArgs),
                     {etorrent_dht:random_id(), []};
                 {_, _}=State ->
-                    lager:info("Loaded state from ~s", [Filename]),
+                    ok = lager:info("Loaded state from ~s", [Filename]),
                     State
             end;
         {error, Reason} ->
             ErrorArgs = [Filename, Reason],
-            lager:error(ErrorFmt, ErrorArgs),
+            ok = lager:error(ErrorFmt, ErrorArgs),
             {etorrent_dht:random_id(), []}
     end.
 
@@ -992,6 +992,6 @@ dns_lookup(Addr) ->
     case inet_res:gethostbyname(Addr) of
         {ok, #hostent{h_addr_list=IPs}} -> IPs;
         {error, Reason} ->
-            lager:error("Cannot lookup address ~p because ~p.", [Addr, Reason]),
+            ok = lager:error("Cannot lookup address ~p because ~p.", [Addr, Reason]),
             []
     end.

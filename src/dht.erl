@@ -2,7 +2,7 @@
 %% @doc This module provides few helpers and supervise the DHT processes.
 %% Starts two workers: {@link etorrent_dht_state} and {@link etorrent_dht_net}.
 %% @end
--module(dht_bt).
+-module(dht).
 -export([integer_id/1,
          list_id/1,
          random_id/0,
@@ -16,7 +16,7 @@
 
 find_self() ->
     Self = etorrent_dht_state:node_id(),
-    etorrent_dht_net:find_node_search(Self).
+    dht_net:find_node_search(Self).
 
 -spec integer_id(list(byte()) | binary()) -> nodeid().
 integer_id(<<ID:160>>) ->

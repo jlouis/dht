@@ -1,13 +1,13 @@
-{application, dht_bt, [
+{application, dht, [
 	{description, "BitTorrent DHT code"},
-	{vsn, "0.0.1"},
+	{vsn, "0.9.0"},
 	{modules, []},
 	{registered, []},
 	{applications, [
 		kernel,
 		stdlib,
 	]},
-	{mod, {dht_bt_app, []}},
+	{mod, {dht_app, []}},
 	{env, [
 	  %% Port to use
 	  {port, 3723},

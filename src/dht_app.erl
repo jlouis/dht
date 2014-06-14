@@ -1,4 +1,4 @@
--module(dht_bt_app).
+-module(dht_app).
 -behaviour(application).
 
 %% API.
@@ -8,7 +8,7 @@
 %% API.
 
 start(_Type, _Args) ->
-	dht_bt_sup:start_link().
+	dht_sup:start_link().
 
 stop(_State) ->
 	ok.

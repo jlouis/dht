@@ -1,7 +1,7 @@
 %% @author Magnus Klaar <magnus.klaar@sgsstudentbostader.se>
 %% @doc TODO
 %% @end
--module(dht_bt_net).
+-module(dht_net).
 
 -behaviour(gen_server).
 
@@ -237,7 +237,7 @@ dht_iter_search(SearchType, Target, Width, Retry, Retries,
     FailedCall = make_ref(),
     TmpSuccessful = [case {repack, SearchType, RetVal} of
         {repack, _, {badrpc, Reason}} ->
-            lager:error("A RPC process crashed while sending a request ~p "
+            ok = lager:error("A RPC process crashed while sending a request ~p "
                         "to ~p:~p with reason ~p.",
                         [SearchType, IP, Port, Reason]),
             FailedCall;
@@ -360,7 +360,7 @@ handle_call({find_node, IP, Port, Target}, From, State) ->
 handle_call({get_peers, IP, Port, InfoHash}, From, State) ->
     LHash = list_to_binary(etorrent_dht:list_id(InfoHash)),
     Args  = [{<<"info_hash">>, LHash}| common_values()],
-    lager:debug("Send get_peers to ~p:~p for ~s.",
+    ok = lager:debug("Send get_peers to ~p:~p for ~s.",
                 [IP, Port, integer_hash_to_literal(InfoHash)]),
     do_send_query('get_peers', Args, IP, Port, From, State);
 
@@ -379,10 +379,10 @@ handle_call({return, IP, Port, ID, Values}, _From, State) ->
         ok ->
             ok;
         {error, einval} ->
-            lager:error("Error (einval) when returning to ~w:~w", [IP, Port]),
+            ok = lager:error("Error (einval) when returning to ~w:~w", [IP, Port]),
             ok;
         {error, eagain} ->
-            lager:error("Error (eagain) when returning to ~w:~w", [IP, Port]),
+            ok = lager:error("Error (eagain) when returning to ~w:~w", [IP, Port]),
             ok
     end,
     {reply, ok, State};
@@ -401,7 +401,7 @@ handle_call({get_num_open}, _From, State) ->
 do_send_query(Method, Args, IP, Port, From, State) ->
     #state{sent=Sent,
            socket=Socket} = State,
-    lager:info("Sending ~w to ~w:~w", [Method, IP, Port]),
+    ok = lager:info("Sending ~w to ~w:~w", [Method, IP, Port]),
 
     MsgID = unique_message_id(IP, Port, Sent),
     Query = encode_query(Method, MsgID, Args),
@@ -409,16 +409,16 @@ do_send_query(Method, Args, IP, Port, From, State) ->
     case gen_udp:send(Socket, IP, Port, Query) of
         ok ->
             TRef = timeout_reference(IP, Port, MsgID),
-            lager:info("Sent ~w to ~w:~w", [Method, IP, Port]),
+            ok = lager:info("Sent ~w to ~w:~w", [Method, IP, Port]),
 
             NewSent = store_sent_query(IP, Port, MsgID, From, TRef, Sent),
             NewState = State#state{sent=NewSent},
             {noreply, NewState};
         {error, einval} ->
-            lager:error("Error (einval) when sending ~w to ~w:~w", [Method, IP, Port]),
+            ok = lager:error("Error (einval) when sending ~w to ~w:~w", [Method, IP, Port]),
             {reply, timeout, State};
         {error, eagain} ->
-            lager:error("Error (eagain) when sending ~w to ~w:~w", [Method, IP, Port]),
+            ok = lager:error("Error (eagain) when sending ~w to ~w:~w", [Method, IP, Port]),
             {reply, timeout, State}
     end.
 
@@ -452,11 +452,11 @@ handle_info({udp, _Socket, IP, Port, Packet}, State) ->
     Self = etorrent_dht_state:node_id(),
     NewState = case (catch decode_msg(Packet)) of
         {'EXIT', _} ->
-            lager:error("Invalid packet from ~w:~w: ~w", [IP, Port, Packet]),
+            ok = lager:error("Invalid packet from ~w:~w: ~w", [IP, Port, Packet]),
             State;
 
         {error, ID, Code, ErrorMsg} ->
-            lager:error("Received error from ~w:~w (~w) ~w", [IP, Port, Code, ErrorMsg]),
+            ok = lager:error("Received error from ~w:~w (~w) ~w", [IP, Port, Code, ErrorMsg]),
             case find_sent_query(IP, Port, ID, Sent) of
                 error ->
                     State;
@@ -478,12 +478,12 @@ handle_info({udp, _Socket, IP, Port, Packet}, State) ->
                     State#state{sent=NewSent}
             end;
         {Method, ID, Params} ->
-            lager:info("Received ~w from ~w:~w", [Method, IP, Port]),
+            ok = lager:info("Received ~w from ~w:~w", [Method, IP, Port]),
             case find_sent_query(IP, Port, ID, Sent) of
                 {ok, {Client, Timeout}} ->
                     _ = cancel_timeout(Timeout),
                     _ = gen_server:reply(Client, timeout),
-                    lager:error("Bad node, don't send queries to yourself!"),
+                    ok = lager:error("Bad node, don't send queries to yourself!"),
                     NewSent = clear_sent_query(IP, Port, ID, Sent),
                     State#state{sent=NewSent};
                 error ->
@@ -523,15 +523,15 @@ handle_query('ping', _, IP, Port, MsgID, Self, _Tokens) ->
     return(IP, Port, MsgID, common_values(Self));
 
 handle_query('find_node', Params, IP, Port, MsgID, Self, _Tokens) ->
-    Target = etorrent_dht:integer_id(etorrent_bcoding:get_value(<<"target">>, Params)),
+    Target = etorrent_dht:integer_id(benc:get_value(<<"target">>, Params)),
     CloseNodes = filter_node(IP, Port, etorrent_dht_state:closest_to(Target)),
     BinCompact = node_infos_to_compact(CloseNodes),
     Values = [{<<"nodes">>, BinCompact}],
     return(IP, Port, MsgID, common_values(Self) ++ Values);
 
 handle_query('get_peers', Params, IP, Port, MsgID, Self, Tokens) ->
-    InfoHash = etorrent_dht:integer_id(etorrent_bcoding:get_value(<<"info_hash">>, Params)),
-    lager:debug("Take request get_peers from ~p:~p for ~s.",
+    InfoHash = etorrent_dht:integer_id(benc:get_value(<<"info_hash">>, Params)),
+    ok = lager:debug("Take request get_peers from ~p:~p for ~s.",
                 [IP, Port, integer_hash_to_literal(InfoHash)]),
     %% TODO: handle non-local requests.
     Values = case etorrent_dht_tracker:get_peers(InfoHash) of
@@ -540,7 +540,7 @@ handle_query('get_peers', Params, IP, Port, MsgID, Self, Tokens) ->
             BinCompact = node_infos_to_compact(Nodes),
             [{<<"nodes">>, BinCompact}];
         Peers ->
-            lager:debug("Get a list of peers from the local tracker ~p", [Peers]),
+            ok = lager:debug("Get a list of peers from the local tracker ~p", [Peers]),
             PeerList = [peers_to_compact([P]) || P <- Peers],
             [{<<"values">>, PeerList}]
     end,
@@ -548,10 +548,10 @@ handle_query('get_peers', Params, IP, Port, MsgID, Self, Tokens) ->
     return(IP, Port, MsgID, common_values(Self) ++ Token ++ Values);
 
 handle_query('announce', Params, IP, Port, MsgID, Self, Tokens) ->
-    InfoHash = etorrent_dht:integer_id(etorrent_bcoding:get_value(<<"info_hash">>, Params)),
-    lager:info("Announce from ~p:~p for ~s~n",
+    InfoHash = etorrent_dht:integer_id(benc:get_value(<<"info_hash">>, Params)),
+    ok = lager:info("Announce from ~p:~p for ~s~n",
                 [IP, Port, integer_hash_to_literal(InfoHash)]),
-    BTPort = etorrent_bcoding:get_value(<<"port">>,   Params),
+    BTPort = benc:get_value(<<"port">>,   Params),
     Token = get_string(<<"token">>, Params),
     case is_valid_token(Token, IP, Port, Tokens) of
         true ->
@@ -592,7 +592,7 @@ tval(Client, TimeoutRef) ->
     {Client, TimeoutRef}.
 
 get_string(What, PL) ->
-    etorrent_bcoding:get_binary_value(What, PL).
+    benc:get_binary_value(What, PL).
 
 %
 % Generate a random token value. A token value is used to filter out bogus announce
@@ -643,37 +643,37 @@ renew_token(Tokens) ->
 
 
 decode_msg(InMsg) ->
-    {ok, Msg} = etorrent_bcoding:decode(InMsg),
-    MsgID = etorrent_bcoding:get_value(<<"t">>, Msg),
-    case etorrent_bcoding:get_value(<<"y">>, Msg) of
+    {ok, Msg} = benc:decode(InMsg),
+    MsgID = benc:get_value(<<"t">>, Msg),
+    case benc:get_value(<<"y">>, Msg) of
         <<"q">> ->
-            MString = etorrent_bcoding:get_value(<<"q">>, Msg),
+            MString = benc:get_value(<<"q">>, Msg),
             Method  = string_to_method(MString),
-            Params  = etorrent_bcoding:get_value(<<"a">>, Msg),
+            Params  = benc:get_value(<<"a">>, Msg),
             {Method, MsgID, Params};
         <<"r">> ->
-            Values = etorrent_bcoding:get_value(<<"r">>, Msg),
+            Values = benc:get_value(<<"r">>, Msg),
             {response, MsgID, Values};
         <<"e">> ->
-            [ECode, EMsg] = etorrent_bcoding:get_value(<<"e">>, Msg),
+            [ECode, EMsg] = benc:get_value(<<"e">>, Msg),
             {error, MsgID, ECode, EMsg}
     end.
 
 decode_response(ping, Values) ->
-     etorrent_dht:integer_id(etorrent_bcoding:get_value(<<"id">>, Values));
+     etorrent_dht:integer_id(benc:get_value(<<"id">>, Values));
 decode_response(find_node, Values) ->
-    ID = etorrent_dht:integer_id(etorrent_bcoding:get_value(<<"id">>, Values)),
-    BinNodes = etorrent_bcoding:get_value(<<"nodes">>, Values),
+    ID = etorrent_dht:integer_id(benc:get_value(<<"id">>, Values)),
+    BinNodes = benc:get_value(<<"nodes">>, Values),
     Nodes = compact_to_node_infos(BinNodes),
     {ID, Nodes};
 decode_response(get_peers, Values) ->
-    ID = etorrent_dht:integer_id(etorrent_bcoding:get_value(<<"id">>, Values)),
-    Token = etorrent_bcoding:get_value(<<"token">>, Values),
+    ID = etorrent_dht:integer_id(benc:get_value(<<"id">>, Values)),
+    Token = benc:get_value(<<"token">>, Values),
     NoPeers = make_ref(),
-    MaybePeers = etorrent_bcoding:get_value(<<"values">>, Values, NoPeers),
+    MaybePeers = benc:get_value(<<"values">>, Values, NoPeers),
     {Peers, Nodes} = case MaybePeers of
         NoPeers when is_reference(NoPeers) ->
-            BinCompact = etorrent_bcoding:get_value(<<"nodes">>, Values),
+            BinCompact = benc:get_value(<<"nodes">>, Values),
             INodes = compact_to_node_infos(BinCompact),
             {[], INodes};
         BinPeers when is_list(BinPeers) ->
@@ -683,7 +683,7 @@ decode_response(get_peers, Values) ->
     end,
     {ID, Token, Peers, Nodes};
 decode_response(announce, Values) ->
-    etorrent_dht:integer_id(etorrent_bcoding:get_value(<<"id">>, Values)).
+    etorrent_dht:integer_id(benc:get_value(<<"id">>, Values)).
 
 
 
@@ -693,14 +693,14 @@ encode_query(Method, MsgID, Params) ->
        {<<"q">>, method_to_string(Method)},
        {<<"t">>, MsgID},
        {<<"a">>, Params}],
-    etorrent_bcoding:encode(Msg).
+    benc:encode(Msg).
 
 encode_response(MsgID, Values) ->
     Msg = [
        {<<"y">>, <<"r">>},
        {<<"t">>, MsgID},
        {<<"r">>, Values}],
-    etorrent_bcoding:encode(Msg).
+    benc:encode(Msg).
 
 method_to_string(ping) -> <<"ping">>;
 method_to_string(find_node) -> <<"find_node">>;
