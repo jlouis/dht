@@ -46,15 +46,14 @@
          announce/5,
          return/4]).
 
+-type nodeid() :: integer(). % 160 bit hash
+
 -type nodeinfo() :: etorrent_types:nodeinfo().
 -type peerinfo() :: etorrent_types:peerinfo().
 -type trackerinfo() :: etorrent_types:trackerinfo().
 -type infohash() :: etorrent_types:infohash().
 -type token() :: etorrent_types:token().
 -type dht_qtype() :: etorrent_types:dht_qtype().
--type ipaddr() :: etorrent_types:ipaddr().
--type nodeid() :: etorrent_types:nodeid().
--type portnum() :: non_neg_integer().
 -type transaction() :: etorrent_types:transaction().
 
 % gen_server callbacks
@@ -102,11 +101,11 @@ start_link(DHTPort) ->
 
 %% @doc node_port/0 returns the (UDP) port number to which the DHT system is bound.
 %% @end
--spec node_port() -> portnum().
+-spec node_port() -> inet:port_number().
 node_port() ->
     gen_server:call(?MODULE, get_node_port).
 
--spec ping(ipaddr(), portnum()) -> pang | nodeid().
+-spec ping(inet:ip_address(), inet:port_number()) -> pang | nodeid().
 ping(IP, Port) ->
     case gen_server:call(?MODULE, {ping, IP, Port}) of
         timeout -> pang;
@@ -114,10 +113,7 @@ ping(IP, Port) ->
             _ID = decode_response(ping, Values)
     end.
 
-%
-%
-%
--spec find_node(ipaddr(), portnum(), nodeid()) ->
+-spec find_node(inet:ip_address(), inet:port_number(), nodeid()) ->
     {'error', 'timeout'} | {nodeid(), list(nodeinfo())}.
 find_node(IP, Port, Target)  ->
     case gen_server:call(?MODULE, {find_node, IP, Port, Target}) of
@@ -132,7 +128,7 @@ find_node(IP, Port, Target)  ->
 %
 %
 %
--spec get_peers(ipaddr(), portnum(), infohash()) ->
+-spec get_peers(inet:ip_address(), inet:port_number(), infohash()) ->
     {nodeid(), token(), list(peerinfo()), list(nodeinfo())} | {error, any()}.
 get_peers(IP, Port, InfoHash)  ->
     Call = {get_peers, IP, Port, InfoHash},
@@ -305,7 +301,7 @@ dht_iter_search(SearchType, Target, Width, Retry, Retries,
 %
 %
 %
--spec announce(ipaddr(), portnum(), infohash(), token(), portnum()) ->
+-spec announce(inet:ip_address(), inet:port_number(), infohash(), token(), inet:port_number()) ->
     {'error', 'timeout'} | nodeid().
 announce(IP, Port, InfoHash, Token, BTPort) ->
     Announce = {announce, IP, Port, InfoHash, Token, BTPort},
@@ -315,7 +311,7 @@ announce(IP, Port, InfoHash, Token, BTPort) ->
             decode_response(announce, Values)
     end.
 
--spec return(ipaddr(), portnum(), transaction(), list()) -> 'ok'.
+-spec return(inet:ip_address(), inet:port_number(), transaction(), list()) -> 'ok'.
 return(IP, Port, ID, Response) ->
     ok = gen_server:call(?MODULE, {return, IP, Port, ID, Response}).
 
@@ -502,8 +498,8 @@ common_values(Self) ->
     LSelf = dht:list_id(Self),
     [{<<"id">>, list_to_binary(LSelf)}].
 
--spec handle_query(dht_qtype(), etorrent_types:bcode(), ipaddr(),
-                  portnum(), transaction(), nodeid(), _) -> 'ok'.
+-spec handle_query(dht_qtype(), etorrent_types:bcode(), inet:ip_address(),
+                  inet:port_number(), transaction(), nodeid(), _) -> 'ok'.
 
 handle_query('ping', _, IP, Port, MsgID, Self, _Tokens) ->
     return(IP, Port, MsgID, common_values(Self));
