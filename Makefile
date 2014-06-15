@@ -1,6 +1,6 @@
 PROJECT = dht_bt
 
-.DEFAULT_GOAL := app
+.DEFAULT_GOAL := all
 
 # Options.
 ERLC_OPTS = +debug_info +'{parse_transform, lager_transform}'
