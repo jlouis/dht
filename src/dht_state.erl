@@ -47,25 +47,25 @@
 
 
 -export([srv_name/0,
-         start_link/2,
-         node_id/0,
-         safe_insert_node/2,
-         safe_insert_node/3,
-         safe_insert_nodes/1,
-         unsafe_insert_node/3,
-         unsafe_insert_nodes/1,
-         is_interesting/3,
-         closest_to/1,
-         closest_to/2,
-         log_request_timeout/3,
-         log_request_success/3,
-         log_request_from/3,
-         keepalive/3,
-         refresh/3,
-         dump_state/0,
-         dump_state/1,
-         dump_state/3,
-         load_state/1]).
+	 start_link/2,
+	 node_id/0,
+	 safe_insert_node/2,
+	 safe_insert_node/3,
+	 safe_insert_nodes/1,
+	 unsafe_insert_node/3,
+	 unsafe_insert_nodes/1,
+	 is_interesting/3,
+	 closest_to/1,
+	 closest_to/2,
+	 log_request_timeout/3,
+	 log_request_success/3,
+	 log_request_from/3,
+	 keepalive/3,
+	 refresh/3,
+	 dump_state/0,
+	 dump_state/1,
+	 dump_state/3,
+	 load_state/1]).
 
 -type ipaddr() :: etorrent_types:ipaddr().
 -type nodeid() :: etorrent_types:nodeid().
@@ -73,15 +73,15 @@
 -type nodeinfo() :: etorrent_types:nodeinfo().
 
 -export([init/1,
-         handle_call/3,
-         handle_cast/2,
-         handle_info/2,
-         terminate/2,
-         code_change/3]).
+	 handle_call/3,
+	 handle_cast/2,
+	 handle_info/2,
+	 terminate/2,
+	 code_change/3]).
 
 -record(state, {
     node_id :: nodeid(),
-    buckets=b_new(), % The actual routing table
+    buckets=dht_bucket:new(), % The actual routing table
     node_timers=timer_tree(), % Node activity times and timeout references
     buck_timers=timer_tree(),% Bucker activity times and timeout references
     node_timeout=10*60*1000,  % Default node keepalive timeout
@@ -103,13 +103,12 @@
 ensure_bin_id(ID) when is_binary(ID)  -> ID.
 ensure_int_id(ID) when is_integer(ID) -> ID.
 
-srv_name() ->
-    etorrent_dht_state_server.
+srv_name() -> ?MODULE.
 
 start_link(StateFile, BootstapNodes) ->
     gen_server:start_link({local, srv_name()},
-                          ?MODULE,
-                          [StateFile, BootstapNodes], []).
+			  ?MODULE,
+			  [StateFile, BootstapNodes], []).
 
 
 %% @doc Return a this node id as an integer.
@@ -127,8 +126,8 @@ node_id() ->
     {'error', 'timeout'} | boolean().
 safe_insert_node(IP, Port) ->
     case unsafe_ping(IP, Port) of
-        pang -> {error, timeout};
-        ID   -> unsafe_insert_node(ID, IP, Port)
+	pang -> {error, timeout};
+	ID   -> unsafe_insert_node(ID, IP, Port)
     end.
 
 %
@@ -145,17 +144,17 @@ safe_insert_node(IP, Port) ->
     {'error', 'timeout'} | boolean().
 safe_insert_node(ID, IP, Port) ->
     case is_interesting(ID, IP, Port) of
-        false -> false;
-        true ->
-            % Since this clause will be reached every time this node
-            % receives a query from a node that is interesting, use the
-            % unsafe_ping function to avoid repeatedly issuing ping queries
-            % to nodes that won't reply to them.
-            case unsafe_ping(IP, Port) of
-                ID   -> unsafe_insert_node(ID, IP, Port);
-                pang -> {error, timeout};
-                _    -> {error, timeout}
-        end
+	false -> false;
+	true ->
+	    % Since this clause will be reached every time this node
+	    % receives a query from a node that is interesting, use the
+	    % unsafe_ping function to avoid repeatedly issuing ping queries
+	    % to nodes that won't reply to them.
+	    case unsafe_ping(IP, Port) of
+		ID   -> unsafe_insert_node(ID, IP, Port);
+		pang -> {error, timeout};
+		_    -> {error, timeout}
+	end
     end.
 
 -spec safe_insert_nodes(list(nodeinfo())) -> 'ok'.
@@ -225,9 +224,9 @@ dump_state(Filename) ->
 -spec keepalive(nodeid(), ipaddr(), portnum()) -> 'ok'.
 keepalive(ID, IP, Port) ->
     case safe_ping(IP, Port) of
-        ID    -> log_request_success(ID, IP, Port);
-        pang  -> log_request_timeout(ID, IP, Port);
-        _     -> log_request_timeout(ID, IP, Port)
+	ID    -> log_request_success(ID, IP, Port);
+	pang  -> log_request_timeout(ID, IP, Port);
+	_     -> log_request_timeout(ID, IP, Port)
     end.
 
 spawn_keepalive(ID, IP, Port) ->
@@ -252,20 +251,20 @@ safe_ping(IP, Port) ->
 -spec unsafe_ping(IP::ipaddr(), Port::portnum()) -> pang | nodeid().
 unsafe_ping(IP, Port) ->
     case ets:member(unreachable_tab(), {IP, Port}) of
-        true ->
-            pang;
-        false ->
-            case safe_ping(IP, Port) of
-                pang ->
-                    RandNode = random_node_tag(),
-                    DelSpec = [{{'_', RandNode}, [], [true]}],
-                    _ = ets:select_delete(unreachable_tab(), DelSpec),
-                    ok = lager:debug("~p:~p is unreachable.", [IP, Port]),
-                    ets:insert(unreachable_tab(), {{IP, Port}, RandNode}),
-                    pang;
-                NodeID ->
-                    NodeID
-            end
+	true ->
+	    pang;
+	false ->
+	    case safe_ping(IP, Port) of
+		pang ->
+		    RandNode = random_node_tag(),
+		    DelSpec = [{{'_', RandNode}, [], [true]}],
+		    _ = ets:select_delete(unreachable_tab(), DelSpec),
+		    ok = lager:debug("~p:~p is unreachable.", [IP, Port]),
+		    ets:insert(unreachable_tab(), {{IP, Port}, RandNode}),
+		    pang;
+		NodeID ->
+		    NodeID
+	    end
     end.
 
 %
@@ -283,14 +282,14 @@ do_refresh(_, [], _) ->
     ok; % @todo - perform a find_node_search here?
 do_refresh(Range, [{ID, IP, Port}|T], IDs) ->
     Continue = case dht_net:find_node(IP, Port, ID) of
-        {error, timeout} ->
-            true;
-        {_, CloseNodes} ->
-            do_refresh_inserts(Range, CloseNodes)
+	{error, timeout} ->
+	    true;
+	{_, CloseNodes} ->
+	    do_refresh_inserts(Range, CloseNodes)
     end,
     case Continue of
-        false -> ok;
-        true  -> do_refresh(Range, T, [ID|IDs])
+	false -> ok;
+	true  -> do_refresh(Range, T, [ID|IDs])
     end.
 
 do_refresh_inserts({_, _}, []) ->
@@ -298,13 +297,13 @@ do_refresh_inserts({_, _}, []) ->
 do_refresh_inserts({Min, Max}=Range, [{ID, IP, Port}|T])
 when ?in_range(ID, Min, Max) ->
     case safe_insert_node(ID, IP, Port) of
-        {error, timeout} ->
-            do_refresh_inserts(Range, T);
-        true ->
-            do_refresh_inserts(Range, T);
-        false ->
-            safe_insert_nodes(T),
-            false
+	{error, timeout} ->
+	    do_refresh_inserts(Range, T);
+	true ->
+	    do_refresh_inserts(Range, T);
+	false ->
+	    safe_insert_nodes(T),
+	    false
     end;
 
 do_refresh_inserts(Range, [{ID, IP, Port}|T]) ->
@@ -313,9 +312,9 @@ do_refresh_inserts(Range, [{ID, IP, Port}|T]) ->
 
 spawn_refresh(Range, InputInactive, InputActive) ->
     Inactive = [{ensure_bin_id(ID), IP, Port}
-               || {ID, IP, Port} <- InputInactive],
+	       || {ID, IP, Port} <- InputInactive],
     Active   = [{ensure_bin_id(ID), IP, Port}
-               || {ID, IP, Port} <- InputActive],
+	       || {ID, IP, Port} <- InputActive],
     spawn(?MODULE, refresh, [Range, Inactive, Active]).
 
 
@@ -323,10 +322,10 @@ max_unreachable() ->
     128.
 
 unreachable_tab() ->
-    etorrent_dht_unreachable_cache_tab.
+    dht_unreachable_cache_tab.
 
 random_node_tag() ->
-    random:seed(erlang:now()),
+    _ = random:seed(erlang:now()),
     random:uniform(max_unreachable()).
 
 %% @private
@@ -335,9 +334,9 @@ init([StateFile, BootstapNodes]) ->
     % The safe_ping and unsafe_ping functions aren't exported outside of
     % of this module so they should fail unless the server is not running.
     _ = case ets:info(unreachable_tab()) of
-        undefined ->
-            ets:new(unreachable_tab(), [named_table, public, bag]);
-        _ -> ok
+	undefined ->
+	    ets:new(unreachable_tab(), [named_table, public, bag]);
+	_ -> ok
     end,
 
 
@@ -353,42 +352,42 @@ init([StateFile, BootstapNodes]) ->
     || {ID, IP, Port} <- NodeList],
 
     #state{
-        buckets=Buckets,
-        buck_timers=InitBTimers,
-        node_timeout=NTimeout,
-        buck_timeout=BTimeout} = #state{},
+	buckets=Buckets,
+	buck_timers=InitBTimers,
+	node_timeout=NTimeout,
+	buck_timeout=BTimeout} = #state{},
 
     Now = os:timestamp(),
     BTimers = lists:foldl(fun(Range, Acc) ->
-        BTimer = bucket_timer_from(Now, NTimeout, Now, BTimeout, Range),
-        add_timer(Range, Now, BTimer, Acc)
-    end, InitBTimers, b_ranges(Buckets)),
+	BTimer = bucket_timer_from(Now, NTimeout, Now, BTimeout, Range),
+	add_timer(Range, Now, BTimer, Acc)
+    end, InitBTimers, dht_bucket:ranges(Buckets)),
 
     State = #state{
-        node_id=ensure_int_id(NodeID),
-        buck_timers=BTimers,
-        state_file=StateFile},
+	node_id=ensure_int_id(NodeID),
+	buck_timers=BTimers,
+	state_file=StateFile},
     {ok, State}.
 
 %% @private
 handle_call({is_interesting, InputID, IP, Port}, _From, State) ->
     ID = ensure_int_id(InputID),
     #state{
-        node_id=Self,
-        buckets=Buckets,
-        node_timeout=NTimeout,
-        node_timers=NTimers} = State,
-    IsInteresting = case b_is_member(ID, IP, Port, Self, Buckets) of
-        true -> false;
-        false ->
-            BMembers = b_members(ID, Self, Buckets),
-            Inactive = inactive_nodes(BMembers, NTimeout, NTimers),
-            case (Inactive =/= []) or (length(BMembers) < ?K) of
-                true -> true;
-                false ->
-                    TryBuckets = b_insert(Self, ID, IP, Port, Buckets),
-                    b_is_member(ID, IP, Port, Self, TryBuckets)
-            end
+	node_id=Self,
+	buckets=Buckets,
+	node_timeout=NTimeout,
+	node_timers=NTimers} = State,
+    IsInteresting = case dht_bucket:is_member(ID, IP, Port, Self, Buckets) of
+	true -> false;
+	false ->
+	    BMembers = dht_bucket:members(ID, Self, Buckets),
+	    Inactive = inactive_nodes(BMembers, NTimeout, NTimers),
+	    case (Inactive =/= []) or (length(BMembers) < ?K) of
+		true -> true;
+		false ->
+		    TryBuckets = dht_bucket:insert(Self, ID, IP, Port, Buckets),
+		    dht_bucket:is_member(ID, IP, Port, Self, TryBuckets)
+	    end
     end,
     {reply, IsInteresting, State};
 
@@ -397,95 +396,95 @@ handle_call({insert_node, InputID, IP, Port}, _From, State) ->
     Now  = os:timestamp(),
     Node = {ID, IP, Port},
     #state{
-        node_id=Self,
-        buckets=PrevBuckets,
-        node_timers=PrevNTimers,
-        buck_timers=PrevBTimers,
-        node_timeout=NTimeout,
-        buck_timeout=BTimeout} = State,
+	node_id=Self,
+	buckets=PrevBuckets,
+	node_timers=PrevNTimers,
+	buck_timers=PrevBTimers,
+	node_timeout=NTimeout,
+	buck_timeout=BTimeout} = State,
 
-    IsPrevMember = b_is_member(ID, IP, Port, Self, PrevBuckets),
+    IsPrevMember = dht_bucket:is_member(ID, IP, Port, Self, PrevBuckets),
     Inactive = case IsPrevMember of
-        true  -> [];
-        false ->
-            PrevBMembers = b_members(ID, Self, PrevBuckets),
-            inactive_nodes(PrevBMembers, NTimeout, PrevNTimers)
+	true  -> [];
+	false ->
+	    PrevBMembers = dht_bucket:members(ID, Self, PrevBuckets),
+	    inactive_nodes(PrevBMembers, NTimeout, PrevNTimers)
     end,
 
     {NewBuckets, Replace} = case {IsPrevMember, Inactive} of
-        {true, _} ->
-            % If the node is already a member of the node set,
-            % don't change a thing
-            {PrevBuckets, none};
+	{true, _} ->
+	    % If the node is already a member of the node set,
+	    % don't change a thing
+	    {PrevBuckets, none};
 
-        {false, []} ->
-            % If there are no disconnected nodes in the bucket
-            % insert it anyways and check later if it was actually added
-            {b_insert(Self, ID, IP, Port, PrevBuckets), none};
+	{false, []} ->
+	    % If there are no disconnected nodes in the bucket
+	    % insert it anyways and check later if it was actually added
+	    {dht_bucket:insert(Self, ID, IP, Port, PrevBuckets), none};
 
-        {false, [{OID, OIP, OPort}=Old|_]} ->
-            % If there is one or more disconnected nodes in the bucket
-            % Remove the old one and insert the new node.
-            TmpBuckets = b_delete(OID, OIP, OPort, Self, PrevBuckets),
-            {b_insert(Self, ID, IP, Port, TmpBuckets), Old}
+	{false, [{OID, OIP, OPort}=Old|_]} ->
+	    % If there is one or more disconnected nodes in the bucket
+	    % Remove the old one and insert the new node.
+	    TmpBuckets = dht_bucket:delete(OID, OIP, OPort, Self, PrevBuckets),
+	    {dht_bucket:insert(Self, ID, IP, Port, TmpBuckets), Old}
     end,
 
     % If the new node replaced a new, remove all timer and access time
     % information from the state
     TmpNTimers = case Replace of
-        none ->
-            PrevNTimers;
-        {_, _, _}=DNode ->
-            del_timer(DNode, PrevNTimers)
+	none ->
+	    PrevNTimers;
+	{_, _, _}=DNode ->
+	    del_timer(DNode, PrevNTimers)
     end,
 
 
 
-    IsNewMember = b_is_member(ID, IP, Port, Self, NewBuckets),
+    IsNewMember = dht_bucket:is_member(ID, IP, Port, Self, NewBuckets),
     NewNTimers  = case {IsPrevMember, IsNewMember} of
-        {false, false} ->
-            TmpNTimers;
-        {true, true} ->
-            TmpNTimers;
-        {false, true}  ->
-            NTimer = node_timer_from(Now, NTimeout, Node),
-            add_timer(Node, Now, NTimer, TmpNTimers)
+	{false, false} ->
+	    TmpNTimers;
+	{true, true} ->
+	    TmpNTimers;
+	{false, true}  ->
+	    NTimer = node_timer_from(Now, NTimeout, Node),
+	    add_timer(Node, Now, NTimer, TmpNTimers)
     end,
 
     NewBTimers = case {IsPrevMember, IsNewMember} of
-        {false, false} ->
-            PrevBTimers;
-        {true, true} ->
-            PrevBTimers;
+	{false, false} ->
+	    PrevBTimers;
+	{true, true} ->
+	    PrevBTimers;
 
-        {false, _} ->
-            AllPrevRanges = b_ranges(PrevBuckets),
-            AllNewRanges  = b_ranges(NewBuckets),
-            %% route table can be splitted but node's bucket can remain full,
-            %% so we can get new bucket but node was not inserted
-            if length(AllPrevRanges) /= length(AllNewRanges) ->
-                DelRanges  = ordsets:subtract(AllPrevRanges, AllNewRanges),
-                NewRanges  = ordsets:subtract(AllNewRanges, AllPrevRanges),
+	{false, _} ->
+	    AllPrevRanges = dht_bucket:ranges(PrevBuckets),
+	    AllNewRanges  = dht_bucket:ranges(NewBuckets),
+	    %% route table can be splitted but node's bucket can remain full,
+	    %% so we can get new bucket but node was not inserted
+	    if length(AllPrevRanges) /= length(AllNewRanges) ->
+		DelRanges  = ordsets:subtract(AllPrevRanges, AllNewRanges),
+		NewRanges  = ordsets:subtract(AllNewRanges, AllPrevRanges),
 
-                DelBTimers = lists:foldl(fun(Range, Acc) ->
-                    del_timer(Range, Acc)
-                end, PrevBTimers, DelRanges),
+		DelBTimers = lists:foldl(fun(Range, Acc) ->
+		    del_timer(Range, Acc)
+		end, PrevBTimers, DelRanges),
 
-                lists:foldl(fun(Range, Acc) ->
-                    BMembers = b_members(Range, Self, NewBuckets),
-                    LRecent = least_recent(BMembers, NewNTimers),
-                    BTimer = bucket_timer_from(
-                                 Now, BTimeout, LRecent, NTimeout, Range),
-                    add_timer(Range, Now, BTimer, Acc)
-                            end, DelBTimers, NewRanges);
-                   true ->
-                        PrevBTimers
-            end
+		lists:foldl(fun(Range, Acc) ->
+		    BMembers = dht_bucket:members(Range, Self, NewBuckets),
+		    LRecent = least_recent(BMembers, NewNTimers),
+		    BTimer = bucket_timer_from(
+				 Now, BTimeout, LRecent, NTimeout, Range),
+		    add_timer(Range, Now, BTimer, Acc)
+			    end, DelBTimers, NewRanges);
+		   true ->
+			PrevBTimers
+	    end
     end,
     NewState = State#state{
-        buckets=NewBuckets,
-        node_timers=NewNTimers,
-        buck_timers=NewBTimers},
+	buckets=NewBuckets,
+	node_timers=NewNTimers,
+	buck_timers=NewBTimers},
     {reply, ((not IsPrevMember) and IsNewMember), NewState};
 
 
@@ -494,12 +493,12 @@ handle_call({insert_node, InputID, IP, Port}, _From, State) ->
 handle_call({closest_to, InputID, NumNodes}, _, State) ->
     ID = ensure_int_id(InputID),
     #state{
-        node_id=Self,
-        buckets=Buckets,
-        node_timers=NTimers,
-        node_timeout=NTimeout} = State,
+	node_id=Self,
+	buckets=Buckets,
+	node_timers=NTimers,
+	node_timeout=NTimeout} = State,
     NF = fun (N) -> not has_timed_out(N, NTimeout, NTimers) end,
-    CloseNodes = b_closest_to(ID, Self, Buckets, NF, NumNodes),
+    CloseNodes = dht_bucket:closest_to(ID, Self, Buckets, NF, NumNodes),
     {reply, CloseNodes, State};
 
 
@@ -508,19 +507,19 @@ handle_call({request_timeout, InputID, IP, Port}, _, State) ->
     Node = {ID, IP, Port},
     Now  = os:timestamp(),
     #state{
-        node_id=Self,
-        buckets=Buckets,
-        node_timeout=NTimeout,
-        node_timers=PrevNTimers} = State,
+	node_id=Self,
+	buckets=Buckets,
+	node_timeout=NTimeout,
+	node_timers=PrevNTimers} = State,
 
-    NewNTimers = case b_is_member(ID, IP, Port, Self, Buckets) of
-        false ->
-            PrevNTimers;
-        true ->
-            {LActive, _} = get_timer(Node, PrevNTimers),
-            TmpNTimers   = del_timer(Node, PrevNTimers),
-            NTimer       = node_timer_from(Now, NTimeout, Node),
-            add_timer(Node, LActive, NTimer, TmpNTimers)
+    NewNTimers = case dht_bucket:is_member(ID, IP, Port, Self, Buckets) of
+	false ->
+	    PrevNTimers;
+	true ->
+	    {LActive, _} = get_timer(Node, PrevNTimers),
+	    TmpNTimers   = del_timer(Node, PrevNTimers),
+	    NTimer       = node_timer_from(Now, NTimeout, Node),
+	    add_timer(Node, LActive, NTimer, TmpNTimers)
     end,
     NewState = State#state{node_timers=NewNTimers},
     {reply, ok, NewState};
@@ -530,34 +529,34 @@ handle_call({request_success, InputID, IP, Port}, _, State) ->
     Now  = os:timestamp(),
     Node = {ID, IP, Port},
     #state{
-        node_id=Self,
-        buckets=Buckets,
-        node_timers=PrevNTimers,
-        buck_timers=PrevBTimers,
-        node_timeout=NTimeout,
-        buck_timeout=BTimeout} = State,
-    NewState = case b_is_member(ID, IP, Port, Self, Buckets) of
-        false ->
-            State;
-        true ->
-            Range = b_range(ID, Self, Buckets),
+	node_id=Self,
+	buckets=Buckets,
+	node_timers=PrevNTimers,
+	buck_timers=PrevBTimers,
+	node_timeout=NTimeout,
+	buck_timeout=BTimeout} = State,
+    NewState = case dht_bucket:is_member(ID, IP, Port, Self, Buckets) of
+	false ->
+	    State;
+	true ->
+	    Range = dht_bucket:range(ID, Self, Buckets),
 
-            {NLActive, _} = get_timer(Node, PrevNTimers),
-            TmpNTimers    = del_timer(Node, PrevNTimers),
-            NTimer        = node_timer_from(Now, NTimeout, Node),
-            NewNTimers    = add_timer(Node, NLActive, NTimer, TmpNTimers),
+	    {NLActive, _} = get_timer(Node, PrevNTimers),
+	    TmpNTimers    = del_timer(Node, PrevNTimers),
+	    NTimer	= node_timer_from(Now, NTimeout, Node),
+	    NewNTimers    = add_timer(Node, NLActive, NTimer, TmpNTimers),
 
-            {BActive, _} = get_timer(Range, PrevBTimers),
-            TmpBTimers   = del_timer(Range, PrevBTimers),
-            BMembers     = b_members(Range, Self, Buckets),
-            LNRecent     = least_recent(BMembers, NewNTimers),
-            BTimer       = bucket_timer_from(
-                               BActive, BTimeout, LNRecent, NTimeout, Range),
-            NewBTimers    = add_timer(Range, BActive, BTimer, TmpBTimers),
+	    {BActive, _} = get_timer(Range, PrevBTimers),
+	    TmpBTimers   = del_timer(Range, PrevBTimers),
+	    BMembers     = dht_bucket:members(Range, Self, Buckets),
+	    LNRecent     = least_recent(BMembers, NewNTimers),
+	    BTimer       = bucket_timer_from(
+			       BActive, BTimeout, LNRecent, NTimeout, Range),
+	    NewBTimers    = add_timer(Range, BActive, BTimer, TmpBTimers),
 
-            State#state{
-                node_timers=NewNTimers,
-                buck_timers=NewBTimers}
+	    State#state{
+		node_timers=NewNTimers,
+		buck_timers=NewBTimers}
     end,
     {reply, ok, NewState};
 
@@ -567,17 +566,17 @@ handle_call({request_from, ID, IP, Port}, From, State) ->
 
 handle_call({dump_state}, _From, State) ->
     #state{
-        node_id=Self,
-        buckets=Buckets,
-        state_file=StateFile} = State,
-    catch dump_state(StateFile, Self, b_node_list(Buckets)),
+	node_id=Self,
+	buckets=Buckets,
+	state_file=StateFile} = State,
+    catch dump_state(StateFile, Self, dht_bucket:node_list(Buckets)),
     {reply, State, State};
 
 handle_call({dump_state, StateFile}, _From, State) ->
     #state{
-        node_id=Self,
-        buckets=Buckets} = State,
-    catch dump_state(StateFile, Self, b_node_list(Buckets)),
+	node_id=Self,
+	buckets=Buckets} = State,
+    catch dump_state(StateFile, Self, dht_bucket:node_list(Buckets)),
     {reply, ok, State};
 
 handle_call({node_id}, _From, State) ->
@@ -594,89 +593,89 @@ handle_info({inactive_node, InputID, IP, Port}, State) ->
     Now = os:timestamp(),
     Node = {ID, IP, Port},
     #state{
-        node_id=Self,
-        buckets=Buckets,
-        node_timers=PrevNTimers,
-        node_timeout=NTimeout} = State,
+	node_id=Self,
+	buckets=Buckets,
+	node_timers=PrevNTimers,
+	node_timeout=NTimeout} = State,
 
-    IsMember = b_is_member(ID, IP, Port, Self, Buckets),
+    IsMember = dht_bucket:is_member(ID, IP, Port, Self, Buckets),
     HasTimed = case IsMember of
-        false -> false;
-        true  -> has_timed_out(Node, NTimeout, PrevNTimers)
+	false -> false;
+	true  -> has_timed_out(Node, NTimeout, PrevNTimers)
     end,
     NewState = case IsMember of
-                   false ->
-                       State;
-                   true ->
-                       if HasTimed ->
-                               ok = lager:debug("Node at ~w:~w timed out", [IP, Port]),
-                               spawn_keepalive(ID, IP, Port);
-                          true ->
-                               ok
-                       end,
-                       {LActive, TRef} = get_timer(Node, PrevNTimers),
-                       TimerCanceled = erlang:read_timer(TRef) == false,
-                       if (TimerCanceled orelse HasTimed) ->
-                               TmpNTimers  = del_timer(Node, PrevNTimers),
-                               NewTimer    = node_timer_from(Now, NTimeout, Node),
-                               NewNTimers  = add_timer(Node, LActive, NewTimer, TmpNTimers),
-                               State#state{node_timers=NewNTimers};
-                          true ->
-                               State
-                       end
-               end,
+		   false ->
+		       State;
+		   true ->
+		       if HasTimed ->
+			       ok = lager:debug("Node at ~w:~w timed out", [IP, Port]),
+			       spawn_keepalive(ID, IP, Port);
+			  true ->
+			       ok
+		       end,
+		       {LActive, TRef} = get_timer(Node, PrevNTimers),
+		       TimerCanceled = erlang:read_timer(TRef) == false,
+		       if (TimerCanceled orelse HasTimed) ->
+			       TmpNTimers  = del_timer(Node, PrevNTimers),
+			       NewTimer    = node_timer_from(Now, NTimeout, Node),
+			       NewNTimers  = add_timer(Node, LActive, NewTimer, TmpNTimers),
+			       State#state{node_timers=NewNTimers};
+			  true ->
+			       State
+		       end
+	       end,
     {noreply, NewState};
 
 handle_info({inactive_bucket, Range}, State) ->
     Now = os:timestamp(),
     #state{
-        node_id=Self,
-        buckets=Buckets,
-        node_timers=NTimers,
-        buck_timers=PrevBTimers,
-        node_timeout=NTimeout,
-        buck_timeout=BTimeout} = State,
+	node_id=Self,
+	buckets=Buckets,
+	node_timers=NTimers,
+	buck_timers=PrevBTimers,
+	node_timeout=NTimeout,
+	buck_timeout=BTimeout} = State,
 
-    BucketExists = b_has_bucket(Range, Buckets),
+    BucketExists = dht_bucket:has_bucket(Range, Buckets),
     HasTimed = case BucketExists of
-        false -> false;
-        true  -> has_timed_out(Range, BTimeout, PrevBTimers)
+	false -> false;
+	true  -> has_timed_out(Range, BTimeout, PrevBTimers)
     end,
     NewState = case BucketExists of
-                   false ->
-                       State;
-                   true ->
-                       BMembers   = b_members(Range, Self, Buckets),
-                       if HasTimed ->
-                               ok = lager:debug("Bucket timed out"),
-                               _ = spawn_refresh(Range,
-                                                 inactive_nodes(BMembers, NTimeout, NTimers),
-                                                 active_nodes(BMembers, NTimeout, NTimers));
-                          true ->
-                               ok
-                       end,
-                       {_, TRef} = get_timer(Range, PrevBTimers),
-                       TimerCanceled = erlang:read_timer(TRef) == false,
-                       if (TimerCanceled orelse HasTimed) ->
-                               TmpBTimers = del_timer(Range, PrevBTimers),
-                               LRecent    = least_recent(BMembers, NTimers),
-                               NewTimer   = bucket_timer_from(
-                                              Now, BTimeout, LRecent, NTimeout, Range),
-                               NewBTimers = add_timer(Range, Now, NewTimer, TmpBTimers),
-                               State#state{buck_timers=NewBTimers};
-                          true ->
-                               State
-                       end
-               end,
+		   false ->
+		       State;
+		   true ->
+		       BMembers   = dht_bucket:members(Range, Self, Buckets),
+		       if HasTimed ->
+			       ok = lager:debug("Bucket timed out"),
+			       _ = spawn_refresh(Range,
+						 inactive_nodes(BMembers, NTimeout, NTimers),
+						 active_nodes(BMembers, NTimeout, NTimers));
+			  true ->
+			       ok
+		       end,
+		       {_, TRef} = get_timer(Range, PrevBTimers),
+		       TimerCanceled = erlang:read_timer(TRef) == false,
+		       if (TimerCanceled orelse HasTimed) ->
+			       TmpBTimers = del_timer(Range, PrevBTimers),
+			       LRecent    = least_recent(BMembers, NTimers),
+			       NewTimer   = bucket_timer_from(
+					      Now, BTimeout, LRecent, NTimeout, Range),
+			       NewBTimers = add_timer(Range, Now, NewTimer, TmpBTimers),
+			       State#state{buck_timers=NewBTimers};
+			  true ->
+			       State
+		       end
+	       end,
     {noreply, NewState}.
 
 %% @private
 terminate(_, State) ->
     #state{
-        node_id=Self,
-        buckets=Buckets,
-        state_file=StateFile} = State,
-    dump_state(StateFile, Self, b_node_list(Buckets)).
+	node_id=Self,
+	buckets=Buckets,
+	state_file=StateFile} = State,
+    dump_state(StateFile, Self, dht_bucket:node_list(Buckets)).
 
 dump_state(Filename, Self, NodeList) ->
     PersistentState = [{node_id, Self}, {node_set, NodeList}],
@@ -685,20 +684,20 @@ dump_state(Filename, Self, NodeList) ->
 load_state(Filename) ->
     ErrorFmt = "Failed to load state from ~s (~w)",
     case file:read_file(Filename) of
-        {ok, BinState} ->
-            case (catch load_state_(BinState)) of
-                {'EXIT', Reason}  ->
-                    ErrorArgs = [Filename, Reason],
-                    ok = lager:error(ErrorFmt, ErrorArgs),
-                    {etorrent_dht:random_id(), []};
-                {_, _}=State ->
-                    ok = lager:info("Loaded state from ~s", [Filename]),
-                    State
-            end;
-        {error, Reason} ->
-            ErrorArgs = [Filename, Reason],
-            ok = lager:error(ErrorFmt, ErrorArgs),
-            {etorrent_dht:random_id(), []}
+	{ok, BinState} ->
+	    case (catch load_state_(BinState)) of
+		{'EXIT', Reason}  ->
+		    ErrorArgs = [Filename, Reason],
+		    ok = lager:error(ErrorFmt, ErrorArgs),
+		    {dht:random_id(), []};
+		{_, _}=State ->
+		    ok = lager:info("Loaded state from ~s", [Filename]),
+		    State
+	    end;
+	{error, Reason} ->
+	    ErrorArgs = [Filename, Reason],
+	    ok = lager:error(ErrorFmt, ErrorArgs),
+	    {dht:random_id(), []}
     end.
 
 load_state_(BinState) ->
@@ -713,167 +712,6 @@ code_change(_, State, _) ->
     {ok, State}.
 
 
-%
-% Create a new bucket list
-%
-b_new() ->
-    MaxID = 1 bsl 160,
-    [{0, MaxID, []}].
-
-%
-% Insert a new node into a bucket list
-%
-b_insert(Self, ID, IP, Port, Buckets) when is_integer(ID),
-                                           is_integer(Port) ->
-    {Rest, Acc} = b_insert_(distance(Self, ID), Self, ID, IP, Port, ?K, Buckets, []),
-    lists:reverse(Acc) ++ Rest.
-
-b_insert_(0, _Self, _ID, _IP, _Port, _K, Buckets, Acc) ->
-    {Buckets, Acc};
-b_insert_(1, _Self, ID, IP, Port, _K, [{Min=0, Max=1, Members}], Acc) ->
-    NewMembers = ordsets:add_element({ID, IP, Port}, Members),
-    {[{Min, Max, NewMembers}], Acc};
-b_insert_(Dist, Self, ID, IP, Port, K, [{Min, Max, Members}], Acc) when ?in_range(Dist, Min, Max) ->
-    NumMembers = length(Members),
-    if  NumMembers < K ->
-            NewMembers = ordsets:add_element({ID, IP, Port}, Members),
-            {[{Min, Max, NewMembers}], Acc};
-        NumMembers == K ->
-            Diff  = Max - Min,
-            Half  = Max - (Diff div 2),
-            {Lower, Upper} = lists:foldl(fun ({MID, _, _}=N, {Ls,Us}) ->
-                                                 case ?in_range(distance(MID, Self), Min, Half) of
-                                                     true ->
-                                                         {[N|Ls], Us};
-                                                     false ->
-                                                         {Ls, [N|Us]}
-                                                 end
-                                         end, {[], []}, Members),
-            WithSplit = [{Half, Max, lists:reverse(Upper)},
-                         {Min, Half, lists:reverse(Lower)}],
-            b_insert_(Dist, Self, ID, IP, Port, K, WithSplit, Acc)
-    end;
-b_insert_(Dist, _Self, ID, IP, Port, K, [{Min, Max, Members}|T], Acc) when ?in_range(Dist, Min, Max) ->
-    NumMembers = length(Members),
-    if  NumMembers < K ->
-            NewMembers = ordsets:add_element({ID, IP, Port}, Members),
-            {[{Min, Max, NewMembers}|T], Acc};
-        NumMembers == K ->
-            {[{Min, Max, Members}|T], Acc}
-    end;
-b_insert_(Dist, Self, ID, IP, Port, K, [H|T], Acc) ->
-    b_insert_(Dist, Self, ID, IP, Port, K, T, [H|Acc]).
-
-                                                %
-% Get all ranges present in a bucket list
-%
-b_ranges([]) ->
-    [];
-b_ranges([{Min, Max, _}|T]) ->
-    [{Min, Max}|b_ranges(T)].
-
-%%
-%% Return the range of the bucket that a node falls within
-%%
-b_range(ID, Self, Buckets) ->
-    b_range_(distance(ID, Self), Buckets).
-
-b_range_(Dist, [{Min, Max, _}|_]) when ?in_range(Dist, Min, Max) ->
-    {Min, Max};
-b_range_(Dist, [_|T]) ->
-    b_range_(Dist, T).
-
-%%
-%% Delete a node from a bucket list
-%%
-b_delete(ID, IP, Port, Self, Buckets) ->
-    {Rest, Acc} = b_delete_(distance(ID, Self), ID, IP, Port, Buckets, []),
-    lists:reverse(Acc) ++ Rest.
-
-b_delete_(_, _, _, _, [], Acc) ->
-    {[], Acc};
-b_delete_(Dist, ID, IP, Port, [{Min, Max, Members}|T], Acc) when ?in_range(Dist, Min, Max) ->
-    NewMembers = ordsets:del_element({ID, IP, Port}, Members),
-    {[{Min, Max, NewMembers}|T], Acc};
-b_delete_(Dist, ID, IP, Port, [H|T], Acc) ->
-    b_delete_(Dist, ID, IP, Port, T, [H|Acc]).
-
-%%
-%% Return all members of the bucket that this node is a member of
-%%
-b_members(Range={_Min, _Max}, _Self, Buckets) ->
-    b_members_1(Range, Buckets);
-b_members(ID, Self, Buckets) ->
-    b_members_2(distance(ID, Self), Buckets).
-
-b_members_1({Min, Max}, [{Min, Max, Members}|_]) ->
-    Members;
-b_members_1({Min, Max}, [_|T]) ->
-    b_members_1({Min, Max}, T).
-
-b_members_2(Dist, [{Min, Max, Members}|_]) when ?in_range(Dist, Min, Max) ->
-    Members;
-b_members_2(Dist, [_|T]) ->
-    b_members_2(Dist, T).
-
-%%
-%% Check if a node is a member of a bucket list
-%%
-b_is_member(ID, IP, Port, Self, Buckets) ->
-    b_is_member_(distance(Self, ID), ID, IP, Port, Buckets).
-
-b_is_member_(_, _, _, _, []) ->
-    false;
-b_is_member_(Dist, ID, IP, Port, [{Min, Max, Members}|_]) when ?in_range(Dist, Min, Max) ->
-    lists:member({ID, IP, Port}, Members);
-b_is_member_(Dist, ID, IP, Port, [_|T]) ->
-    b_is_member_(Dist, ID, IP, Port, T).
-
-
-%
-% Check if a bucket exists in a bucket list
-%
-b_has_bucket({_, _}, []) ->
-    false;
-b_has_bucket({Min, Max}, [{Min, Max, _}|_]) ->
-    true;
-b_has_bucket({Min, Max}, [{_, _, _}|T]) ->
-    b_has_bucket({Min, Max}, T).
-
-b_closest_to(ID, Self, Buckets, NodeFilterF, Num) ->
-    lists:flatten(b_closest_to_1(distance(ID, Self), ID, Num, Buckets, NodeFilterF, [], [])).
-
-b_closest_to_1(_, _, 0, _, _, _, Ret) ->
-    Ret;
-b_closest_to_1(Dist, ID, Num, [], NodeFilterF, Rest, Ret) ->
-    b_closest_to_2(Dist, ID, Num, Rest, NodeFilterF, Ret);
-b_closest_to_1(Dist, ID, Num, [{Min, _Max, Members}|T], NodeFilterF, Rest, Acc)
-  when (Dist band Min) > 0 ->
-    CloseNodes = etorrent_dht:closest_to(ID, [M || M <- Members, NodeFilterF(M)], Num),
-    NxtNum = max(0, Num - length(CloseNodes)),
-    NxtAcc = [CloseNodes|Acc],
-    b_closest_to_1(Dist, ID, NxtNum, T, NodeFilterF, Rest, NxtAcc);
-b_closest_to_1(Dist, ID, Num, [H|T], NodeFilterF, Rest, Acc) ->
-    b_closest_to_1(Dist, ID, Num, T, NodeFilterF, [H|Rest], Acc).
-
-b_closest_to_2(_, _, 0, _, _, Ret) ->
-    Ret;
-b_closest_to_2(_, _, _, [], _, Ret) ->
-    Ret;
-b_closest_to_2(Dist, ID, Num, [{_Min, _Max, Members}|T], NodeFilterF, Acc) ->
-    ClosestNodes = etorrent_dht:closest_to(ID, [M || M <- Members, NodeFilterF(M)], Num) ++ Acc,
-    NxtN = max(0, Num - length(ClosestNodes)),
-    NxtAcc = [ClosestNodes|Acc],
-    b_closest_to_2(Dist, ID, NxtN, T, NodeFilterF, NxtAcc).
-
-%
-% Return a list of all members, combined, in all buckets.
-%
-b_node_list([]) ->
-    [];
-b_node_list([{_, _, Members}|T]) ->
-    Members ++ b_node_list(T).
-
 inactive_nodes(Nodes, Timeout, Timers) ->
     [N || N <- Nodes, has_timed_out(N, Timeout, Timers)].
 
@@ -881,10 +719,10 @@ active_nodes(Nodes, Timeout, Timers) ->
     [N || N <- Nodes, not has_timed_out(N, Timeout, Timers)].
 
 timer_tree() ->
-    gb_trees:empty().
+	gb_trees:empty().
 
 get_timer(Item, Timers) ->
-    gb_trees:get(Item, Timers).
+	gb_trees:get(Item, Timers).
 
 add_timer(Item, ATime, TRef, Timers) ->
     TState = {ATime, TRef},
@@ -907,11 +745,11 @@ bucket_timer_from(Time, BTimeout, LeastRecent, NTimeout, Range) ->
     % marked as active, instead of _constantly_.
     Msg = {inactive_bucket, Range},
     if
-        LeastRecent <  Time ->
-            timer_from(Time, BTimeout, Msg);
-        LeastRecent >= Time ->
-            SumTimeout = NTimeout + NTimeout,
-            timer_from(LeastRecent, SumTimeout, Msg)
+	LeastRecent <  Time ->
+	    timer_from(Time, BTimeout, Msg);
+	LeastRecent >= Time ->
+	    SumTimeout = NTimeout + NTimeout,
+	    timer_from(LeastRecent, SumTimeout, Msg)
     end.
 
 
@@ -938,10 +776,6 @@ least_recent(Items, Times) ->
     ATimes = [element(1, get_timer(I, Times)) || I <- Items],
     lists:min(ATimes).
 
-distance(ID1, ID2) ->
-    ID1 bxor ID2.
-
-
 safe_insert_node(NodeAddr) ->
     Addrs = decode_node_address(NodeAddr),
     safe_insert_node_oneof(Addrs).
@@ -950,9 +784,9 @@ safe_insert_node(NodeAddr) ->
 %% Try to connect to the node, using different addresses.
 safe_insert_node_oneof([{IP, Port}|Addrs]) ->
     case safe_insert_node(IP, Port) of
-        true -> true;
-        false -> safe_insert_node_oneof(Addrs);
-        {error, timeout} -> safe_insert_node_oneof(Addrs)
+	true -> true;
+	false -> safe_insert_node_oneof(Addrs);
+	{error, timeout} -> safe_insert_node_oneof(Addrs)
     end;
 safe_insert_node_oneof([]) ->
     false.
@@ -979,8 +813,8 @@ parse_address(Addr) ->
     %% re:run("[1080:0:0:0:8:800:200C:417A]", "(.*):(\\d+)$", [{capture, all_but_first, list}])
     %% nomatch
     case re:run(Addr, "(.*):(\\d+)$", [{capture, all_but_first, list}]) of
-        {match, [Host, Port]} -> {Host, list_to_integer(Port)};
-        nomatch               -> {Addr, 6881}
+	{match, [Host, Port]} -> {Host, list_to_integer(Port)};
+	nomatch	       -> {Addr, 6881}
     end.
 
 
@@ -990,8 +824,8 @@ dns_lookup(Addr) ->
     %% inet:gethostbyname("8.8.8.8").
     %% {ok,{hostent,"8.8.8.8",[],inet,4,[{8,8,8,8}]}}
     case inet_res:gethostbyname(Addr) of
-        {ok, #hostent{h_addr_list=IPs}} -> IPs;
-        {error, Reason} ->
-            ok = lager:error("Cannot lookup address ~p because ~p.", [Addr, Reason]),
-            []
+	{ok, #hostent{h_addr_list=IPs}} -> IPs;
+	{error, Reason} ->
+	    ok = lager:error("Cannot lookup address ~p because ~p.", [Addr, Reason]),
+	    []
     end.

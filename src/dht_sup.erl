@@ -21,7 +21,7 @@ start_link() ->
 %% ------------------------------------------------------------------
 
 init(#{ port := Port, file := StateFile, bootstrap := BootstrapNodes}) ->
-    ets:new(?TAB, [named_table, public, bag]),
+    _ = ets:new(?TAB, [named_table, public, bag]),
     {ok, {{one_for_all, 1, 60}, [
         {state,
             {dht_state, start_link, [StateFile, BootstrapNodes]},

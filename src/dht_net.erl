@@ -51,7 +51,7 @@
 -type nodeinfo() :: etorrent_types:nodeinfo().
 -type peerinfo() :: etorrent_types:peerinfo().
 -type trackerinfo() :: etorrent_types:trackerinfo().
--type infohash() :: etorrent_types:infohash().
+-type infohash() :: integer().
 -type token() :: etorrent_types:token().
 -type dht_qtype() :: etorrent_types:dht_qtype().
 -type transaction() :: etorrent_types:transaction().
@@ -96,6 +96,9 @@ token_lifetime() -> 5*60*1000.
 %
 % Public interface
 %
+
+%% @doc Start up the DHT networking subsystem
+%% @end
 start_link(DHTPort) ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [DHTPort], []).
 
@@ -105,6 +108,10 @@ start_link(DHTPort) ->
 node_port() ->
     gen_server:call(?MODULE, get_node_port).
 
+%% @doc ping/2 sends a ping to a node
+%% Calling `ping(IP, Port)' will send a ping message to the IP/Port pair and wait for a result to come back.
+%% Used to check if the node in the other end is up and running.
+%% @end
 -spec ping(inet:ip_address(), inet:port_number()) -> pang | nodeid().
 ping(IP, Port) ->
     case gen_server:call(?MODULE, {ping, IP, Port}) of
@@ -113,6 +120,9 @@ ping(IP, Port) ->
             _ID = decode_response(ping, Values)
     end.
 
+%% @doc find_node/3 searches in the DHT for a given target NodeID
+%% Search at the target IP/Port pair for the NodeID given by `Target'. May time out.
+%% @end
 -spec find_node(inet:ip_address(), inet:port_number(), nodeid()) ->
     {'error', 'timeout'} | {nodeid(), list(nodeinfo())}.
 find_node(IP, Port, Target)  ->
@@ -125,14 +135,10 @@ find_node(IP, Port, Target)  ->
             {ID, Nodes}
     end.
 
-%
-%
-%
 -spec get_peers(inet:ip_address(), inet:port_number(), infohash()) ->
     {nodeid(), token(), list(peerinfo()), list(nodeinfo())} | {error, any()}.
 get_peers(IP, Port, InfoHash)  ->
-    Call = {get_peers, IP, Port, InfoHash},
-    case gen_server:call(?MODULE, Call) of
+    case gen_server:call(?MODULE, {get_peers, IP, Port, InfoHash}) of
         timeout ->
             {error, timeout};
         Values ->
@@ -151,23 +157,19 @@ get_peers(IP, Port, InfoHash)  ->
 -spec find_node_search(nodeid()) -> list(nodeinfo()).
 find_node_search(NodeID) ->
     Width = search_width(),
-    Retry = search_retries(),
-    Nodes = dht_state:closest_to(NodeID, Width),
-    dht_iter_search(find_node, NodeID, Width, Retry, Nodes).
+    dht_iter_search(find_node, NodeID, Width, search_retries(), dht_state:closest_to(NodeID, Width)).
 
 -spec find_node_search(nodeid(), list(nodeinfo())) -> list(nodeinfo()).
 find_node_search(NodeID, Nodes) ->
     Width = search_width(),
-    Retry = search_retries(),
-    dht_iter_search(find_node, NodeID, Width, Retry, Nodes).
+    dht_iter_search(find_node, NodeID, Width, search_retries(), Nodes).
 
 -spec get_peers_search(infohash()) ->
     {list(trackerinfo()), list(peerinfo()), list(nodeinfo())}.
 get_peers_search(InfoHash) ->
     Width = search_width(),
-    Retry = search_retries(),
     Nodes = dht_state:closest_to(InfoHash, Width), 
-    dht_iter_search(get_peers, InfoHash, Width, Retry, Nodes).
+    dht_iter_search(get_peers, InfoHash, Width, search_retries(), Nodes).
 
 -spec get_peers_search(infohash(), list(nodeinfo())) ->
     {list(trackerinfo()), list(peerinfo()), list(nodeinfo())}.
@@ -334,19 +336,16 @@ cancel_timeout(TimeoutRef) ->
 
 handle_call({ping, IP, Port}, From, State) ->
     Args = common_values(),
-    do_send_query('ping', Args, IP, Port, From, State);
+    do_send_query(ping, Args, IP, Port, From, State);
 
 handle_call({find_node, IP, Port, Target}, From, State) ->
-    LTarget = dht:list_id(Target),
-    Args = [{<<"target">>, list_to_binary(LTarget)} | common_values()],
-    do_send_query('find_node', Args, IP, Port, From, State);
+    Args = [{<<"target">>, <<Target:160>>} | common_values()],
+    do_send_query(find_node, Args, IP, Port, From, State);
 
 handle_call({get_peers, IP, Port, InfoHash}, From, State) ->
-    LHash = list_to_binary(dht:list_id(InfoHash)),
-    Args  = [{<<"info_hash">>, LHash}| common_values()],
-    ok = lager:debug("Send get_peers to ~p:~p for ~s.",
-                [IP, Port, integer_hash_to_literal(InfoHash)]),
-    do_send_query('get_peers', Args, IP, Port, From, State);
+    Args  = [{<<"info_hash">>, <<InfoHash:160>>}| common_values()],
+    ok = lager:debug("Send get_peers to ~p:~p for ~s.", [IP, Port, integer_hash_to_literal(InfoHash)]),
+    do_send_query(get_peers, Args, IP, Port, From, State);
 
 handle_call({announce, IP, Port, InfoHash, Token, BTPort}, From, State) ->
     LHash = list_to_binary(dht:list_id(InfoHash)),
@@ -380,9 +379,7 @@ handle_call({get_num_open}, _From, State) ->
     NumSent = gb_trees:size(Sent),
     {reply, NumSent, State}.
 
-do_send_query(Method, Args, IP, Port, From, State) ->
-    #state{sent=Sent,
-           socket=Socket} = State,
+do_send_query(Method, Args, IP, Port, From, #state { sent = Sent, socket = Socket } = State) ->
     ok = lager:info("Sending ~w to ~w:~w", [Method, IP, Port]),
 
     MsgID = unique_message_id(IP, Port, Sent),
@@ -392,10 +389,7 @@ do_send_query(Method, Args, IP, Port, From, State) ->
         ok ->
             TRef = timeout_reference(IP, Port, MsgID),
             ok = lager:info("Sent ~w to ~w:~w", [Method, IP, Port]),
-
-            NewSent = store_sent_query(IP, Port, MsgID, From, TRef, Sent),
-            NewState = State#state{sent=NewSent},
-            {noreply, NewState};
+            {noreply, State#state{sent = store_sent_query(IP, Port, MsgID, From, TRef, Sent)}};
         {error, einval} ->
             ok = lager:error("Error (einval) when sending ~w to ~w:~w", [Method, IP, Port]),
             {reply, timeout, State};
@@ -498,7 +492,7 @@ common_values(Self) ->
     LSelf = dht:list_id(Self),
     [{<<"id">>, list_to_binary(LSelf)}].
 
--spec handle_query(dht_qtype(), etorrent_types:bcode(), inet:ip_address(),
+-spec handle_query(dht_qtype(), benc:t(), inet:ip_address(),
                   inet:port_number(), transaction(), nodeid(), _) -> 'ok'.
 
 handle_query('ping', _, IP, Port, MsgID, Self, _Tokens) ->

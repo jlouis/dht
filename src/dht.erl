@@ -15,7 +15,7 @@
 
 
 find_self() ->
-    Self = etorrent_dht_state:node_id(),
+    Self = dht_state:node_id(),
     dht_net:find_node_search(Self).
 
 -spec integer_id(list(byte()) | binary()) -> nodeid().
