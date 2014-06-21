@@ -48,30 +48,20 @@
 -define(UNREACHABLE_TAB, dht_state_unreachable).
 
 
+-export([start_link/2]).
 -export([
-	 start_link/2,
-	 node_id/0,
-	 safe_insert_node/2,
-	 safe_insert_node/3,
-	 safe_insert_nodes/1,
-	 unsafe_insert_node/3,
-	 unsafe_insert_nodes/1,
+	 closest_to/1, closest_to/2,
+	 dump_state/0, dump_state/1, dump_state/3,
 	 is_interesting/3,
-	 closest_to/1,
-	 closest_to/2,
-	 log_request_timeout/3,
-	 log_request_success/3,
-	 log_request_from/3,
 	 keepalive/3,
+	 load_state/1,
+	 log_request_timeout/3, log_request_success/3, log_request_from/3,
+	 node_id/0,
 	 refresh/3,
-	 dump_state/0,
-	 dump_state/1,
-	 dump_state/3,
-	 load_state/1]).
+	 safe_insert_node/2, safe_insert_node/3, safe_insert_nodes/1,
+	 unsafe_insert_node/3, unsafe_insert_nodes/1
+]).
 
--type ipaddr() :: etorrent_types:ipaddr().
--type nodeid() :: etorrent_types:nodeid().
--type portnum() :: etorrent_types:portnum().
 -type nodeinfo() :: etorrent_types:nodeinfo().
 
 -export([init/1,
@@ -82,7 +72,7 @@
 	 code_change/3]).
 
 -record(state, {
-    node_id :: nodeid(),
+    node_id :: dht:node_id(),
     buckets=dht_bucket:new(), % The actual routing table
     node_timers=timer_tree(), % Node activity times and timeout references
     buck_timers=timer_tree(),% Bucker activity times and timeout references
@@ -113,7 +103,7 @@ start_link(StateFile, BootstapNodes) ->
 
 %% @doc Return a this node id as an integer.
 %% Node ids are generated in a random manner.
--spec node_id() -> nodeid().
+-spec node_id() -> dht:node_id().
 node_id() ->
     gen_server:call(?MODULE, {node_id}).
 
@@ -122,7 +112,7 @@ node_id() ->
 % a ping query to it first. This function must be used when we
 % don't know the node id of a node.
 %
--spec safe_insert_node(ipaddr(), portnum()) ->
+-spec safe_insert_node(inet:ip_address(), inet:port_number()) ->
     {'error', 'timeout'} | boolean().
 safe_insert_node(IP, Port) ->
     case unsafe_ping(IP, Port) of
@@ -140,7 +130,7 @@ safe_insert_node(IP, Port) ->
 % inserted into the routing table, true if the node was interesting and was
 % inserted into the routing table.
 %
--spec safe_insert_node(nodeid(), ipaddr(), portnum()) ->
+-spec safe_insert_node(dht:node_id(), inet:ip_address(), inet:port_number()) ->
     {'error', 'timeout'} | boolean().
 safe_insert_node(ID, IP, Port) ->
     case is_interesting(ID, IP, Port) of
@@ -170,7 +160,7 @@ safe_insert_nodes(NodeInfos) ->
 % This function returns a boolean value to indicate to the caller if the
 % node was actually inserted into the routing table or not.
 %
--spec unsafe_insert_node(nodeid(), ipaddr(), portnum()) ->
+-spec unsafe_insert_node(dht:node_id(), inet:ip_address(), inet:port_number()) ->
     boolean().
 unsafe_insert_node(ID, IP, Port) when is_integer(ID) ->
     _WasInserted = gen_server:call(?MODULE, {insert_node, ID, IP, Port}).
@@ -188,29 +178,29 @@ unsafe_insert_nodes(NodeInfos) ->
 % this node a query.
 %
 
--spec is_interesting(nodeid(), ipaddr(), portnum()) -> boolean().
+-spec is_interesting(dht:node_id(), inet:ip_address(), inet:port_number()) -> boolean().
 is_interesting(ID, IP, Port) when is_integer(ID) ->
     gen_server:call(?MODULE, {is_interesting, ID, IP, Port}).
 
--spec closest_to(nodeid()) -> list(nodeinfo()).
+-spec closest_to(dht:node_id()) -> list(nodeinfo()).
 closest_to(NodeID) ->
     closest_to(NodeID, 8).
 
--spec closest_to(nodeid(), pos_integer()) -> list(nodeinfo()).
+-spec closest_to(dht:node_id(), pos_integer()) -> list(nodeinfo()).
 closest_to(NodeID, NumNodes) ->
     gen_server:call(?MODULE, {closest_to, NodeID, NumNodes}).
 
--spec log_request_timeout(nodeid(), ipaddr(), portnum()) -> 'ok'.
+-spec log_request_timeout(dht:node_id(), inet:ip_address(), inet:port_number()) -> 'ok'.
 log_request_timeout(ID, IP, Port) ->
     Call = {request_timeout, ID, IP, Port},
     gen_server:call(?MODULE, Call).
 
--spec log_request_success(nodeid(), ipaddr(), portnum()) -> 'ok'.
+-spec log_request_success(dht:node_id(), inet:ip_address(), inet:port_number()) -> 'ok'.
 log_request_success(ID, IP, Port) ->
     Call = {request_success, ID, IP, Port},
     gen_server:call(?MODULE, Call).
 
--spec log_request_from(nodeid(), ipaddr(), portnum()) -> 'ok'.
+-spec log_request_from(dht:node_id(), inet:ip_address(), inet:port_number()) -> 'ok'.
 log_request_from(ID, IP, Port) ->
     Call = {request_from, ID, IP, Port},
     gen_server:call(?MODULE, Call).
@@ -221,7 +211,7 @@ dump_state() ->
 dump_state(Filename) ->
     gen_server:call(?MODULE, {dump_state, Filename}).
 
--spec keepalive(nodeid(), ipaddr(), portnum()) -> 'ok'.
+-spec keepalive(dht:node_id(), inet:ip_address(), inet:port_number()) -> 'ok'.
 keepalive(ID, IP, Port) ->
     case safe_ping(IP, Port) of
 	ID    -> log_request_success(ID, IP, Port);
@@ -237,7 +227,7 @@ spawn_keepalive(ID, IP, Port) ->
 % when checking if a node that is already a member of the routing table
 % is online.
 %
--spec safe_ping(IP::ipaddr(), Port::portnum()) -> pang | nodeid().
+-spec safe_ping(inet:ip_address(), inet:port_number()) -> pang | dht:node_id().
 safe_ping(IP, Port) ->
     dht_net:ping(IP, Port).
 
@@ -248,7 +238,7 @@ safe_ping(IP, Port) ->
 % will always be performed.
 %
 % Returns pand, if the node is unreachable.
--spec unsafe_ping(IP::ipaddr(), Port::portnum()) -> pang | nodeid().
+-spec unsafe_ping(inet:ip_address(), inet:port_number()) -> pang | dht:node_id().
 unsafe_ping(IP, Port) ->
     case ets:member(?UNREACHABLE_TAB, {IP, Port}) of
 	true ->
