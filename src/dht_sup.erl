@@ -7,21 +7,17 @@
 % supervisor callbacks
 -export([init/1]).
 
--define(TAB, tracker_tab).
-
 %% ------------------------------------------------------------------
 
 start_link() ->
+    supervisor:start_link({local, dht_sup}, ?MODULE, []).
+
+%% ------------------------------------------------------------------
+init([]) ->
     {ok, Port} = application:get_env(dht, port),
     {ok, StateFile} = application:get_env(dht, state_file),
     {ok, BootstrapNodes} = application:get_env(dht, bootstrap_nodes),
-    
-    supervisor:start_link({local, dht_sup}, ?MODULE, #{ port => Port, file => StateFile, bootstrap => BootstrapNodes} ).
 
-%% ------------------------------------------------------------------
-
-init(#{ port := Port, file := StateFile, bootstrap := BootstrapNodes}) ->
-    _ = ets:new(?TAB, [named_table, public, bag]),
     {ok, {{one_for_all, 1, 60}, [
         {state,
             {dht_state, start_link, [StateFile, BootstrapNodes]},
