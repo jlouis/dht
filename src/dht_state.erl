@@ -44,6 +44,8 @@
 -behaviour(gen_server).
 -define(K, 8).
 -define(in_range(Dist, Min, Max), ((Dist >= Min) andalso (Dist < Max))).
+-define(MAX_UNREACHABLE, 128).
+-define(UNREACHABLE_TAB, dht_state_unreachable).
 
 
 -export([srv_name/0,
@@ -250,7 +252,7 @@ safe_ping(IP, Port) ->
 % Returns pand, if the node is unreachable.
 -spec unsafe_ping(IP::ipaddr(), Port::portnum()) -> pang | nodeid().
 unsafe_ping(IP, Port) ->
-    case ets:member(unreachable_tab(), {IP, Port}) of
+    case ets:member(?UNREACHABLE_TAB, {IP, Port}) of
 	true ->
 	    pang;
 	false ->
@@ -258,9 +260,9 @@ unsafe_ping(IP, Port) ->
 		pang ->
 		    RandNode = random_node_tag(),
 		    DelSpec = [{{'_', RandNode}, [], [true]}],
-		    _ = ets:select_delete(unreachable_tab(), DelSpec),
+		    _ = ets:select_delete(?UNREACHABLE_TAB, DelSpec),
 		    ok = lager:debug("~p:~p is unreachable.", [IP, Port]),
-		    ets:insert(unreachable_tab(), {{IP, Port}, RandNode}),
+		    ets:insert(?UNREACHABLE_TAB, {{IP, Port}, RandNode}),
 		    pang;
 		NodeID ->
 		    NodeID
@@ -292,10 +294,8 @@ do_refresh(Range, [{ID, IP, Port}|T], IDs) ->
 	true  -> do_refresh(Range, T, [ID|IDs])
     end.
 
-do_refresh_inserts({_, _}, []) ->
-    true;
-do_refresh_inserts({Min, Max}=Range, [{ID, IP, Port}|T])
-when ?in_range(ID, Min, Max) ->
+do_refresh_inserts({_, _}, []) -> true;
+do_refresh_inserts({Min, Max}=Range, [{ID, IP, Port}|T]) when ?in_range(ID, Min, Max) ->
     case safe_insert_node(ID, IP, Port) of
 	{error, timeout} ->
 	    do_refresh_inserts(Range, T);
@@ -317,25 +317,18 @@ spawn_refresh(Range, InputInactive, InputActive) ->
 	       || {ID, IP, Port} <- InputActive],
     spawn(?MODULE, refresh, [Range, Inactive, Active]).
 
-
-max_unreachable() ->
-    128.
-
-unreachable_tab() ->
-    dht_unreachable_cache_tab.
-
 random_node_tag() ->
     _ = random:seed(erlang:now()),
-    random:uniform(max_unreachable()).
+    random:uniform(?MAX_UNREACHABLE).
 
 %% @private
 init([StateFile, BootstapNodes]) ->
     % Initialize the table of unreachable nodes when the server is started.
     % The safe_ping and unsafe_ping functions aren't exported outside of
     % of this module so they should fail unless the server is not running.
-    _ = case ets:info(unreachable_tab()) of
+    _ = case ets:info(?UNREACHABLE_TAB) of
 	undefined ->
-	    ets:new(unreachable_tab(), [named_table, public, bag]);
+	    ets:new(?UNREACHABLE_TAB, [named_table, public, bag]);
 	_ -> ok
     end,
 
