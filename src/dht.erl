@@ -11,12 +11,11 @@
          find_self/0]).
 
 -type node_id() :: <<_:160>>.
-
--export_type([node_id/0]).
-
--type nodeinfo() :: etorrent_types:nodeinfo().
+-type node_info() :: {node_id(), inet:ip_address(), inet:port_number()}.
+-type peer_info() :: {inet:ip_address(), inet:port_number()}.
 
 
+-export_type([node_id/0, node_info/0, peer_info/0]).
 
 find_self() ->
     Self = dht_state:node_id(),
@@ -38,8 +37,8 @@ random_id() ->
     Bytes = [Byte() || _ <- lists:seq(1, 20)],
     integer_id(Bytes).
 
--spec closest_to(node_id(), list(nodeinfo()), integer()) ->
-    list(nodeinfo()).
+-spec closest_to(node_id(), list(node_info()), integer()) ->
+    list(node_info()).
 closest_to(InfoHash, NodeList, NumNodes) ->
     WithDist = [{distance(ID, InfoHash), ID, IP, Port}
                || {ID, IP, Port} <- NodeList],

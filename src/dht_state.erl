@@ -62,8 +62,6 @@
 	 unsafe_insert_node/3, unsafe_insert_nodes/1
 ]).
 
--type nodeinfo() :: etorrent_types:nodeinfo().
-
 -export([init/1,
 	 handle_call/3,
 	 handle_cast/2,
@@ -147,7 +145,7 @@ safe_insert_node(ID, IP, Port) ->
 	end
     end.
 
--spec safe_insert_nodes(list(nodeinfo())) -> 'ok'.
+-spec safe_insert_nodes(list(dht:node_info())) -> 'ok'.
 safe_insert_nodes(NodeInfos) ->
     [spawn_link(?MODULE, safe_insert_node, [ID, IP, Port])
      || {ID, IP, Port} <- NodeInfos],
@@ -165,7 +163,7 @@ safe_insert_nodes(NodeInfos) ->
 unsafe_insert_node(ID, IP, Port) when is_integer(ID) ->
     _WasInserted = gen_server:call(?MODULE, {insert_node, ID, IP, Port}).
 
--spec unsafe_insert_nodes(list(nodeinfo())) -> 'ok'.
+-spec unsafe_insert_nodes(list(dht:node_info())) -> 'ok'.
 unsafe_insert_nodes(NodeInfos) ->
     [spawn_link(?MODULE, unsafe_insert_node, [ID, IP, Port])
     || {ID, IP, Port} <- NodeInfos],
@@ -182,11 +180,11 @@ unsafe_insert_nodes(NodeInfos) ->
 is_interesting(ID, IP, Port) when is_integer(ID) ->
     gen_server:call(?MODULE, {is_interesting, ID, IP, Port}).
 
--spec closest_to(dht:node_id()) -> list(nodeinfo()).
+-spec closest_to(dht:node_id()) -> list(dht:node_info()).
 closest_to(NodeID) ->
     closest_to(NodeID, 8).
 
--spec closest_to(dht:node_id(), pos_integer()) -> list(nodeinfo()).
+-spec closest_to(dht:node_id(), pos_integer()) -> list(dht:node_info()).
 closest_to(NodeID, NumNodes) ->
     gen_server:call(?MODULE, {closest_to, NodeID, NumNodes}).
 
@@ -262,7 +260,7 @@ unsafe_ping(IP, Port) ->
 % in the bucket until enough nodes that falls within the range of the bucket
 % has been returned to replace the inactive nodes in the bucket.
 %
--spec refresh(any(), list(nodeinfo()), list(nodeinfo())) -> 'ok'.
+-spec refresh(any(), list(dht:node_info()), list(dht:node_info())) -> 'ok'.
 refresh(Range, Inactive, Active) ->
     % Try to refresh the routing table using the inactive nodes first,
     % If they turn out to be reachable the problem's solved.

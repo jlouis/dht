@@ -46,15 +46,13 @@
          announce/5,
          return/4]).
 
--type nodeid() :: integer(). % 160 bit hash
 
--type nodeinfo() :: etorrent_types:nodeinfo().
--type peerinfo() :: etorrent_types:peerinfo().
--type trackerinfo() :: etorrent_types:trackerinfo().
+-type trackerinfo() :: {dht:node_id(), inet:ip_address(), inet:port_number(), token()}.
 -type infohash() :: integer().
--type token() :: etorrent_types:token().
--type dht_qtype() :: etorrent_types:dht_qtype().
--type transaction() :: etorrent_types:transaction().
+-type token() :: binary().
+-type dht_qtype() :: ping | find_node | get_peers | announce. %% This has to change
+
+-type transaction() :: binary().
 
 % gen_server callbacks
 -export([init/1,
@@ -112,7 +110,7 @@ node_port() ->
 %% Calling `ping(IP, Port)' will send a ping message to the IP/Port pair and wait for a result to come back.
 %% Used to check if the node in the other end is up and running.
 %% @end
--spec ping(inet:ip_address(), inet:port_number()) -> pang | nodeid().
+-spec ping(inet:ip_address(), inet:port_number()) -> pang | dht:node_id().
 ping(IP, Port) ->
     case gen_server:call(?MODULE, {ping, IP, Port}) of
         timeout -> pang;
@@ -123,8 +121,8 @@ ping(IP, Port) ->
 %% @doc find_node/3 searches in the DHT for a given target NodeID
 %% Search at the target IP/Port pair for the NodeID given by `Target'. May time out.
 %% @end
--spec find_node(inet:ip_address(), inet:port_number(), nodeid()) ->
-    {'error', 'timeout'} | {nodeid(), list(nodeinfo())}.
+-spec find_node(inet:ip_address(), inet:port_number(), dht:node_id()) ->
+    {'error', 'timeout'} | {dht:node_id(), list(dht:node_info())}.
 find_node(IP, Port, Target)  ->
     case gen_server:call(?MODULE, {find_node, IP, Port, Target}) of
         timeout ->
@@ -136,7 +134,7 @@ find_node(IP, Port, Target)  ->
     end.
 
 -spec get_peers(inet:ip_address(), inet:port_number(), infohash()) ->
-    {nodeid(), token(), list(peerinfo()), list(nodeinfo())} | {error, any()}.
+    {dht:node_id(), token(), list(dht:peer_info()), list(dht:node_info())} | {error, any()}.
 get_peers(IP, Port, InfoHash)  ->
     case gen_server:call(?MODULE, {get_peers, IP, Port, InfoHash}) of
         timeout ->
@@ -154,25 +152,25 @@ get_peers(IP, Port, InfoHash)  ->
 %     - Which nodes has responded?
 %     - Which nodes has not been queried?
 % FIXME: It returns `[{649262719799963483759422800960489108797112648079,{127,0,0,2},1743},{badrpc,{127,0,0,4},1763}]'.
--spec find_node_search(nodeid()) -> list(nodeinfo()).
+-spec find_node_search(dht:node_id()) -> list(dht:node_info()).
 find_node_search(NodeID) ->
     Width = search_width(),
     dht_iter_search(find_node, NodeID, Width, search_retries(), dht_state:closest_to(NodeID, Width)).
 
--spec find_node_search(nodeid(), list(nodeinfo())) -> list(nodeinfo()).
+-spec find_node_search(dht:node_id(), list(dht:node_info())) -> list(dht:node_info()).
 find_node_search(NodeID, Nodes) ->
     Width = search_width(),
     dht_iter_search(find_node, NodeID, Width, search_retries(), Nodes).
 
 -spec get_peers_search(infohash()) ->
-    {list(trackerinfo()), list(peerinfo()), list(nodeinfo())}.
+    {list(trackerinfo()), list(dht:peer_info()), list(dht:node_info())}.
 get_peers_search(InfoHash) ->
     Width = search_width(),
     Nodes = dht_state:closest_to(InfoHash, Width), 
     dht_iter_search(get_peers, InfoHash, Width, search_retries(), Nodes).
 
--spec get_peers_search(infohash(), list(nodeinfo())) ->
-    {list(trackerinfo()), list(peerinfo()), list(nodeinfo())}.
+-spec get_peers_search(infohash(), list(dht:node_info())) ->
+    {list(trackerinfo()), list(dht:peer_info()), list(dht:node_info())}.
 get_peers_search(InfoHash, Nodes) ->
     Width = search_width(),
     Retry = search_retries(),
@@ -304,7 +302,7 @@ dht_iter_search(SearchType, Target, Width, Retry, Retries,
 %
 %
 -spec announce(inet:ip_address(), inet:port_number(), infohash(), token(), inet:port_number()) ->
-    {'error', 'timeout'} | nodeid().
+    {'error', 'timeout'} | dht:node_id().
 announce(IP, Port, InfoHash, Token, BTPort) ->
     Announce = {announce, IP, Port, InfoHash, Token, BTPort},
     case gen_server:call(?MODULE, Announce) of
@@ -493,7 +491,7 @@ common_values(Self) ->
     [{<<"id">>, list_to_binary(LSelf)}].
 
 -spec handle_query(dht_qtype(), benc:t(), inet:ip_address(),
-                  inet:port_number(), transaction(), nodeid(), _) -> 'ok'.
+                  inet:port_number(), transaction(), dht:node_id(), _) -> 'ok'.
 
 handle_query('ping', _, IP, Port, MsgID, Self, _Tokens) ->
     return(IP, Port, MsgID, common_values(Self));
