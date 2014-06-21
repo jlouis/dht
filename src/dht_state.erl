@@ -48,7 +48,7 @@
 -define(UNREACHABLE_TAB, dht_state_unreachable).
 
 
--export([srv_name/0,
+-export([
 	 start_link/2,
 	 node_id/0,
 	 safe_insert_node/2,
@@ -105,10 +105,8 @@
 ensure_bin_id(ID) when is_binary(ID)  -> ID.
 ensure_int_id(ID) when is_integer(ID) -> ID.
 
-srv_name() -> ?MODULE.
-
 start_link(StateFile, BootstapNodes) ->
-    gen_server:start_link({local, srv_name()},
+    gen_server:start_link({local, ?MODULE},
 			  ?MODULE,
 			  [StateFile, BootstapNodes], []).
 
@@ -117,7 +115,7 @@ start_link(StateFile, BootstapNodes) ->
 %% Node ids are generated in a random manner.
 -spec node_id() -> nodeid().
 node_id() ->
-    gen_server:call(srv_name(), {node_id}).
+    gen_server:call(?MODULE, {node_id}).
 
 %
 % Check if a node is available and lookup its node id by issuing
@@ -175,7 +173,7 @@ safe_insert_nodes(NodeInfos) ->
 -spec unsafe_insert_node(nodeid(), ipaddr(), portnum()) ->
     boolean().
 unsafe_insert_node(ID, IP, Port) when is_integer(ID) ->
-    _WasInserted = gen_server:call(srv_name(), {insert_node, ID, IP, Port}).
+    _WasInserted = gen_server:call(?MODULE, {insert_node, ID, IP, Port}).
 
 -spec unsafe_insert_nodes(list(nodeinfo())) -> 'ok'.
 unsafe_insert_nodes(NodeInfos) ->
@@ -192,7 +190,7 @@ unsafe_insert_nodes(NodeInfos) ->
 
 -spec is_interesting(nodeid(), ipaddr(), portnum()) -> boolean().
 is_interesting(ID, IP, Port) when is_integer(ID) ->
-    gen_server:call(srv_name(), {is_interesting, ID, IP, Port}).
+    gen_server:call(?MODULE, {is_interesting, ID, IP, Port}).
 
 -spec closest_to(nodeid()) -> list(nodeinfo()).
 closest_to(NodeID) ->
@@ -200,28 +198,28 @@ closest_to(NodeID) ->
 
 -spec closest_to(nodeid(), pos_integer()) -> list(nodeinfo()).
 closest_to(NodeID, NumNodes) ->
-    gen_server:call(srv_name(), {closest_to, NodeID, NumNodes}).
+    gen_server:call(?MODULE, {closest_to, NodeID, NumNodes}).
 
 -spec log_request_timeout(nodeid(), ipaddr(), portnum()) -> 'ok'.
 log_request_timeout(ID, IP, Port) ->
     Call = {request_timeout, ID, IP, Port},
-    gen_server:call(srv_name(), Call).
+    gen_server:call(?MODULE, Call).
 
 -spec log_request_success(nodeid(), ipaddr(), portnum()) -> 'ok'.
 log_request_success(ID, IP, Port) ->
     Call = {request_success, ID, IP, Port},
-    gen_server:call(srv_name(), Call).
+    gen_server:call(?MODULE, Call).
 
 -spec log_request_from(nodeid(), ipaddr(), portnum()) -> 'ok'.
 log_request_from(ID, IP, Port) ->
     Call = {request_from, ID, IP, Port},
-    gen_server:call(srv_name(), Call).
+    gen_server:call(?MODULE, Call).
 
 dump_state() ->
-    gen_server:call(srv_name(), {dump_state}).
+    gen_server:call(?MODULE, {dump_state}).
 
 dump_state(Filename) ->
-    gen_server:call(srv_name(), {dump_state, Filename}).
+    gen_server:call(?MODULE, {dump_state, Filename}).
 
 -spec keepalive(nodeid(), ipaddr(), portnum()) -> 'ok'.
 keepalive(ID, IP, Port) ->
@@ -323,26 +321,24 @@ random_node_tag() ->
 
 %% @private
 init([StateFile, BootstapNodes]) ->
+    %% For now, we trap exits which ensures the state table is dumped upon termination of the process.
+    %% @todo lift this restriction. Periodically dump state, but don't do it if an invariant is broken for some reason
+    erlang:process_flag(trap_exit, true),
+
     % Initialize the table of unreachable nodes when the server is started.
     % The safe_ping and unsafe_ping functions aren't exported outside of
     % of this module so they should fail unless the server is not running.
-    _ = case ets:info(?UNREACHABLE_TAB) of
-	undefined ->
-	    ets:new(?UNREACHABLE_TAB, [named_table, public, bag]);
-	_ -> ok
-    end,
+    _ = ets:new(?UNREACHABLE_TAB, [named_table, public, bag]),
 
-
-    {NodeID, NodeList} = load_state(StateFile),
+    #{ node_id := NodeID, node_set := NodeList} = load_state(StateFile),
 
     [spawn_link(fun() -> safe_insert_node(BN) end) || BN <- BootstapNodes],
 
-    % Insert any nodes loaded from the persistent state later
-    % when we are up and running. Use unsafe insertions or the
-    % whole state will be lost if etorrent starts without
-    % internet connectivity.
-    [spawn(?MODULE, unsafe_insert_node, [ensure_bin_id(ID), IP, Port])
-    || {ID, IP, Port} <- NodeList],
+    %% Insert any nodes loaded from the persistent state later
+    %% when we are up and running. Use unsafe insertions or the
+    %% whole state will be lost if dht starts without
+    %% internet connectivity.
+    [spawn(?MODULE, unsafe_insert_node, [ensure_bin_id(ID), IP, Port]) || {ID, IP, Port} <- NodeList],
 
     #state{
 	buckets=Buckets,
@@ -663,41 +659,8 @@ handle_info({inactive_bucket, Range}, State) ->
     {noreply, NewState}.
 
 %% @private
-terminate(_, State) ->
-    #state{
-	node_id=Self,
-	buckets=Buckets,
-	state_file=StateFile} = State,
-    dump_state(StateFile, Self, dht_bucket:node_list(Buckets)).
-
-dump_state(Filename, Self, NodeList) ->
-    PersistentState = [{node_id, Self}, {node_set, NodeList}],
-    file:write_file(Filename, term_to_binary(PersistentState)).
-
-load_state(Filename) ->
-    ErrorFmt = "Failed to load state from ~s (~w)",
-    case file:read_file(Filename) of
-	{ok, BinState} ->
-	    case (catch load_state_(BinState)) of
-		{'EXIT', Reason}  ->
-		    ErrorArgs = [Filename, Reason],
-		    ok = lager:error(ErrorFmt, ErrorArgs),
-		    {dht:random_id(), []};
-		{_, _}=State ->
-		    ok = lager:info("Loaded state from ~s", [Filename]),
-		    State
-	    end;
-	{error, Reason} ->
-	    ErrorArgs = [Filename, Reason],
-	    ok = lager:error(ErrorFmt, ErrorArgs),
-	    {dht:random_id(), []}
-    end.
-
-load_state_(BinState) ->
-    PersistentState = binary_to_term(BinState),
-    {value, {_, Self}}  = lists:keysearch(node_id, 1, PersistentState),
-    {value, {_, Nodes}} = lists:keysearch(node_set, 1, PersistentState),
-    {Self, Nodes}.
+terminate(_, #state{ node_id=NodeID, buckets=Buckets,  state_file=StateFile}) ->
+	dump_state(StateFile, NodeID, dht_bucket:node_list(Buckets)).
 
 
 %% @private
@@ -821,4 +784,16 @@ dns_lookup(Addr) ->
 	{error, Reason} ->
 	    ok = lager:error("Cannot lookup address ~p because ~p.", [Addr, Reason]),
 	    []
+    end.
+
+%% On-disk State
+dump_state(Filename, NodeID, NodeList) ->
+    file:write_file(Filename, term_to_binary(#{ node_id => NodeID, node_set => NodeList })).
+
+load_state(Filename) ->
+    case file:read_file(Filename) of
+	{ok, BinState} ->
+	        #{ node_id := _NodeID, node_set := _NodeList } = binary_to_term(BinState);
+        {error, enoent} ->
+        		#{ node_id => dht:random_id(), node_set => [] }
     end.
