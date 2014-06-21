@@ -4,13 +4,13 @@
 %% @end
 -module(dht).
 -export([integer_id/1,
-         list_id/1,
+         bin_id/1,
          random_id/0,
          closest_to/3,
          distance/2,
          find_self/0]).
 
--type node_id() :: <<_:160>>.
+-type node_id() :: non_neg_integer().
 -type node_info() :: {node_id(), inet:ip_address(), inet:port_number()}.
 -type peer_info() :: {inet:ip_address(), inet:port_number()}.
 
@@ -21,21 +21,18 @@ find_self() ->
     Self = dht_state:node_id(),
     dht_net:find_node_search(Self).
 
--spec integer_id(list(byte()) | binary()) -> node_id().
-integer_id(<<ID:160>>) ->
-    ID;
-integer_id(StrID) when is_list(StrID) ->
-    integer_id(list_to_binary(StrID)).
+-spec integer_id(binary()) -> node_id().
+integer_id(<<ID:160>>) -> ID.
 
--spec list_id(node_id()) -> list(byte()).
-list_id(ID) when is_integer(ID) ->
-    binary_to_list(<<ID:160>>).
+-spec bin_id(node_id()) -> binary().
+bin_id(ID) when is_integer(ID) -> <<ID:160>>.
+
 
 -spec random_id() -> node_id().
 random_id() ->
     Byte  = fun() -> random:uniform(256) - 1 end,
     Bytes = [Byte() || _ <- lists:seq(1, 20)],
-    integer_id(Bytes).
+    integer_id(iolist_to_binary(Bytes)).
 
 -spec closest_to(node_id(), list(node_info()), integer()) ->
     list(node_info()).

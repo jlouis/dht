@@ -63,9 +63,7 @@
          code_change/3]).
 
 % internal exports
--export([handle_query/7,
-         decode_msg/1]).
-
+-export([handle_query/7]).
 
 -record(state, {
     socket :: inet:socket(),
@@ -74,12 +72,7 @@
 }).
 
 %
-% Type definitions and function specifications
-%
-
-
-%
-% Contansts and settings
+% Constants and settings
 %
 query_timeout() -> 2000.
 search_width() -> 32.
@@ -115,7 +108,7 @@ ping(IP, Port) ->
     case gen_server:call(?MODULE, {ping, IP, Port}) of
         timeout -> pang;
         Values ->
-            _ID = decode_response(ping, Values)
+            dht_bt_proto:decode_response(ping, Values)
     end.
 
 %% @doc find_node/3 searches in the DHT for a given target NodeID
@@ -128,7 +121,7 @@ find_node(IP, Port, Target)  ->
         timeout ->
             {error, timeout};
         Values  ->
-            {ID, Nodes} = decode_response(find_node, Values),
+            {ID, Nodes} = dht_bt_proto:decode_response(find_node, Values),
             dht_state:log_request_success(ID, IP, Port),
             {ID, Nodes}
     end.
@@ -140,7 +133,7 @@ get_peers(IP, Port, InfoHash)  ->
         timeout ->
             {error, timeout};
         Values ->
-            decode_response(get_peers, Values)
+            dht_bt_proto:decode_response(get_peers, Values)
     end.
 
 %
@@ -176,6 +169,299 @@ get_peers_search(InfoHash, Nodes) ->
     Retry = search_retries(),
     dht_iter_search(get_peers, InfoHash, Width, Retry, Nodes).
     
+-spec announce(inet:ip_address(), inet:port_number(), infohash(), token(), inet:port_number()) ->
+    {'error', 'timeout'} | dht:node_id().
+announce(IP, Port, InfoHash, Token, BTPort) ->
+    Announce = {announce, IP, Port, InfoHash, Token, BTPort},
+    case gen_server:call(?MODULE, Announce) of
+        timeout -> {error, timeout};
+        Values ->
+            dht_bt_proto:decode_response(announce, Values)
+    end.
+
+-spec return(inet:ip_address(), inet:port_number(), transaction(), list()) -> 'ok'.
+return(IP, Port, ID, Response) ->
+    ok = gen_server:call(?MODULE, {return, IP, Port, ID, Response}).
+
+%%% CALLBACKS
+
+init([DHTPort]) ->
+    {ok, Socket} = gen_udp:open(DHTPort, socket_options()),
+    State = #state{socket=Socket,
+                   sent=gb_trees:empty(),
+                   tokens=init_tokens(3)},
+    erlang:send_after(token_lifetime(), self(), renew_token),
+    {ok, State}.
+
+handle_call({ping, IP, Port}, From, State) ->
+    Args = common_values(),
+    send_query(ping, Args, IP, Port, From, State);
+handle_call({find_node, IP, Port, Target}, From, State) ->
+    Args = [{<<"target">>, <<Target:160>>} | common_values()],
+    send_query(find_node, Args, IP, Port, From, State);
+handle_call({get_peers, IP, Port, InfoHash}, From, State) ->
+    Args  = [{<<"info_hash">>, <<InfoHash:160>>}| common_values()],
+    ok = lager:debug("Send get_peers to ~p:~p for ~s.", [IP, Port, integer_hash_to_literal(InfoHash)]),
+    send_query(get_peers, Args, IP, Port, From, State);
+handle_call({announce, IP, Port, InfoHash, Token, BTPort}, From, State) ->
+    LHash = dht:bin_id(InfoHash),
+    Args = [
+        {<<"info_hash">>, LHash},
+        {<<"port">>, BTPort},
+        {<<"token">>, Token} | common_values()],
+    send_query('announce', Args, IP, Port, From, State);
+handle_call({return, IP, Port, ID, Values}, _From, State) ->
+    Socket = State#state.socket,
+    Response = dht_bt_proto:encode_response(ID, Values),
+    ok = case gen_udp:send(Socket, IP, Port, Response) of
+        ok ->
+            ok;
+        {error, einval} ->
+            ok = lager:error("Error (einval) when returning to ~w:~w", [IP, Port]),
+            ok;
+        {error, eagain} ->
+            ok = lager:error("Error (eagain) when returning to ~w:~w", [IP, Port]),
+            ok
+    end,
+    {reply, ok, State};
+handle_call(get_node_port, _From, #state { socket = Socket } = State) ->
+    {ok, {_, Port}} = inet:sockname(Socket),
+    {reply, Port, State};
+handle_call({get_num_open}, _From, State) ->
+    Sent = State#state.sent,
+    NumSent = gb_trees:size(Sent),
+    {reply, NumSent, State}.
+
+handle_cast(_Msg, State) ->
+    {noreply, State}.
+
+handle_info({timeout, _, IP, Port, ID}, State) ->
+    #state{sent=Sent} = State,
+
+    NewState = case find_sent_query(IP, Port, ID, Sent) of
+        error ->
+            State;
+        {ok, {Client, _Timeout}} ->
+            _ = gen_server:reply(Client, timeout),
+            NewSent = clear_sent_query(IP, Port, ID, Sent),
+            State#state{sent=NewSent}
+    end,
+    {noreply, NewState};
+handle_info(renew_token, State) ->
+    #state{tokens=PrevTokens} = State,
+    NewTokens = renew_token(PrevTokens),
+    NewState = State#state{tokens=NewTokens},
+    erlang:send_after(token_lifetime(), self(), renew_token),
+    {noreply, NewState};
+handle_info({udp, _Socket, IP, Port, Packet}, State) ->
+    #state{
+        sent=Sent,
+        tokens=Tokens} = State,
+    Self = dht_state:node_id(),
+    NewState = case (catch dht_bt_proto:decode_msg(Packet)) of
+        {'EXIT', _} ->
+            ok = lager:error("Invalid packet from ~w:~w: ~w", [IP, Port, Packet]),
+            State;
+
+        {error, ID, Code, ErrorMsg} ->
+            ok = lager:error("Received error from ~w:~w (~w) ~w", [IP, Port, Code, ErrorMsg]),
+            case find_sent_query(IP, Port, ID, Sent) of
+                error ->
+                    State;
+                {ok, {Client, Timeout}} ->
+                    _ = cancel_timeout(Timeout),
+                    _ = gen_server:reply(Client, timeout),
+                    NewSent = clear_sent_query(IP, Port, ID, Sent),
+                    State#state{sent=NewSent}
+            end;
+
+        {response, ID, Values} ->
+            case find_sent_query(IP, Port, ID, Sent) of
+                error ->
+                    State;
+                {ok, {Client, Timeout}} ->
+                    _ = cancel_timeout(Timeout),
+                    _ = gen_server:reply(Client, Values),
+                    NewSent = clear_sent_query(IP, Port, ID, Sent),
+                    State#state{sent=NewSent}
+            end;
+        {Method, ID, Params} ->
+            ok = lager:info("Received ~w from ~w:~w", [Method, IP, Port]),
+            case find_sent_query(IP, Port, ID, Sent) of
+                {ok, {Client, Timeout}} ->
+                    _ = cancel_timeout(Timeout),
+                    _ = gen_server:reply(Client, timeout),
+                    ok = lager:error("Bad node, don't send queries to yourself!"),
+                    NewSent = clear_sent_query(IP, Port, ID, Sent),
+                    State#state{sent=NewSent};
+                error ->
+                    %% Handle request.
+                    SNID = get_string("id", Params),
+                    NID = dht:integer_id(SNID),
+                    spawn_link(dht_state, safe_insert_node, [NID, IP, Port]),
+                    HandlerArgs = [Method, Params, IP, Port, ID, Self, Tokens],
+                    spawn_link(?MODULE, handle_query, HandlerArgs),
+                    State
+            end
+    end,
+    {noreply, NewState};
+handle_info(_Msg, State) ->
+    {noreply, State}.
+
+terminate(_, _State) ->
+    ok.
+
+code_change(_, State, _) ->
+    {ok, State}.
+
+%% Default args. Returns a proplist of default args
+common_values() ->
+    NodeID = dht_state:node_id(),
+    common_values(NodeID).
+
+common_values(NodeID) ->
+    [{<<"id">>, dht:bin_id(NodeID)}].
+
+-spec handle_query(dht_qtype(), benc:t(), inet:ip_address(),
+                  inet:port_number(), transaction(), dht:node_id(), _) -> 'ok'.
+
+handle_query('ping', _, IP, Port, MsgID, Self, _Tokens) ->
+    return(IP, Port, MsgID, common_values(Self));
+handle_query('find_node', Params, IP, Port, MsgID, Self, _Tokens) ->
+    Target = dht:integer_id(benc:get_value(<<"target">>, Params)),
+    CloseNodes = filter_node(IP, Port, dht_state:closest_to(Target)),
+    BinCompact = node_infos_to_compact(CloseNodes),
+    Values = [{<<"nodes">>, BinCompact}],
+    return(IP, Port, MsgID, common_values(Self) ++ Values);
+handle_query('get_peers', Params, IP, Port, MsgID, Self, Tokens) ->
+    InfoHash = dht:integer_id(benc:get_value(<<"info_hash">>, Params)),
+    ok = lager:debug("Take request get_peers from ~p:~p for ~s.",
+                [IP, Port, integer_hash_to_literal(InfoHash)]),
+    %% TODO: handle non-local requests.
+    Values = case dht_tracker:get_peers(InfoHash) of
+        [] ->
+            Nodes = filter_node(IP, Port, dht_state:closest_to(InfoHash)),
+            BinCompact = node_infos_to_compact(Nodes),
+            [{<<"nodes">>, BinCompact}];
+        Peers ->
+            ok = lager:debug("Get a list of peers from the local tracker ~p", [Peers]),
+            PeerList = [peers_to_compact([P]) || P <- Peers],
+            [{<<"values">>, PeerList}]
+    end,
+    Token = [{<<"token">>, token_value(IP, Port, Tokens)}],
+    return(IP, Port, MsgID, common_values(Self) ++ Token ++ Values);
+handle_query('announce', Params, IP, Port, MsgID, Self, Tokens) ->
+    InfoHash = dht:integer_id(benc:get_value(<<"info_hash">>, Params)),
+    ok = lager:info("Announce from ~p:~p for ~s~n",
+                [IP, Port, integer_hash_to_literal(InfoHash)]),
+    BTPort = benc:get_value(<<"port">>,   Params),
+    Token = get_string(<<"token">>, Params),
+    case is_valid_token(Token, IP, Port, Tokens) of
+        true ->
+            %% TODO: handle non-local requests.
+            dht_tracker:announce(InfoHash, IP, BTPort);
+        false ->
+            FmtArgs = [IP, Port, Token],
+            ok = lager:error("Invalid token from ~w:~w ~w", FmtArgs),
+            ok
+    end,
+    return(IP, Port, MsgID, common_values(Self)).
+
+gen_unique_message_id(IP, Port, #state { sent = Sent } = State) ->
+    IntID = random:uniform(16#FFFF),
+    MsgID = <<IntID:16>>,
+    case gb_trees:is_defined({IP, Port, MsgID}, Sent) of
+        true ->
+            %% That MsgID is already in use, recurse and try again
+            gen_unique_message_id(IP, Port, State);
+        false -> MsgID
+    end.
+
+store_sent_query(IP, Port, ID, Client, TimeoutRef, Open) ->
+    K = {IP, Port, ID},
+    V = {Client, TimeoutRef},
+    gb_trees:insert(K, V, Open).
+
+find_sent_query(IP, Port, ID, Open) ->
+    case gb_trees:lookup({IP, Port, ID}, Open) of
+       none -> error;
+       {value, Value} -> {ok, Value}
+    end.
+
+clear_sent_query(IP, Port, ID, Open) ->
+    gb_trees:delete({IP, Port, ID}, Open).
+
+get_string(What, PL) ->
+    benc:get_binary_value(What, PL).
+
+%
+% Generate a random token value. A token value is used to filter out bogus announce
+% requests, or at least announce requests from nodes that never sends get_peers requests.
+%
+random_token() ->
+    ID0 = random:uniform(16#FFFF),
+    ID1 = random:uniform(16#FFFF),
+    <<ID0:16, ID1:16>>.
+
+%
+% Initialize the socket server's token queue, the size of this queue
+% will be kept constant during the running-time of the server. The
+% size of this queue specifies how old tokens the server will accept.
+%
+init_tokens(NumTokens) ->
+    queue:from_list([random_token() || _ <- lists:seq(1, NumTokens)]).
+
+%
+% Calculate the token value for a client based on the client's IP address
+% and Port number combined with a secret token value held by the socket server.
+% This avoids the need to store unique token values in the socket server.
+%
+token_value(IP, Port, Token) when is_binary(Token) ->
+    Hash = erlang:phash2({IP, Port, Token}),
+    <<Hash:32>>;
+token_value(IP, Port, Tokens) ->
+    MostRecent = queue:last(Tokens),
+    token_value(IP, Port, MostRecent).
+
+%
+% Check if a token value included by a node in an announce message is bogus
+% (based on a token that is not recent enough).
+%
+is_valid_token(TokenValue, IP, Port, Tokens) ->
+    ValidValues = [token_value(IP, Port, Token) || Token <- queue:to_list(Tokens)],
+    lists:member(TokenValue, ValidValues).
+
+%
+% Discard the oldest token and create a new one to replace it.
+%
+renew_token(Tokens) ->
+    {_, WithoutOldest} = queue:out(Tokens),
+    queue:in(random_token(), WithoutOldest).
+
+peers_to_compact(PeerList) ->
+    peers_to_compact(PeerList, <<>>).
+peers_to_compact([], Acc) ->
+    Acc;
+peers_to_compact([{{A0, A1, A2, A3}, Port}|T], Acc) ->
+    CPeer = <<A0, A1, A2, A3, Port:16>>,
+    peers_to_compact(T, <<Acc/binary, CPeer/binary>>).
+
+node_infos_to_compact(NodeList) ->
+    node_infos_to_compact(NodeList, <<>>).
+node_infos_to_compact([], Acc) ->
+    Acc;
+node_infos_to_compact([{ID, {A0, A1, A2, A3}, Port}|T], Acc) ->
+    CNode = <<ID:160, A0, A1, A2, A3, Port:16>>,
+    node_infos_to_compact(T, <<Acc/binary, CNode/binary>>).
+
+
+integer_hash_to_literal(InfoHashInt) when is_integer(InfoHashInt) ->
+    io_lib:format("~40.16.0B", [InfoHashInt]).
+
+
+%% @doc Delete node with `IP' and `Port' from the list.
+filter_node(IP, Port, Nodes) ->
+    [X || {_NID, NIP, NPort}=X <- Nodes, NIP =/= IP orelse NPort =/= Port].
 
 dht_iter_search(SearchType, Target, Width, Retry, Nodes)  ->
     WithDist = [{dht:distance(ID, Target), ID, IP, Port} || {ID, IP, Port} <- Nodes],
@@ -195,7 +481,6 @@ dht_iter_search(SearchType, _, _, Retry, Retry, _,
             Peers = [Peer || {_, _, _, _, Peers} <- WithPeers, Peer <- Peers],
             {Trackers, Peers, AliveList}
     end;
-
 dht_iter_search(SearchType, Target, Width, Retry, Retries,
                 Next, Queried, Alive, WithPeers) ->
 
@@ -297,34 +582,6 @@ dht_iter_search(SearchType, Target, Width, Retry, Retries,
     dht_iter_search(SearchType, Target, Width, Retry, NewRetries,
                     NewNext2, NewQueried, NewAlive, NewWithPeers).
 
-
-%
-%
-%
--spec announce(inet:ip_address(), inet:port_number(), infohash(), token(), inet:port_number()) ->
-    {'error', 'timeout'} | dht:node_id().
-announce(IP, Port, InfoHash, Token, BTPort) ->
-    Announce = {announce, IP, Port, InfoHash, Token, BTPort},
-    case gen_server:call(?MODULE, Announce) of
-        timeout -> {error, timeout};
-        Values ->
-            decode_response(announce, Values)
-    end.
-
--spec return(inet:ip_address(), inet:port_number(), transaction(), list()) -> 'ok'.
-return(IP, Port, ID, Response) ->
-    ok = gen_server:call(?MODULE, {return, IP, Port, ID, Response}).
-
-init([DHTPort]) ->
-    {ok, Socket} = gen_udp:open(DHTPort, socket_options()),
-    State = #state{socket=Socket,
-                   sent=gb_trees:empty(),
-                   tokens=init_tokens(3)},
-    erlang:send_after(token_lifetime(), self(), renew_token),
-    {ok, State}.
-
-
-
 timeout_reference(IP, Port, ID) ->
     Msg = {timeout, self(), IP, Port, ID},
     erlang:send_after(query_timeout(), self(), Msg).
@@ -332,56 +589,11 @@ timeout_reference(IP, Port, ID) ->
 cancel_timeout(TimeoutRef) ->
     erlang:cancel_timer(TimeoutRef).
 
-handle_call({ping, IP, Port}, From, State) ->
-    Args = common_values(),
-    do_send_query(ping, Args, IP, Port, From, State);
-
-handle_call({find_node, IP, Port, Target}, From, State) ->
-    Args = [{<<"target">>, <<Target:160>>} | common_values()],
-    do_send_query(find_node, Args, IP, Port, From, State);
-
-handle_call({get_peers, IP, Port, InfoHash}, From, State) ->
-    Args  = [{<<"info_hash">>, <<InfoHash:160>>}| common_values()],
-    ok = lager:debug("Send get_peers to ~p:~p for ~s.", [IP, Port, integer_hash_to_literal(InfoHash)]),
-    do_send_query(get_peers, Args, IP, Port, From, State);
-
-handle_call({announce, IP, Port, InfoHash, Token, BTPort}, From, State) ->
-    LHash = list_to_binary(dht:list_id(InfoHash)),
-    Args = [
-        {<<"info_hash">>, LHash},
-        {<<"port">>, BTPort},
-        {<<"token">>, Token} | common_values()],
-    do_send_query('announce', Args, IP, Port, From, State);
-
-handle_call({return, IP, Port, ID, Values}, _From, State) ->
-    Socket = State#state.socket,
-    Response = encode_response(ID, Values),
-    ok = case gen_udp:send(Socket, IP, Port, Response) of
-        ok ->
-            ok;
-        {error, einval} ->
-            ok = lager:error("Error (einval) when returning to ~w:~w", [IP, Port]),
-            ok;
-        {error, eagain} ->
-            ok = lager:error("Error (eagain) when returning to ~w:~w", [IP, Port]),
-            ok
-    end,
-    {reply, ok, State};
-
-handle_call(get_node_port, _From, #state { socket = Socket } = State) ->
-    {ok, {_, Port}} = inet:sockname(Socket),
-    {reply, Port, State};
-
-handle_call({get_num_open}, _From, State) ->
-    Sent = State#state.sent,
-    NumSent = gb_trees:size(Sent),
-    {reply, NumSent, State}.
-
-do_send_query(Method, Args, IP, Port, From, #state { sent = Sent, socket = Socket } = State) ->
+send_query(Method, Args, IP, Port, From, #state { sent = Sent, socket = Socket } = State) ->
     ok = lager:info("Sending ~w to ~w:~w", [Method, IP, Port]),
 
-    MsgID = unique_message_id(IP, Port, Sent),
-    Query = encode_query(Method, MsgID, Args),
+    MsgID = gen_unique_message_id(IP, Port, Sent),
+    Query = dht_bt_proto:encode_query(Method, MsgID, Args),
 
     case gen_udp:send(Socket, IP, Port, Query) of
         ok ->
@@ -395,337 +607,3 @@ do_send_query(Method, Args, IP, Port, From, #state { sent = Sent, socket = Socke
             ok = lager:error("Error (eagain) when sending ~w to ~w:~w", [Method, IP, Port]),
             {reply, timeout, State}
     end.
-
-handle_cast(not_implemented, State) ->
-    {noreply, State}.
-
-handle_info({timeout, _, IP, Port, ID}, State) ->
-    #state{sent=Sent} = State,
-
-    NewState = case find_sent_query(IP, Port, ID, Sent) of
-        error ->
-            State;
-        {ok, {Client, _Timeout}} ->
-            _ = gen_server:reply(Client, timeout),
-            NewSent = clear_sent_query(IP, Port, ID, Sent),
-            State#state{sent=NewSent}
-    end,
-    {noreply, NewState};
-
-handle_info(renew_token, State) ->
-    #state{tokens=PrevTokens} = State,
-    NewTokens = renew_token(PrevTokens),
-    NewState = State#state{tokens=NewTokens},
-    erlang:send_after(token_lifetime(), self(), renew_token),
-    {noreply, NewState};
-
-handle_info({udp, _Socket, IP, Port, Packet}, State) ->
-    #state{
-        sent=Sent,
-        tokens=Tokens} = State,
-    Self = dht_state:node_id(),
-    NewState = case (catch decode_msg(Packet)) of
-        {'EXIT', _} ->
-            ok = lager:error("Invalid packet from ~w:~w: ~w", [IP, Port, Packet]),
-            State;
-
-        {error, ID, Code, ErrorMsg} ->
-            ok = lager:error("Received error from ~w:~w (~w) ~w", [IP, Port, Code, ErrorMsg]),
-            case find_sent_query(IP, Port, ID, Sent) of
-                error ->
-                    State;
-                {ok, {Client, Timeout}} ->
-                    _ = cancel_timeout(Timeout),
-                    _ = gen_server:reply(Client, timeout),
-                    NewSent = clear_sent_query(IP, Port, ID, Sent),
-                    State#state{sent=NewSent}
-            end;
-
-        {response, ID, Values} ->
-            case find_sent_query(IP, Port, ID, Sent) of
-                error ->
-                    State;
-                {ok, {Client, Timeout}} ->
-                    _ = cancel_timeout(Timeout),
-                    _ = gen_server:reply(Client, Values),
-                    NewSent = clear_sent_query(IP, Port, ID, Sent),
-                    State#state{sent=NewSent}
-            end;
-        {Method, ID, Params} ->
-            ok = lager:info("Received ~w from ~w:~w", [Method, IP, Port]),
-            case find_sent_query(IP, Port, ID, Sent) of
-                {ok, {Client, Timeout}} ->
-                    _ = cancel_timeout(Timeout),
-                    _ = gen_server:reply(Client, timeout),
-                    ok = lager:error("Bad node, don't send queries to yourself!"),
-                    NewSent = clear_sent_query(IP, Port, ID, Sent),
-                    State#state{sent=NewSent};
-                error ->
-                    %% Handle request.
-                    SNID = get_string("id", Params),
-                    NID = dht:integer_id(SNID),
-                    spawn_link(dht_state, safe_insert_node, [NID, IP, Port]),
-                    HandlerArgs = [Method, Params, IP, Port, ID, Self, Tokens],
-                    spawn_link(?MODULE, handle_query, HandlerArgs),
-                    State
-            end
-    end,
-    {noreply, NewState};
-
-handle_info(_Msg, State) ->
-    {noreply, State}.
-
-terminate(_, _State) ->
-    ok.
-
-code_change(_, State, _) ->
-    {ok, State}.
-
-%% Default args. Returns a proplist of default args
-common_values() ->
-    Self = dht_state:node_id(),
-    common_values(Self).
-
-common_values(Self) ->
-    LSelf = dht:list_id(Self),
-    [{<<"id">>, list_to_binary(LSelf)}].
-
--spec handle_query(dht_qtype(), benc:t(), inet:ip_address(),
-                  inet:port_number(), transaction(), dht:node_id(), _) -> 'ok'.
-
-handle_query('ping', _, IP, Port, MsgID, Self, _Tokens) ->
-    return(IP, Port, MsgID, common_values(Self));
-
-handle_query('find_node', Params, IP, Port, MsgID, Self, _Tokens) ->
-    Target = dht:integer_id(benc:get_value(<<"target">>, Params)),
-    CloseNodes = filter_node(IP, Port, dht_state:closest_to(Target)),
-    BinCompact = node_infos_to_compact(CloseNodes),
-    Values = [{<<"nodes">>, BinCompact}],
-    return(IP, Port, MsgID, common_values(Self) ++ Values);
-
-handle_query('get_peers', Params, IP, Port, MsgID, Self, Tokens) ->
-    InfoHash = dht:integer_id(benc:get_value(<<"info_hash">>, Params)),
-    ok = lager:debug("Take request get_peers from ~p:~p for ~s.",
-                [IP, Port, integer_hash_to_literal(InfoHash)]),
-    %% TODO: handle non-local requests.
-    Values = case dht_tracker:get_peers(InfoHash) of
-        [] ->
-            Nodes = filter_node(IP, Port, dht_state:closest_to(InfoHash)),
-            BinCompact = node_infos_to_compact(Nodes),
-            [{<<"nodes">>, BinCompact}];
-        Peers ->
-            ok = lager:debug("Get a list of peers from the local tracker ~p", [Peers]),
-            PeerList = [peers_to_compact([P]) || P <- Peers],
-            [{<<"values">>, PeerList}]
-    end,
-    Token = [{<<"token">>, token_value(IP, Port, Tokens)}],
-    return(IP, Port, MsgID, common_values(Self) ++ Token ++ Values);
-
-handle_query('announce', Params, IP, Port, MsgID, Self, Tokens) ->
-    InfoHash = dht:integer_id(benc:get_value(<<"info_hash">>, Params)),
-    ok = lager:info("Announce from ~p:~p for ~s~n",
-                [IP, Port, integer_hash_to_literal(InfoHash)]),
-    BTPort = benc:get_value(<<"port">>,   Params),
-    Token = get_string(<<"token">>, Params),
-    case is_valid_token(Token, IP, Port, Tokens) of
-        true ->
-            %% TODO: handle non-local requests.
-            dht_tracker:announce(InfoHash, IP, BTPort);
-        false ->
-            FmtArgs = [IP, Port, Token],
-            lager:error("Invalid token from ~w:~w ~w", FmtArgs)
-    end,
-    return(IP, Port, MsgID, common_values(Self)).
-
-unique_message_id(IP, Port, Open) ->
-    IntID = random:uniform(16#FFFF),
-    MsgID = <<IntID:16>>,
-    case gb_trees:is_defined(tkey(IP, Port, MsgID), Open) of
-        true ->
-            %% That MsgID is already in use, recurse and try again
-            unique_message_id(IP, Port, Open);
-        false -> MsgID
-    end.
-
-store_sent_query(IP, Port, ID, Client, Timeout, Open) ->
-    K = tkey(IP, Port, ID),
-    V = tval(Client, Timeout),
-    gb_trees:insert(K, V, Open).
-
-find_sent_query(IP, Port, ID, Open) ->
-    case gb_trees:lookup(tkey(IP, Port, ID), Open) of
-       none -> error;
-       {value, Value} -> {ok, Value}
-    end.
-
-clear_sent_query(IP, Port, ID, Open) ->
-    gb_trees:delete(tkey(IP, Port, ID), Open).
-
-tkey(IP, Port, ID) ->
-   {IP, Port, ID}.
-
-tval(Client, TimeoutRef) ->
-    {Client, TimeoutRef}.
-
-get_string(What, PL) ->
-    benc:get_binary_value(What, PL).
-
-%
-% Generate a random token value. A token value is used to filter out bogus announce
-% requests, or at least announce requests from nodes that never sends get_peers requests.
-%
-random_token() ->
-    ID0 = random:uniform(16#FFFF),
-    ID1 = random:uniform(16#FFFF),
-    <<ID0:16, ID1:16>>.
-
-%
-% Initialize the socket server's token queue, the size of this queue
-% will be kept constant during the running-time of the server. The
-% size of this queue specifies how old tokens the server will accept.
-%
-init_tokens(NumTokens) ->
-    queue:from_list([random_token() || _ <- lists:seq(1, NumTokens)]).
-%
-% Calculate the token value for a client based on the client's IP address
-% and Port number combined with a secret token value held by the socket server.
-% This avoids the need to store unique token values in the socket server.
-%
-token_value(IP, Port, Token) when is_binary(Token) ->
-    Hash = erlang:phash2({IP, Port, Token}),
-    <<Hash:32>>;
-
-token_value(IP, Port, Tokens) ->
-    MostRecent = queue:last(Tokens),
-    token_value(IP, Port, MostRecent).
-
-
-
-%
-% Check if a token value included by a node in an announce message is bogus
-% (based on a token that is not recent enough).
-%
-is_valid_token(TokenValue, IP, Port, Tokens) ->
-    ValidValues = [token_value(IP, Port, Token) || Token <- queue:to_list(Tokens)],
-    lists:member(TokenValue, ValidValues).
-
-%
-% Discard the oldest token and create a new one to replace it.
-%
-renew_token(Tokens) ->
-    {_, WithoutOldest} = queue:out(Tokens),
-    queue:in(random_token(), WithoutOldest).
-
-
-
-decode_msg(InMsg) ->
-    {ok, Msg} = benc:decode(InMsg),
-    MsgID = benc:get_value(<<"t">>, Msg),
-    case benc:get_value(<<"y">>, Msg) of
-        <<"q">> ->
-            MString = benc:get_value(<<"q">>, Msg),
-            Method  = string_to_method(MString),
-            Params  = benc:get_value(<<"a">>, Msg),
-            {Method, MsgID, Params};
-        <<"r">> ->
-            Values = benc:get_value(<<"r">>, Msg),
-            {response, MsgID, Values};
-        <<"e">> ->
-            [ECode, EMsg] = benc:get_value(<<"e">>, Msg),
-            {error, MsgID, ECode, EMsg}
-    end.
-
-decode_response(ping, Values) ->
-     dht:integer_id(benc:get_value(<<"id">>, Values));
-decode_response(find_node, Values) ->
-    ID = dht:integer_id(benc:get_value(<<"id">>, Values)),
-    BinNodes = benc:get_value(<<"nodes">>, Values),
-    Nodes = compact_to_node_infos(BinNodes),
-    {ID, Nodes};
-decode_response(get_peers, Values) ->
-    ID = dht:integer_id(benc:get_value(<<"id">>, Values)),
-    Token = benc:get_value(<<"token">>, Values),
-    NoPeers = make_ref(),
-    MaybePeers = benc:get_value(<<"values">>, Values, NoPeers),
-    {Peers, Nodes} = case MaybePeers of
-        NoPeers when is_reference(NoPeers) ->
-            BinCompact = benc:get_value(<<"nodes">>, Values),
-            INodes = compact_to_node_infos(BinCompact),
-            {[], INodes};
-        BinPeers when is_list(BinPeers) ->
-            PeerLists = [compact_to_peers(N) || N <- BinPeers],
-            IPeers = lists:flatten(PeerLists),
-            {IPeers, []}
-    end,
-    {ID, Token, Peers, Nodes};
-decode_response(announce, Values) ->
-    dht:integer_id(benc:get_value(<<"id">>, Values)).
-
-
-
-encode_query(Method, MsgID, Params) ->
-    Msg = [
-       {<<"y">>, <<"q">>},
-       {<<"q">>, method_to_string(Method)},
-       {<<"t">>, MsgID},
-       {<<"a">>, Params}],
-    benc:encode(Msg).
-
-encode_response(MsgID, Values) ->
-    Msg = [
-       {<<"y">>, <<"r">>},
-       {<<"t">>, MsgID},
-       {<<"r">>, Values}],
-    benc:encode(Msg).
-
-method_to_string(ping) -> <<"ping">>;
-method_to_string(find_node) -> <<"find_node">>;
-method_to_string(get_peers) -> <<"get_peers">>;
-method_to_string(announce) -> <<"announce_peer">>.
-
-string_to_method(<<"ping">>) -> ping;
-string_to_method(<<"find_node">>) -> find_node;
-string_to_method(<<"get_peers">>) -> get_peers;
-string_to_method(<<"announce_peer">>) -> announce.
-
-
-
-compact_to_peers(<<>>) ->
-    [];
-compact_to_peers(<<A0, A1, A2, A3, Port:16, Rest/binary>>) ->
-    Addr = {A0, A1, A2, A3},
-    [{Addr, Port}|compact_to_peers(Rest)].
-
-peers_to_compact(PeerList) ->
-    peers_to_compact(PeerList, <<>>).
-peers_to_compact([], Acc) ->
-    Acc;
-peers_to_compact([{{A0, A1, A2, A3}, Port}|T], Acc) ->
-    CPeer = <<A0, A1, A2, A3, Port:16>>,
-    peers_to_compact(T, <<Acc/binary, CPeer/binary>>).
-
-compact_to_node_infos(<<>>) ->
-    [];
-compact_to_node_infos(<<ID:160, A0, A1, A2, A3,
-                        Port:16, Rest/binary>>) ->
-    IP = {A0, A1, A2, A3},
-    NodeInfo = {ID, IP, Port},
-    [NodeInfo|compact_to_node_infos(Rest)].
-
-node_infos_to_compact(NodeList) ->
-    node_infos_to_compact(NodeList, <<>>).
-node_infos_to_compact([], Acc) ->
-    Acc;
-node_infos_to_compact([{ID, {A0, A1, A2, A3}, Port}|T], Acc) ->
-    CNode = <<ID:160, A0, A1, A2, A3, Port:16>>,
-    node_infos_to_compact(T, <<Acc/binary, CNode/binary>>).
-
-
-integer_hash_to_literal(InfoHashInt) when is_integer(InfoHashInt) ->
-    io_lib:format("~40.16.0B", [InfoHashInt]).
-
-
-%% @doc Delete node with `IP' and `Port' from the list.
-filter_node(IP, Port, Nodes) ->
-    [X || {_NID, NIP, NPort}=X <- Nodes, NIP =/= IP orelse NPort =/= Port].
-
