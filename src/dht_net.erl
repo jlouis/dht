@@ -193,24 +193,23 @@ init([DHTPort]) ->
     erlang:send_after(token_lifetime(), self(), renew_token),
     {ok, State}.
 
-handle_call({ping, IP, Port}, From, State) ->
+handle_call({ping, Peer}, From, State) ->
     Args = common_values(),
-    send_query(ping, Args, IP, Port, From, State);
-handle_call({find_node, IP, Port, Target}, From, State) ->
+    send_query({ping, Args}, Peer, From, State);
+handle_call({find_node, Peer, Target}, From, State) ->
     Args = [{<<"target">>, <<Target:160>>} | common_values()],
-    send_query(find_node, Args, IP, Port, From, State);
-handle_call({get_peers, IP, Port, InfoHash}, From, State) ->
+    send_query({find_node, Args}, Peer, From, State);
+handle_call({get_peers, Peer, InfoHash}, From, State) ->
     Args  = [{<<"info_hash">>, <<InfoHash:160>>}| common_values()],
-    ok = lager:debug("Send get_peers to ~p:~p for ~s.", [IP, Port, integer_hash_to_literal(InfoHash)]),
-    send_query(get_peers, Args, IP, Port, From, State);
-handle_call({announce, IP, Port, InfoHash, Token, BTPort}, From, State) ->
+    send_query({get_peers, Args}, Peer, From, State);
+handle_call({announce, Peer, InfoHash, Token, BTPort}, From, State) ->
     LHash = dht:bin_id(InfoHash),
     Args = [
         {<<"info_hash">>, LHash},
         {<<"port">>, BTPort},
         {<<"token">>, Token} | common_values()],
-    send_query('announce', Args, IP, Port, From, State);
-handle_call({return, IP, Port, ID, Values}, _From, State) ->
+    send_query({announce, Args}, Peer, From, State);
+handle_call({return, {IP, Port}, ID, Values}, _From, State) ->
     Socket = State#state.socket,
     Response = dht_bt_proto:encode_response(ID, Values),
     ok = case gen_udp:send(Socket, IP, Port, Response) of
@@ -238,12 +237,12 @@ handle_cast(_Msg, State) ->
 handle_info({timeout, _, IP, Port, ID}, State) ->
     #state{sent=Sent} = State,
 
-    NewState = case find_sent_query(IP, Port, ID, Sent) of
+    NewState = case find_sent_query({IP, Port}, ID, Sent) of
         error ->
             State;
         {ok, {Client, _Timeout}} ->
             _ = gen_server:reply(Client, timeout),
-            NewSent = clear_sent_query(IP, Port, ID, Sent),
+            NewSent = clear_sent_query({IP, Port}, ID, Sent),
             State#state{sent=NewSent}
     end,
     {noreply, NewState};
@@ -265,34 +264,34 @@ handle_info({udp, _Socket, IP, Port, Packet}, State) ->
 
         {error, ID, Code, ErrorMsg} ->
             ok = lager:error("Received error from ~w:~w (~w) ~w", [IP, Port, Code, ErrorMsg]),
-            case find_sent_query(IP, Port, ID, Sent) of
+            case find_sent_query({IP, Port}, ID, Sent) of
                 error ->
                     State;
                 {ok, {Client, Timeout}} ->
                     _ = cancel_timeout(Timeout),
                     _ = gen_server:reply(Client, timeout),
-                    NewSent = clear_sent_query(IP, Port, ID, Sent),
+                    NewSent = clear_sent_query({IP, Port}, ID, Sent),
                     State#state{sent=NewSent}
             end;
 
         {response, ID, Values} ->
-            case find_sent_query(IP, Port, ID, Sent) of
+            case find_sent_query({IP, Port}, ID, Sent) of
                 error ->
                     State;
                 {ok, {Client, Timeout}} ->
                     _ = cancel_timeout(Timeout),
                     _ = gen_server:reply(Client, Values),
-                    NewSent = clear_sent_query(IP, Port, ID, Sent),
+                    NewSent = clear_sent_query({IP, Port}, ID, Sent),
                     State#state{sent=NewSent}
             end;
         {Method, ID, Params} ->
             ok = lager:info("Received ~w from ~w:~w", [Method, IP, Port]),
-            case find_sent_query(IP, Port, ID, Sent) of
+            case find_sent_query({IP, Port}, ID, Sent) of
                 {ok, {Client, Timeout}} ->
                     _ = cancel_timeout(Timeout),
                     _ = gen_server:reply(Client, timeout),
                     ok = lager:error("Bad node, don't send queries to yourself!"),
-                    NewSent = clear_sent_query(IP, Port, ID, Sent),
+                    NewSent = clear_sent_query({IP, Port}, ID, Sent),
                     State#state{sent=NewSent};
                 error ->
                     %% Handle request.
@@ -367,29 +366,24 @@ handle_query('announce', Params, IP, Port, MsgID, Self, Tokens) ->
     end,
     return(IP, Port, MsgID, common_values(Self)).
 
-gen_unique_message_id(IP, Port, #state { sent = Sent } = State) ->
+gen_unique_message_id(Peer, Sent) ->
     IntID = random:uniform(16#FFFF),
     MsgID = <<IntID:16>>,
-    case gb_trees:is_defined({IP, Port, MsgID}, Sent) of
+    case gb_trees:is_defined({Peer, MsgID}, Sent) of
         true ->
             %% That MsgID is already in use, recurse and try again
-            gen_unique_message_id(IP, Port, State);
+            gen_unique_message_id(Peer, Sent);
         false -> MsgID
     end.
 
-store_sent_query(IP, Port, ID, Client, TimeoutRef, Open) ->
-    K = {IP, Port, ID},
-    V = {Client, TimeoutRef},
-    gb_trees:insert(K, V, Open).
-
-find_sent_query(IP, Port, ID, Open) ->
-    case gb_trees:lookup({IP, Port, ID}, Open) of
+find_sent_query(Peer, ID, Open) ->
+    case gb_trees:lookup({Peer, ID}, Open) of
        none -> error;
        {value, Value} -> {ok, Value}
     end.
 
-clear_sent_query(IP, Port, ID, Open) ->
-    gb_trees:delete({IP, Port, ID}, Open).
+clear_sent_query(Peer, ID, Open) ->
+    gb_trees:delete({Peer, ID}, Open).
 
 get_string(What, PL) ->
     benc:get_binary_value(What, PL).
@@ -589,21 +583,16 @@ timeout_reference(IP, Port, ID) ->
 cancel_timeout(TimeoutRef) ->
     erlang:cancel_timer(TimeoutRef).
 
-send_query(Method, Args, IP, Port, From, #state { sent = Sent, socket = Socket } = State) ->
-    ok = lager:info("Sending ~w to ~w:~w", [Method, IP, Port]),
-
-    MsgID = gen_unique_message_id(IP, Port, Sent),
-    Query = dht_bt_proto:encode_query(Method, MsgID, Args),
+send_query(QueryData, {IP, Port} = Peer, From, #state { sent = Sent, socket = Socket } = State) ->
+    MsgID = gen_unique_message_id(Peer, Sent),
+    Query = dht_bt_proto:encode_query(QueryData, MsgID),
 
     case gen_udp:send(Socket, IP, Port, Query) of
         ok ->
             TRef = timeout_reference(IP, Port, MsgID),
-            ok = lager:info("Sent ~w to ~w:~w", [Method, IP, Port]),
-            {noreply, State#state{sent = store_sent_query(IP, Port, MsgID, From, TRef, Sent)}};
+            {noreply, State#state{sent = gb_trees:insert({Peer, MsgID}, {From, TRef}, Sent)}};
         {error, einval} ->
-            ok = lager:error("Error (einval) when sending ~w to ~w:~w", [Method, IP, Port]),
-            {reply, timeout, State};
+            {reply, {error, einval}, State};
         {error, eagain} ->
-            ok = lager:error("Error (eagain) when sending ~w to ~w:~w", [Method, IP, Port]),
-            {reply, timeout, State}
+            {reply, {error, eagain}, State}
     end.
