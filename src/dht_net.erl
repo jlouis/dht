@@ -72,6 +72,7 @@
 }).
 
 -define(TOKEN_LIFETIME, 5 * 60 * 1000).
+-define(UDP_MAILBOX_SZ, 16).
 
 %
 % Constants and settings
@@ -82,7 +83,7 @@ search_retries() -> 4.
 
 socket_options() ->
     {ok, Base} = application:get_env(dht, listen_opts),
-    [list, inet, {active, true} | Base].
+    [list, inet, {active, ?UDP_MAILBOX_SZ} | Base].
 
 
 %
@@ -206,10 +207,10 @@ handle_call({announce, Peer, InfoHash, Token, BTPort}, From, State) ->
         {<<"port">>, BTPort},
         {<<"token">>, Token} | common_values()],
     send_query({announce, Args}, Peer, From, State);
-handle_call({return, {IP, Port}, ID, Values}, _From, State) ->
+handle_call({return, {IP, Port}, ID, Response}, _From, State) ->
     Socket = State#state.socket,
-    Response = dht_bt_proto:encode_response(ID, Values),
-    ok = case gen_udp:send(Socket, IP, Port, Response) of
+    Encoded = dht_bt_proto:encode_response(ID, Response),
+    ok = case gen_udp:send(Socket, IP, Port, Encoded) of
         ok -> ok;
         {error, einval} -> ok;
         {error, eagain} -> ok
@@ -239,10 +240,13 @@ handle_info(renew_token, #state { tokens = Tokens } = State) ->
     Cycled = queue:in(random_token(), queue:drop(Tokens)),
     erlang:send_after(?TOKEN_LIFETIME, self(), renew_token),
     {noreply, State#state { tokens = Cycled }};
-handle_info({udp, _Socket, IP, Port, Packet}, State) ->
-    #state{
-        sent=Sent,
-        tokens=Tokens} = State,
+%%
+%% Handle an incoming UDP message on the socket
+%%
+handle_info({udp_passive, Socket}, #state { socket = Socket } = State) ->
+	inet:setopts(Socket, [{active, ?UDP_MAILBOX_SZ}]),
+	{noreply, State};
+handle_info({udp, _Socket, IP, Port, Packet}, #state{ sent = Sent, tokens = Tokens} = State) ->
     Self = dht_state:node_id(),
     NewState = case (catch dht_bt_proto:decode_msg(Packet)) of
         {'EXIT', _} ->
@@ -324,8 +328,6 @@ handle_query('find_node', Params, IP, Port, MsgID, Self, _Tokens) ->
     return(IP, Port, MsgID, common_values(Self) ++ Values);
 handle_query('get_peers', Params, IP, Port, MsgID, Self, Tokens) ->
     InfoHash = dht:integer_id(benc:get_value(<<"info_hash">>, Params)),
-    ok = lager:debug("Take request get_peers from ~p:~p for ~s.",
-                [IP, Port, integer_hash_to_literal(InfoHash)]),
     %% TODO: handle non-local requests.
     Values = case dht_tracker:get_peers(InfoHash) of
         [] ->
@@ -337,12 +339,11 @@ handle_query('get_peers', Params, IP, Port, MsgID, Self, Tokens) ->
             PeerList = [peers_to_compact([P]) || P <- Peers],
             [{<<"values">>, PeerList}]
     end,
-    Token = [{<<"token">>, token_value(IP, Port, Tokens)}],
+    RecentToken = queue:last(Tokens),
+    Token = [{<<"token">>, token_value(IP, Port, RecentToken)}],
     return(IP, Port, MsgID, common_values(Self) ++ Token ++ Values);
 handle_query('announce', Params, IP, Port, MsgID, Self, Tokens) ->
     InfoHash = dht:integer_id(benc:get_value(<<"info_hash">>, Params)),
-    ok = lager:info("Announce from ~p:~p for ~s~n",
-                [IP, Port, integer_hash_to_literal(InfoHash)]),
     BTPort = benc:get_value(<<"port">>,   Params),
     Token = get_string(<<"token">>, Params),
     case is_valid_token(Token, IP, Port, Tokens) of
@@ -392,12 +393,9 @@ random_token() ->
 % and Port number combined with a secret token value held by the socket server.
 % This avoids the need to store unique token values in the socket server.
 %
-token_value(IP, Port, Token) when is_binary(Token) ->
+token_value(IP, Port, Token) ->
     Hash = erlang:phash2({IP, Port, Token}),
-    <<Hash:32>>;
-token_value(IP, Port, Tokens) ->
-    MostRecent = queue:last(Tokens),
-    token_value(IP, Port, MostRecent).
+    <<Hash:32>>.
 
 %
 % Check if a token value included by a node in an announce message is bogus
@@ -422,11 +420,6 @@ node_infos_to_compact([], Acc) ->
 node_infos_to_compact([{ID, {A0, A1, A2, A3}, Port}|T], Acc) ->
     CNode = <<ID:160, A0, A1, A2, A3, Port:16>>,
     node_infos_to_compact(T, <<Acc/binary, CNode/binary>>).
-
-
-integer_hash_to_literal(InfoHashInt) when is_integer(InfoHashInt) ->
-    io_lib:format("~40.16.0B", [InfoHashInt]).
-
 
 %% @doc Delete node with `IP' and `Port' from the list.
 filter_node(IP, Port, Nodes) ->
