@@ -154,14 +154,6 @@ return(IP, Port, ID, Response) ->
 %% SEARCH API
 %% ---------------------------------------------------
 
-%
-% Recursively search for the 100 nodes that are the closest to
-% the local DHT node.
-%
-% Keep tabs on:
-%     - Which nodes has been queried?
-%     - Which nodes has responded?
-%     - Which nodes has not been queried?
 -spec find_node_search(dht:node_id()) -> list(dht:node_info()).
 find_node_search(NodeID) ->
     Width = search_width(),
@@ -187,18 +179,16 @@ get_peers_search(InfoHash, Nodes) ->
     dht_iter_search(get_peers, InfoHash, Width, Retry, Nodes).
 
 
-%%% CALLBACKS
+%% CALLBACKS
 %% ---------------------------------------------------
-
-
 
 init([DHTPort]) ->
     {ok, Socket} = gen_udp:open(DHTPort, socket_options()),
-    State = #state{socket=Socket,
-                   sent=gb_trees:empty(),
-                   tokens=init_tokens(3)},
     erlang:send_after(?TOKEN_LIFETIME, self(), renew_token),
-    {ok, State}.
+    {ok, #state{
+    	socket=Socket, 
+    	sent=gb_trees:empty(),
+    	tokens= queue:from_list([random_token() || _ <- lists:seq(1, 3)])}}.
 
 handle_call({ping, Peer}, From, State) ->
     Args = common_values(),
@@ -220,14 +210,9 @@ handle_call({return, {IP, Port}, ID, Values}, _From, State) ->
     Socket = State#state.socket,
     Response = dht_bt_proto:encode_response(ID, Values),
     ok = case gen_udp:send(Socket, IP, Port, Response) of
-        ok ->
-            ok;
-        {error, einval} ->
-            ok = lager:error("Error (einval) when returning to ~w:~w", [IP, Port]),
-            ok;
-        {error, eagain} ->
-            ok = lager:error("Error (eagain) when returning to ~w:~w", [IP, Port]),
-            ok
+        ok -> ok;
+        {error, einval} -> ok;
+        {error, eagain} -> ok
     end,
     {reply, ok, State};
 handle_call(node_port, _From, #state { socket = Socket } = State) ->
@@ -237,18 +222,16 @@ handle_call(node_port, _From, #state { socket = Socket } = State) ->
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-handle_info({timeout, _, IP, Port, ID}, State) ->
-    #state{sent=Sent} = State,
-
-    NewState = case find_sent_query({IP, Port}, ID, Sent) of
-        error ->
-            State;
-        {ok, {Client, _Timeout}} ->
-            _ = gen_server:reply(Client, timeout),
-            NewSent = clear_sent_query({IP, Port}, ID, Sent),
-            State#state{sent=NewSent}
-    end,
-    {noreply, NewState};
+%%
+%% If a request times out, a timer will trigger. Clean up the query and respond back to the caller when this happens.
+%%
+handle_info({request_timeout, _, Key}, #state{sent = Active} = State) ->
+	case gb_trees:lookup(Key, Active) of
+	    none -> {noreply, State};
+	    {ok, {Client, _Timeout}} ->
+	        ok = gen_server:reply(Client, {error, timeout}),
+	        {noreply, State#state { sent = gb_trees:delete(Key, Active) }}
+	 end;
 %%
 %% Token renewal is called whenever the tokens grows too old. Cycle the tokens to make sure they wither and die over time.
 %%
@@ -403,14 +386,6 @@ random_token() ->
     ID0 = random:uniform(16#FFFF),
     ID1 = random:uniform(16#FFFF),
     <<ID0:16, ID1:16>>.
-
-%
-% Initialize the socket server's token queue, the size of this queue
-% will be kept constant during the running-time of the server. The
-% size of this queue specifies how old tokens the server will accept.
-%
-init_tokens(NumTokens) ->
-    queue:from_list([random_token() || _ <- lists:seq(1, NumTokens)]).
 
 %
 % Calculate the token value for a client based on the client's IP address
@@ -576,10 +551,6 @@ dht_iter_search(SearchType, Target, Width, Retry, Retries,
     dht_iter_search(SearchType, Target, Width, Retry, NewRetries,
                     NewNext2, NewQueried, NewAlive, NewWithPeers).
 
-timeout_reference(IP, Port, ID) ->
-    Msg = {timeout, self(), IP, Port, ID},
-    erlang:send_after(query_timeout(), self(), Msg).
-
 cancel_timeout(TimeoutRef) ->
     erlang:cancel_timer(TimeoutRef).
 
@@ -587,12 +558,14 @@ send_query(QueryData, {IP, Port} = Peer, From, #state { sent = Sent, socket = So
     MsgID = gen_unique_message_id(Peer, Sent),
     Query = dht_bt_proto:encode_query(QueryData, MsgID),
 
-    case gen_udp:send(Socket, IP, Port, Query) of
-        ok ->
-            TRef = timeout_reference(IP, Port, MsgID),
-            {noreply, State#state{sent = gb_trees:insert({Peer, MsgID}, {From, TRef}, Sent)}};
-        {error, einval} ->
-            {reply, {error, einval}, State};
-        {error, eagain} ->
-            {reply, {error, eagain}, State}
-    end.
+    handle_correlated_send(
+    	gen_udp:send(Socket, IP, Port, Query),
+    	{Peer, MsgID},
+    	From,
+    	State).
+    
+handle_correlated_send(ok, Key, From, #state { sent = Active } = State) ->
+	TRef = erlang:send_after(query_timeout(), self(), {request_timeout, self(), Key}),
+	{noreply, State#state{sent = gb_trees:insert(Key, {From, TRef}, Active)}};
+handle_correlated_send({error, Reason}, _, _, State) ->
+	{reply, {error, Reason}, State}.
