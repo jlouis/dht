@@ -3,6 +3,8 @@
 -export([decode_msg/1, decode_response/2]).
 -export([encode_query/2, encode_response/2]).
 
+-export([handle_query/6]).
+
 decode_msg(InMsg) ->
     {ok, Msg} = benc:decode(InMsg),
     MsgID = benc:get_value(<<"t">>, Msg),
@@ -45,13 +47,24 @@ decode_response(get_peers, Values) ->
     {ID, Token, Peers, Nodes};
 decode_response(announce, Values) ->
     dht:integer_id(benc:get_value(<<"id">>, Values)).
-    
-encode_query({Method, Params}, MsgID) ->
-    Msg = [
-       {<<"y">>, <<"q">>},
-       {<<"q">>, encode_method(Method)},
-       {<<"t">>, MsgID},
-       {<<"a">>, Params}],
+
+encode_query(Req, MsgID) ->
+    case Req of
+        ping -> encode_request(<<"ping">>, [], MsgID);
+        {find_node, Target} -> encode_request(<<"find_node">>, [{<<"target">>, <<Target:160>>}], MsgID);
+        {get_peers, InfoHash} -> encode_request(<<"get_peers">>, [{<<"info_hash">>, <<InfoHash:160>>}], MsgID);
+        {announce, InfoHash, Token, BTPort} ->
+        	LHash = dht:bin_id(InfoHash),
+        	encode_request(
+        		<<"announce_peer">>,
+        		[{<<"info_hash">>, LHash},
+        		 {<<"port">>, BTPort},
+        		 {<<"token">>, Token}],
+        		MsgID)
+    end.
+
+encode_request(Method, Params, MsgID) ->
+    Msg = [{<<"y">>, <<"q">>}, {<<"q">>, Method}, {<<"t">>, MsgID}, {<<"a">>, Params ++ common_params()}],
     benc:encode(Msg).
 
 encode_response(MsgID, Values) ->
@@ -61,10 +74,45 @@ encode_response(MsgID, Values) ->
        {<<"r">>, Values}],
     benc:encode(Msg).
 
-encode_method(ping) -> <<"ping">>;
-encode_method(find_node) -> <<"find_node">>;
-encode_method(get_peers) -> <<"get_peers">>;
-encode_method(announce) -> <<"announce_peer">>.
+handle_query(ping, _, Peer, MsgID, Self, _Tokens) ->
+    dht_net:return(Peer, MsgID, common_params(Self));
+handle_query('find_node', Params, Peer, MsgID, Self, _Tokens) ->
+    Target = dht:integer_id(benc:get_value(<<"target">>, Params)),
+    CloseNodes = filter_node(Peer, dht_state:closest_to(Target)),
+    BinCompact = node_infos_to_compact(CloseNodes),
+    Values = [{<<"nodes">>, BinCompact}],
+    dht_net:return(Peer, MsgID, common_params(Self) ++ Values);
+handle_query('get_peers', Params, Peer, MsgID, Self, Tokens) ->
+    InfoHash = dht:integer_id(benc:get_value(<<"info_hash">>, Params)),
+    %% TODO: handle non-local requests.
+    Values = case dht_tracker:get_peers(InfoHash) of
+        [] ->
+            Nodes = filter_node(Peer, dht_state:closest_to(InfoHash)),
+            BinCompact = node_infos_to_compact(Nodes),
+            [{<<"nodes">>, BinCompact}];
+        Peers ->
+            ok = lager:debug("Get a list of peers from the local tracker ~p", [Peers]),
+            PeerList = [peers_to_compact([P]) || P <- Peers],
+            [{<<"values">>, PeerList}]
+    end,
+    RecentToken = queue:last(Tokens),
+    Token = [{<<"token">>, token_value(Peer, RecentToken)}],
+    dht_net:return(Peer, MsgID, common_params(Self) ++ Token ++ Values);
+handle_query('announce', Params, {IP, _} = Peer, MsgID, Self, Tokens) ->
+    InfoHash = dht:integer_id(benc:get_value(<<"info_hash">>, Params)),
+    BTPort = benc:get_value(<<"port">>,   Params),
+    Token = benc:get_binary_value(<<"token">>, Params),
+    case is_valid_token(Token, Peer, Tokens) of
+        true ->
+            %% TODO: handle non-local requests.
+            dht_tracker:announce(InfoHash, IP, BTPort);
+        false ->
+            ok = lager:error("Invalid token from ~p: ~w", [Peer, Token])
+    end,
+    dht_net:return(Peer, MsgID, common_params(Self)).
+
+%% INTERNAL FUNCTIONS
+%% --------------------------------------------
 
 decode_method(<<"ping">>) -> ping;
 decode_method(<<"find_node">>) -> find_node;
@@ -83,4 +131,16 @@ compact_to_peers(<<>>) -> [];
 compact_to_peers(<<A0, A1, A2, A3, Port:16, Rest/binary>>) ->
     Addr = {A0, A1, A2, A3},
     [{Addr, Port}|compact_to_peers(Rest)].
+
+%% Default args. Returns a proplist of default args
+common_params() ->
+    NodeID = dht_state:node_id(),
+    common_params(NodeID).
+
+common_params(NodeID) ->
+    [{<<"id">>, dht:bin_id(NodeID)}].
+
+%% @doc Delete node with `IP' and `Port' from the list.
+filter_node({IP, Port}, Nodes) ->
+    [X || {_NID, NIP, NPort}=X <- Nodes, NIP =/= IP orelse NPort =/= Port].
 
