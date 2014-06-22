@@ -229,7 +229,7 @@ handle_cast(_Msg, State) ->
 handle_info({request_timeout, _, Key}, #state{sent = Active} = State) ->
 	case gb_trees:lookup(Key, Active) of
 	    none -> {noreply, State};
-	    {ok, {Client, _Timeout}} ->
+	    {value, {Client, _Timeout}} ->
 	        ok = gen_server:reply(Client, {error, timeout}),
 	        {noreply, State#state { sent = gb_trees:delete(Key, Active) }}
 	 end;
@@ -244,59 +244,33 @@ handle_info(renew_token, #state { tokens = Tokens } = State) ->
 %% Handle an incoming UDP message on the socket
 %%
 handle_info({udp_passive, Socket}, #state { socket = Socket } = State) ->
-	inet:setopts(Socket, [{active, ?UDP_MAILBOX_SZ}]),
+	ok = inet:setopts(Socket, [{active, ?UDP_MAILBOX_SZ}]),
 	{noreply, State};
 handle_info({udp, _Socket, IP, Port, Packet}, #state{ sent = Sent, tokens = Tokens} = State) ->
     Self = dht_state:node_id(),
-    NewState = case (catch dht_bt_proto:decode_msg(Packet)) of
-        {'EXIT', _} ->
-            ok = lager:error("Invalid packet from ~w:~w: ~w", [IP, Port, Packet]),
-            State;
-
-        {error, ID, Code, ErrorMsg} ->
-            ok = lager:error("Received error from ~w:~w (~w) ~w", [IP, Port, Code, ErrorMsg]),
-            case find_sent_query({IP, Port}, ID, Sent) of
-                error ->
-                    State;
-                {ok, {Client, Timeout}} ->
-                    _ = cancel_timeout(Timeout),
-                    _ = gen_server:reply(Client, timeout),
-                    NewSent = clear_sent_query({IP, Port}, ID, Sent),
-                    State#state{sent=NewSent}
-            end;
-
-        {response, ID, Values} ->
-            case find_sent_query({IP, Port}, ID, Sent) of
-                error ->
-                    State;
-                {ok, {Client, Timeout}} ->
-                    _ = cancel_timeout(Timeout),
-                    _ = gen_server:reply(Client, Values),
-                    NewSent = clear_sent_query({IP, Port}, ID, Sent),
-                    State#state{sent=NewSent}
-            end;
-        {Method, ID, Params} ->
-            ok = lager:info("Received ~w from ~w:~w", [Method, IP, Port]),
-            case find_sent_query({IP, Port}, ID, Sent) of
-                {ok, {Client, Timeout}} ->
-                    _ = cancel_timeout(Timeout),
-                    _ = gen_server:reply(Client, timeout),
-                    ok = lager:error("Bad node, don't send queries to yourself!"),
-                    NewSent = clear_sent_query({IP, Port}, ID, Sent),
-                    State#state{sent=NewSent};
-                error ->
-                    %% Handle request.
-                    SNID = get_string("id", Params),
-                    NID = dht:integer_id(SNID),
-                    spawn_link(dht_state, safe_insert_node, [NID, IP, Port]),
-                    HandlerArgs = [Method, Params, IP, Port, ID, Self, Tokens],
-                    spawn_link(?MODULE, handle_query, HandlerArgs),
-                    State
-            end
-    end,
-    {noreply, NewState};
+    case view_packet_decode(Packet) of
+        invalid_decode ->
+        	{noreply, State};
+        {valid, ID, M} ->
+        	Key = {{IP, Port}, ID},
+        	case {gb_trees:lookup(Key, Sent), M} of
+        	    {none, {response, _, _}} -> {noreply, State};
+        	    {none, {error, _, _, _}} -> {noreply, State};
+        	    {none, {Method, ID, Params}} ->
+        	        %% Incoming request, handle it
+        	        NodeID = dht:integer_id(benc:get_binary_value("id", Params)),
+        	        spawn_link( fun() -> dht_state:safe_insert_node(NodeID, IP, Port) end),
+        	        spawn_link( fun() -> ?MODULE:handle_query(Method, Params, IP, Port, ID, Self, Tokens) end),
+        	    	{noreply, State};
+        	    {{value, {Client, TRef}}, _} ->
+        	        _ = erlang:cancel_timer(TRef),
+        	        handle_message(Client, M),
+        	        {noreply, State#state { sent = gb_trees:delete(Key, Sent) }}
+        	end
+    end;
 handle_info(_Msg, State) ->
     {noreply, State}.
+
 
 terminate(_, _State) ->
     ok.
@@ -306,6 +280,24 @@ code_change(_, State, _) ->
 
 %% INTERNAL FUNCTIONS
 %% ---------------------------------------------------
+
+handle_message(Client, {error, _ID, _Code, _ErrorMsg}) ->
+	ok = gen_server:reply(Client, timeout);
+handle_message(Client, {response, _ID, Values}) ->
+	ok = gen_server:reply(Client, Values);
+handle_message(_Client, {_Method, _ID, _Values}) ->
+	ok = lager:error("Bad node, don't send queries to yourself!"),
+	exit(bad_node).
+
+view_packet_decode(Packet) ->
+    try dht_bt_proto:decode_msg(Packet) of
+        {error, ID, _Code, _ErrorMsg} = E -> {valid, ID, E};
+        {response, ID, _Values} = V -> {valid, ID, V};
+        {_Method, ID, _Params} = M -> {valid, ID, M}
+    catch
+        _Class:_Error ->
+            invalid_decode
+    end.
 
 %% Default args. Returns a proplist of default args
 common_values() ->
@@ -345,7 +337,7 @@ handle_query('get_peers', Params, IP, Port, MsgID, Self, Tokens) ->
 handle_query('announce', Params, IP, Port, MsgID, Self, Tokens) ->
     InfoHash = dht:integer_id(benc:get_value(<<"info_hash">>, Params)),
     BTPort = benc:get_value(<<"port">>,   Params),
-    Token = get_string(<<"token">>, Params),
+    Token = benc:get_binary_value(<<"token">>, Params),
     case is_valid_token(Token, IP, Port, Tokens) of
         true ->
             %% TODO: handle non-local requests.
@@ -366,18 +358,6 @@ gen_unique_message_id(Peer, Sent) ->
             gen_unique_message_id(Peer, Sent);
         false -> MsgID
     end.
-
-find_sent_query(Peer, ID, Open) ->
-    case gb_trees:lookup({Peer, ID}, Open) of
-       none -> error;
-       {value, Value} -> {ok, Value}
-    end.
-
-clear_sent_query(Peer, ID, Open) ->
-    gb_trees:delete({Peer, ID}, Open).
-
-get_string(What, PL) ->
-    benc:get_binary_value(What, PL).
 
 %
 % Generate a random token value. A token value is used to filter out bogus announce
@@ -543,9 +523,6 @@ dht_iter_search(SearchType, Target, Width, Retry, Retries,
     NewNext2 = lists:usort(NewNext),
     dht_iter_search(SearchType, Target, Width, Retry, NewRetries,
                     NewNext2, NewQueried, NewAlive, NewWithPeers).
-
-cancel_timeout(TimeoutRef) ->
-    erlang:cancel_timer(TimeoutRef).
 
 send_query(QueryData, {IP, Port} = Peer, From, #state { sent = Sent, socket = Socket } = State) ->
     MsgID = gen_unique_message_id(Peer, Sent),
