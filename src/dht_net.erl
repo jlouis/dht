@@ -5,46 +5,46 @@
 
 -behaviour(gen_server).
 
-%
-% Implementation notes
-%     RPC calls to remote nodes in the DHT are exposed to
-%     clients using the gen_server call mechanism. In order
-%     to make this work the client reference passed to the
-%     handle_call/3 callback is stored in the server state.
-%
-%     When a response is received from the remote node, the
-%     source IP and port combined with the message id is used
-%     to map the response to the correct client reference.
-%
-%     A timer is used to notify the server of requests that
-%     time out, if a request times out {error, timeout} is
-%     returned to the client. If a response is received after
-%     the timer has fired, the response is dropped.
-%
-%     The expected behavior is that the high-level timeout fires
-%     before the gen_server call times out, therefore this interval
-%     should be shorter then the interval used by gen_server calls.
-%
-%     The find_node_search/1 and get_peers_search/1 functions
-%     are almost identical, they both recursively search for the
-%     nodes closest to an id. The difference is that get_peers should
-%     return as soon as it finds a node that acts as a tracker for
-%     the infohash.
+%%
+%% Implementation notes
+%%     RPC calls to remote nodes in the DHT are written by use of a gen_server proxy. The proxy maintains an internal correlation table
+%%     from requests to replies so a given reply can be matched up with the correct requestor. It uses the standard gen_server:call/3
+%%     approach to handling calls in the DHT.
+%%
+%%     A timer is used to notify the server of requests that
+%%     time out, if a request times out {error, timeout} is
+%%     returned to the client. If a response is received after
+%%     the timer has fired, the response is dropped.
+%%
+%%     The expected behavior is that the high-level timeout fires
+%%     before the gen_server call times out, therefore this interval
+%%     should be shorter then the interval used by gen_server calls.
+%%
+%%     The find_node_search/1 and get_peers_search/1 functions
+%%     are almost identical, they both recursively search for the
+%%     nodes closest to an id. The difference is that get_peers should
+%%     return as soon as it finds a node that acts as a tracker for
+%%     the infohash.
 
-% Public interface
--export([start_link/1]).
+%% Lifetime interface. Mostly has to do with setup and configuration
+-export([start_link/1, node_port/0]).
 
+%% DHT API
 -export([
-         node_port/0,
-         ping/2,
+         announce/5,
          find_node/3,
+         get_peers/3,
+         ping/2,
+         return/4
+]).
+
+%% API for iterative search functions
+-export([
          find_node_search/1,
          find_node_search/2,
-         get_peers/3,
          get_peers_search/1,
-         get_peers_search/2,
-         announce/5,
-         return/4]).
+         get_peers_search/2
+]).
 
 
 -type trackerinfo() :: {dht:node_id(), inet:ip_address(), inet:port_number(), token()}.
@@ -105,7 +105,7 @@ node_port() ->
 %% @end
 -spec ping(inet:ip_address(), inet:port_number()) -> pang | dht:node_id().
 ping(IP, Port) ->
-    case gen_server:call(?MODULE, {ping, IP, Port}) of
+    case gen_server:call(?MODULE, {ping, {IP, Port}}) of
         timeout -> pang;
         Values ->
             dht_bt_proto:decode_response(ping, Values)
@@ -117,7 +117,7 @@ ping(IP, Port) ->
 -spec find_node(inet:ip_address(), inet:port_number(), dht:node_id()) ->
     {'error', 'timeout'} | {dht:node_id(), list(dht:node_info())}.
 find_node(IP, Port, Target)  ->
-    case gen_server:call(?MODULE, {find_node, IP, Port, Target}) of
+    case gen_server:call(?MODULE, {find_node, {IP, Port}, Target}) of
         timeout ->
             {error, timeout};
         Values  ->
@@ -129,12 +129,29 @@ find_node(IP, Port, Target)  ->
 -spec get_peers(inet:ip_address(), inet:port_number(), infohash()) ->
     {dht:node_id(), token(), list(dht:peer_info()), list(dht:node_info())} | {error, any()}.
 get_peers(IP, Port, InfoHash)  ->
-    case gen_server:call(?MODULE, {get_peers, IP, Port, InfoHash}) of
+    case gen_server:call(?MODULE, {get_peers, {IP, Port}, InfoHash}) of
         timeout ->
             {error, timeout};
         Values ->
             dht_bt_proto:decode_response(get_peers, Values)
     end.
+    
+-spec announce(inet:ip_address(), inet:port_number(), infohash(), token(), inet:port_number()) ->
+    {'error', 'timeout'} | dht:node_id().
+announce(IP, Port, InfoHash, Token, BTPort) ->
+    Announce = {announce, {IP, Port}, InfoHash, Token, BTPort},
+    case gen_server:call(?MODULE, Announce) of
+        timeout -> {error, timeout};
+        Values ->
+            dht_bt_proto:decode_response(announce, Values)
+    end.
+
+-spec return(inet:ip_address(), inet:port_number(), transaction(), list()) -> 'ok'.
+return(IP, Port, ID, Response) ->
+    ok = gen_server:call(?MODULE, {return, {IP, Port}, ID, Response}).
+
+%% SEARCH API
+%% ---------------------------------------------------
 
 %
 % Recursively search for the 100 nodes that are the closest to
@@ -144,7 +161,6 @@ get_peers(IP, Port, InfoHash)  ->
 %     - Which nodes has been queried?
 %     - Which nodes has responded?
 %     - Which nodes has not been queried?
-% FIXME: It returns `[{649262719799963483759422800960489108797112648079,{127,0,0,2},1743},{badrpc,{127,0,0,4},1763}]'.
 -spec find_node_search(dht:node_id()) -> list(dht:node_info()).
 find_node_search(NodeID) ->
     Width = search_width(),
@@ -168,22 +184,12 @@ get_peers_search(InfoHash, Nodes) ->
     Width = search_width(),
     Retry = search_retries(),
     dht_iter_search(get_peers, InfoHash, Width, Retry, Nodes).
-    
--spec announce(inet:ip_address(), inet:port_number(), infohash(), token(), inet:port_number()) ->
-    {'error', 'timeout'} | dht:node_id().
-announce(IP, Port, InfoHash, Token, BTPort) ->
-    Announce = {announce, IP, Port, InfoHash, Token, BTPort},
-    case gen_server:call(?MODULE, Announce) of
-        timeout -> {error, timeout};
-        Values ->
-            dht_bt_proto:decode_response(announce, Values)
-    end.
 
--spec return(inet:ip_address(), inet:port_number(), transaction(), list()) -> 'ok'.
-return(IP, Port, ID, Response) ->
-    ok = gen_server:call(?MODULE, {return, IP, Port, ID, Response}).
 
 %%% CALLBACKS
+%% ---------------------------------------------------
+
+
 
 init([DHTPort]) ->
     {ok, Socket} = gen_udp:open(DHTPort, socket_options()),
@@ -312,6 +318,9 @@ terminate(_, _State) ->
 
 code_change(_, State, _) ->
     {ok, State}.
+
+%% INTERNAL FUNCTIONS
+%% ---------------------------------------------------
 
 %% Default args. Returns a proplist of default args
 common_values() ->
