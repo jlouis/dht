@@ -71,6 +71,8 @@
     tokens :: queue:queue()
 }).
 
+-define(TOKEN_LIFETIME, 5 * 60 * 1000).
+
 %
 % Constants and settings
 %
@@ -82,7 +84,6 @@ socket_options() ->
     {ok, Base} = application:get_env(dht, listen_opts),
     [list, inet, {active, true} | Base].
 
-token_lifetime() -> 5*60*1000.
 
 %
 % Public interface
@@ -97,7 +98,7 @@ start_link(DHTPort) ->
 %% @end
 -spec node_port() -> inet:port_number().
 node_port() ->
-    gen_server:call(?MODULE, get_node_port).
+    gen_server:call(?MODULE, node_port).
 
 %% @doc ping/2 sends a ping to a node
 %% Calling `ping(IP, Port)' will send a ping message to the IP/Port pair and wait for a result to come back.
@@ -196,7 +197,7 @@ init([DHTPort]) ->
     State = #state{socket=Socket,
                    sent=gb_trees:empty(),
                    tokens=init_tokens(3)},
-    erlang:send_after(token_lifetime(), self(), renew_token),
+    erlang:send_after(?TOKEN_LIFETIME, self(), renew_token),
     {ok, State}.
 
 handle_call({ping, Peer}, From, State) ->
@@ -229,13 +230,9 @@ handle_call({return, {IP, Port}, ID, Values}, _From, State) ->
             ok
     end,
     {reply, ok, State};
-handle_call(get_node_port, _From, #state { socket = Socket } = State) ->
+handle_call(node_port, _From, #state { socket = Socket } = State) ->
     {ok, {_, Port}} = inet:sockname(Socket),
-    {reply, Port, State};
-handle_call({get_num_open}, _From, State) ->
-    Sent = State#state.sent,
-    NumSent = gb_trees:size(Sent),
-    {reply, NumSent, State}.
+    {reply, Port, State}.
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
@@ -252,12 +249,13 @@ handle_info({timeout, _, IP, Port, ID}, State) ->
             State#state{sent=NewSent}
     end,
     {noreply, NewState};
-handle_info(renew_token, State) ->
-    #state{tokens=PrevTokens} = State,
-    NewTokens = renew_token(PrevTokens),
-    NewState = State#state{tokens=NewTokens},
-    erlang:send_after(token_lifetime(), self(), renew_token),
-    {noreply, NewState};
+%%
+%% Token renewal is called whenever the tokens grows too old. Cycle the tokens to make sure they wither and die over time.
+%%
+handle_info(renew_token, #state { tokens = Tokens } = State) ->
+    Cycled = queue:in(random_token(), queue:drop(Tokens)),
+    erlang:send_after(?TOKEN_LIFETIME, self(), renew_token),
+    {noreply, State#state { tokens = Cycled }};
 handle_info({udp, _Socket, IP, Port, Packet}, State) ->
     #state{
         sent=Sent,
@@ -433,13 +431,6 @@ token_value(IP, Port, Tokens) ->
 is_valid_token(TokenValue, IP, Port, Tokens) ->
     ValidValues = [token_value(IP, Port, Token) || Token <- queue:to_list(Tokens)],
     lists:member(TokenValue, ValidValues).
-
-%
-% Discard the oldest token and create a new one to replace it.
-%
-renew_token(Tokens) ->
-    {_, WithoutOldest} = queue:out(Tokens),
-    queue:in(random_token(), WithoutOldest).
 
 peers_to_compact(PeerList) ->
     peers_to_compact(PeerList, <<>>).
