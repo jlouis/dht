@@ -144,3 +144,26 @@ common_params(NodeID) ->
 filter_node({IP, Port}, Nodes) ->
     [X || {_NID, NIP, NPort}=X <- Nodes, NIP =/= IP orelse NPort =/= Port].
 
+node_infos_to_compact(NodeList) ->
+    node_infos_to_compact(NodeList, <<>>).
+node_infos_to_compact([], Acc) ->
+    Acc;
+node_infos_to_compact([{ID, {A0, A1, A2, A3}, Port}|T], Acc) ->
+    CNode = <<ID:160, A0, A1, A2, A3, Port:16>>,
+    node_infos_to_compact(T, <<Acc/binary, CNode/binary>>).
+    
+peers_to_compact(PeerList) ->
+    peers_to_compact(PeerList, <<>>).
+peers_to_compact([], Acc) ->
+    Acc;
+peers_to_compact([{{A0, A1, A2, A3}, Port}|T], Acc) ->
+    CPeer = <<A0, A1, A2, A3, Port:16>>,
+    peers_to_compact(T, <<Acc/binary, CPeer/binary>>).
+
+token_value({IP, Port}, Token) ->
+    Hash = erlang:phash2({IP, Port, Token}),
+    <<Hash:32>>.
+    
+is_valid_token(TokenValue, Peer, Tokens) ->
+    ValidValues = [token_value(Peer, Token) || Token <- queue:to_list(Tokens)],
+    lists:member(TokenValue, ValidValues).

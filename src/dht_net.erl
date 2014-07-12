@@ -50,7 +50,7 @@
 -type trackerinfo() :: {dht:node_id(), inet:ip_address(), inet:port_number(), token()}.
 -type infohash() :: integer().
 -type token() :: binary().
--type dht_qtype() :: ping | find_node | get_peers | announce. %% This has to change
+%%  -type dht_qtype() :: ping | find_node | get_peers | announce. %% This has to change
 
 % gen_server callbacks
 -export([init/1,
@@ -61,7 +61,6 @@
          code_change/3]).
 
 % internal exports
--export([handle_query/6]).
 
 -record(state, {
     socket :: inet:socket(),
@@ -287,8 +286,6 @@ view_packet_decode(Packet) ->
             invalid_decode
     end.
 
--spec handle_query(dht_qtype(), benc:t(), {inet:ip_address(), inet:port_number()}, token(), dht:node_id(), _) -> 'ok'.
-
 gen_unique_message_id(Peer, Sent) ->
     IntID = random:uniform(16#FFFF),
     MsgID = <<IntID:16>>,
@@ -307,39 +304,6 @@ random_token() ->
     ID0 = random:uniform(16#FFFF),
     ID1 = random:uniform(16#FFFF),
     <<ID0:16, ID1:16>>.
-
-%
-% Calculate the token value for a client based on the client's IP address
-% and Port number combined with a secret token value held by the socket server.
-% This avoids the need to store unique token values in the socket server.
-%
-token_value({IP, Port}, Token) ->
-    Hash = erlang:phash2({IP, Port, Token}),
-    <<Hash:32>>.
-
-%
-% Check if a token value included by a node in an announce message is bogus
-% (based on a token that is not recent enough).
-%
-is_valid_token(TokenValue, Peer, Tokens) ->
-    ValidValues = [token_value(Peer, Token) || Token <- queue:to_list(Tokens)],
-    lists:member(TokenValue, ValidValues).
-
-peers_to_compact(PeerList) ->
-    peers_to_compact(PeerList, <<>>).
-peers_to_compact([], Acc) ->
-    Acc;
-peers_to_compact([{{A0, A1, A2, A3}, Port}|T], Acc) ->
-    CPeer = <<A0, A1, A2, A3, Port:16>>,
-    peers_to_compact(T, <<Acc/binary, CPeer/binary>>).
-
-node_infos_to_compact(NodeList) ->
-    node_infos_to_compact(NodeList, <<>>).
-node_infos_to_compact([], Acc) ->
-    Acc;
-node_infos_to_compact([{ID, {A0, A1, A2, A3}, Port}|T], Acc) ->
-    CNode = <<ID:160, A0, A1, A2, A3, Port:16>>,
-    node_infos_to_compact(T, <<Acc/binary, CNode/binary>>).
 
 dht_iter_search(SearchType, Target, Width, Retry, Nodes)  ->
     WithDist = [{dht:distance(ID, Target), ID, IP, Port} || {ID, IP, Port} <- Nodes],

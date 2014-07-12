@@ -1,4 +1,4 @@
-PROJECT = dht_bt
+PROJECT = dht
 
 .DEFAULT_GOAL := all
 

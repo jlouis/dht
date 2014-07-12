@@ -5,7 +5,7 @@
 	{registered, []},
 	{applications, [
 		kernel,
-		stdlib,
+		stdlib
 	]},
 	{mod, {dht_app, []}},
 	{env, [
