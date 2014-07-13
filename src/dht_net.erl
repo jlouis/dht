@@ -266,9 +266,9 @@ code_change(_, State, _) ->
 
 %% handle_response/2 handles correlated responses for processes using the `dht_net' framework.
 handle_response(Client, {error, _ID, _Code, _ErrorMsg}) ->
-	ok = gen_server:reply(Client, timeout);
+	gen_server:reply(Client, timeout);
 handle_response(Client, {response, _ID, Values}) ->
-	ok = gen_server:reply(Client, Values);
+	gen_server:reply(Client, Values);
 handle_response(_Client, {_Method, _ID, _Values}) ->
 	%% This triggers if we get a request in for something which is *already* in our list of Active (correlated) messages
 	%% This can only happen if we send a message to ourselves, and we really shouldn't. Crash the system.
