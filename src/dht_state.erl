@@ -71,8 +71,8 @@
 -record(state, {
     node_id :: dht_id:t(),
     buckets=dht_bucket:new(), % The actual routing table
-    node_timers=timer_tree(), % Node activity times and timeout references
-    buck_timers=timer_tree(),% Bucker activity times and timeout references
+    node_timers=timer_empty(), % Node activity times and timeout references
+    buck_timers=timer_empty(),% Bucker activity times and timeout references
     node_timeout=10*60*1000,  % Default node keepalive timeout
     buck_timeout=5*60*1000,   % Default bucket refresh timeout
     state_file="/tmp/dht_state"}). % Path to persistent state
@@ -332,7 +332,7 @@ init([StateFile, BootstrapNodes]) ->
     Now = os:timestamp(),
     BTimers = lists:foldl(fun(Range, Acc) ->
 	BTimer = bucket_timer_from(Now, NTimeout, Now, BTimeout, Range),
-	add_timer(Range, Now, BTimer, Acc)
+	timer_add(Range, Now, BTimer, Acc)
     end, InitBTimers, dht_bucket:ranges(Buckets)),
 
     State = #state{
@@ -344,37 +344,41 @@ init([StateFile, BootstrapNodes]) ->
 
 
 %% @private
-handle_call({is_interesting, InputID, IP, Port}, _From, State) ->
+handle_call({is_interesting, InputID, IP, Port}, _From,
+	#state{
+	  node_id = Self,
+	  buckets = Buckets,
+	  node_timeout = NTimeout,
+	  node_timers = NTimers } = State) ->
     ID = int(InputID),
-    #state{
-	node_id=Self,
-	buckets=Buckets,
-	node_timeout=NTimeout,
-	node_timers=NTimers} = State,
-    IsInteresting = case dht_bucket:is_member(ID, IP, Port, Self, Buckets) of
-	true -> false;
-	false ->
-	    BMembers = dht_bucket:members(ID, Self, Buckets),
-	    Inactive = inactive_nodes(BMembers, NTimeout, NTimers),
-	    case (Inactive =/= []) or (length(BMembers) < ?K) of
-		true -> true;
-		false ->
-		    TryBuckets = dht_bucket:insert(Self, ID, IP, Port, Buckets),
-		    dht_bucket:is_member(ID, IP, Port, Self, TryBuckets)
-	    end
-    end,
-    {reply, IsInteresting, State};
-handle_call({insert_node, InputID, IP, Port}, _From, State) ->
+    case dht_bucket:is_member(ID, IP, Port, Self, Buckets) of
+        true ->
+            %% Already a member, the ID is not interesting
+            {reply, false, State};
+        false ->
+            %% Analyze the bucket in which the ID resides
+            Members = dht_bucket:members(ID, Self, Buckets),
+            Inactive = inactive_nodes(Members, NTimeout, NTimers),
+            case (Inactive /= []) orelse (length(Members) < ?K) of
+                true ->
+                    %% There are Inactive members or there are too few members, this is an interesting ID
+                    {reply, true, State};
+                false ->
+                    Try = dht_bucket:insert(Self, ID, IP, Port, Buckets),
+                    {reply, dht_bucket:is_member(ID, IP, Port, Self, Try), State}
+            end
+	end;
+handle_call({insert_node, InputID, IP, Port}, _From,
+	#state {
+	  node_id = Self,
+	  buckets = PrevBuckets,
+	  node_timers = PrevNTimers,
+	  buck_timers = PrevBTimers,
+	  node_timeout = NTimeout,
+	  buck_timeout = BTimeout } = State) ->
     ID   = int(InputID),
     Now  = os:timestamp(),
     Node = {ID, IP, Port},
-    #state{
-	node_id=Self,
-	buckets=PrevBuckets,
-	node_timers=PrevNTimers,
-	buck_timers=PrevBTimers,
-	node_timeout=NTimeout,
-	buck_timeout=BTimeout} = State,
 
     IsPrevMember = dht_bucket:is_member(ID, IP, Port, Self, PrevBuckets),
     Inactive = case IsPrevMember of
@@ -408,10 +412,8 @@ handle_call({insert_node, InputID, IP, Port}, _From, State) ->
 	none ->
 	    PrevNTimers;
 	{_, _, _}=DNode ->
-	    del_timer(DNode, PrevNTimers)
+	    timer_del(DNode, PrevNTimers)
     end,
-
-
 
     IsNewMember = dht_bucket:is_member(ID, IP, Port, Self, NewBuckets),
     NewNTimers  = case {IsPrevMember, IsNewMember} of
@@ -421,7 +423,7 @@ handle_call({insert_node, InputID, IP, Port}, _From, State) ->
 	    TmpNTimers;
 	{false, true}  ->
 	    NTimer = node_timer_from(Now, NTimeout, Node),
-	    add_timer(Node, Now, NTimer, TmpNTimers)
+	    timer_add(Node, Now, NTimer, TmpNTimers)
     end,
 
     NewBTimers = case {IsPrevMember, IsNewMember} of
@@ -440,15 +442,15 @@ handle_call({insert_node, InputID, IP, Port}, _From, State) ->
 		NewRanges  = ordsets:subtract(AllNewRanges, AllPrevRanges),
 
 		DelBTimers = lists:foldl(fun(Range, Acc) ->
-		    del_timer(Range, Acc)
+		    timer_del(Range, Acc)
 		end, PrevBTimers, DelRanges),
 
 		lists:foldl(fun(Range, Acc) ->
 		    BMembers = dht_bucket:members(Range, Self, NewBuckets),
-		    LRecent = least_recent(BMembers, NewNTimers),
+		    LRecent = oldest_time(BMembers, NewNTimers),
 		    BTimer = bucket_timer_from(
 				 Now, BTimeout, LRecent, NTimeout, Range),
-		    add_timer(Range, Now, BTimer, Acc)
+		    timer_add(Range, Now, BTimer, Acc)
 			    end, DelBTimers, NewRanges);
 		   true ->
 			PrevBTimers
@@ -483,10 +485,10 @@ handle_call({request_timeout, InputID, IP, Port}, _, State) ->
 	false ->
 	    PrevNTimers;
 	true ->
-	    {LActive, _} = get_timer(Node, PrevNTimers),
-	    TmpNTimers   = del_timer(Node, PrevNTimers),
+	    {LActive, _} = timer_get(Node, PrevNTimers),
+	    TmpNTimers   = timer_del(Node, PrevNTimers),
 	    NTimer       = node_timer_from(Now, NTimeout, Node),
-	    add_timer(Node, LActive, NTimer, TmpNTimers)
+	    timer_add(Node, LActive, NTimer, TmpNTimers)
     end,
     NewState = State#state{node_timers=NewNTimers},
     {reply, ok, NewState};
@@ -507,18 +509,18 @@ handle_call({request_success, InputID, IP, Port}, _, State) ->
 	true ->
 	    Range = dht_bucket:range(ID, Self, Buckets),
 
-	    {NLActive, _} = get_timer(Node, PrevNTimers),
-	    TmpNTimers    = del_timer(Node, PrevNTimers),
+	    {NLActive, _} = timer_get(Node, PrevNTimers),
+	    TmpNTimers    = timer_del(Node, PrevNTimers),
 	    NTimer	= node_timer_from(Now, NTimeout, Node),
-	    NewNTimers    = add_timer(Node, NLActive, NTimer, TmpNTimers),
+	    NewNTimers    = timer_add(Node, NLActive, NTimer, TmpNTimers),
 
-	    {BActive, _} = get_timer(Range, PrevBTimers),
-	    TmpBTimers   = del_timer(Range, PrevBTimers),
+	    {BActive, _} = timer_get(Range, PrevBTimers),
+	    TmpBTimers   = timer_del(Range, PrevBTimers),
 	    BMembers     = dht_bucket:members(Range, Self, Buckets),
-	    LNRecent     = least_recent(BMembers, NewNTimers),
+	    LNRecent     = oldest_time(BMembers, NewNTimers),
 	    BTimer       = bucket_timer_from(
 			       BActive, BTimeout, LNRecent, NTimeout, Range),
-	    NewBTimers    = add_timer(Range, BActive, BTimer, TmpBTimers),
+	    NewBTimers    = timer_add(Range, BActive, BTimer, TmpBTimers),
 
 	    State#state{
 		node_timers=NewNTimers,
@@ -573,12 +575,12 @@ handle_info({inactive_node, InputID, IP, Port}, State) ->
 			  true ->
 			       ok
 		       end,
-		       {LActive, TRef} = get_timer(Node, PrevNTimers),
+		       {LActive, TRef} = timer_get(Node, PrevNTimers),
 		       TimerCanceled = erlang:read_timer(TRef) == false,
 		       if (TimerCanceled orelse HasTimed) ->
-			       TmpNTimers  = del_timer(Node, PrevNTimers),
+			       TmpNTimers  = timer_del(Node, PrevNTimers),
 			       NewTimer    = node_timer_from(Now, NTimeout, Node),
-			       NewNTimers  = add_timer(Node, LActive, NewTimer, TmpNTimers),
+			       NewNTimers  = timer_add(Node, LActive, NewTimer, TmpNTimers),
 			       State#state{node_timers=NewNTimers};
 			  true ->
 			       State
@@ -613,14 +615,14 @@ handle_info({inactive_bucket, Range}, State) ->
 			  true ->
 			       ok
 		       end,
-		       {_, TRef} = get_timer(Range, PrevBTimers),
+		       {_, TRef} = timer_get(Range, PrevBTimers),
 		       TimerCanceled = erlang:read_timer(TRef) == false,
 		       if (TimerCanceled orelse HasTimed) ->
-			       TmpBTimers = del_timer(Range, PrevBTimers),
-			       LRecent    = least_recent(BMembers, NTimers),
+			       TmpBTimers = timer_del(Range, PrevBTimers),
+			       LRecent    = oldest_time(BMembers, NTimers),
 			       NewTimer   = bucket_timer_from(
 					      Now, BTimeout, LRecent, NTimeout, Range),
-			       NewBTimers = add_timer(Range, Now, NewTimer, TmpBTimers),
+			       NewBTimers = timer_add(Range, Now, NewTimer, TmpBTimers),
 			       State#state{buck_timers=NewBTimers};
 			  true ->
 			       State
@@ -632,32 +634,15 @@ handle_info({inactive_bucket, Range}, State) ->
 terminate(_, #state{ node_id=NodeID, buckets=Buckets,  state_file=StateFile}) ->
 	dump_state(StateFile, NodeID, dht_bucket:node_list(Buckets)).
 
-
 %% @private
 code_change(_, State, _) ->
     {ok, State}.
-
 
 inactive_nodes(Nodes, Timeout, Timers) ->
     [N || N <- Nodes, has_timed_out(N, Timeout, Timers)].
 
 active_nodes(Nodes, Timeout, Timers) ->
     [N || N <- Nodes, not has_timed_out(N, Timeout, Timers)].
-
-timer_tree() ->
-	gb_trees:empty().
-
-get_timer(Item, Timers) ->
-	gb_trees:get(Item, Timers).
-
-add_timer(Item, ATime, TRef, Timers) ->
-    TState = {ATime, TRef},
-    gb_trees:insert(Item, TState, Timers).
-
-del_timer(Item, Timers) ->
-    {_, TRef} = get_timer(Item, Timers),
-    _ = erlang:cancel_timer(TRef),
-    gb_trees:delete(Item, Timers).
 
 node_timer_from(Time, Timeout, {ID, IP, Port}) ->
     Msg = {inactive_node, ID, IP, Port},
@@ -678,13 +663,9 @@ bucket_timer_from(Time, BTimeout, LeastRecent, NTimeout, Range) ->
 	    timer_from(LeastRecent, SumTimeout, Msg)
     end.
 
-
 timer_from(Time, Timeout, Msg) ->
     Interval = ms_between(Time, Timeout),
     erlang:send_after(Interval, self(), Msg).
-
-ms_since(Time) ->
-    timer:now_diff(Time, os:timestamp()) div 1000.
 
 ms_between(Time, Timeout) ->
     MS = Timeout - ms_since(Time),
@@ -692,70 +673,44 @@ ms_between(Time, Timeout) ->
        MS >= 0 -> MS
     end.
 
+ms_since(Time) ->
+    timer:now_diff(Time, os:timestamp()) div 1000.
+
 has_timed_out(Item, Timeout, Times) ->
-    {LastActive, _} = get_timer(Item, Times),
+    {LastActive, _} = timer_get(Item, Times),
     ms_since(LastActive) > Timeout.
 
-least_recent([], _) ->
-    os:timestamp();
-least_recent(Items, Times) ->
-    ATimes = [element(1, get_timer(I, Times)) || I <- Items],
+oldest_time([], _) -> os:timestamp(); %% None available
+oldest_time(Items, Times) ->
+    ATimes = [element(1, timer_get(I, Times)) || I <- Items],
     lists:min(ATimes).
 
-safe_insert_node(NodeAddr) ->
-    Addrs = decode_node_address(NodeAddr),
-    safe_insert_node_oneof(Addrs).
+%%
+%% TIMER TREE CODE
+%% 
+%% This implements a timer tree as a gb_trees construction.
+%% We just wrap the underlying representation a bit here.
+%% --------------------------------------
+timer_empty() ->
+	gb_trees:empty().
 
-%% Try to connect to the node, using different addresses.
-safe_insert_node_oneof([{IP, Port}|Addrs]) ->
-    case safe_insert_node(IP, Port) of
-	true -> true;
-	false -> safe_insert_node_oneof(Addrs);
-	{error, timeout} -> safe_insert_node_oneof(Addrs)
-    end;
-safe_insert_node_oneof([]) ->
-    false.
+timer_get(X, Timers) ->
+	gb_trees:get(X, Timers).
 
+timer_add(Item, ATime, TRef, Timers) ->
+    TState = {ATime, TRef},
+    gb_trees:insert(Item, TState, Timers).
 
-%-spec decode_node_address(NodeAddr::term()) -> [{IP, Port}].
-decode_node_address({{_,_,_,_}, _}=NodeAddr) ->
-    [NodeAddr];
-decode_node_address([_|_]=NodeAddr) ->
-    {Addr, Port} = parse_address(NodeAddr),
-    IPs = dns_lookup(Addr),
-    [{IP, Port} || IP <- IPs].
+timer_del(Item, Timers) ->
+    {_, TRef} = timer_get(Item, Timers),
+    _ = erlang:cancel_timer(TRef),
+    gb_trees:delete(Item, Timers).
 
 
-%% Parses IP address or DNS-name and an optional port.
-%% [1080:0:0:0:8:800:200C:417A]:180
-%% [1080:0:0:0:8:800:200C:417A]
-%% router.example.com
-%% 127.0.0.1
--spec parse_address(Addr::string()) -> {string(), non_neg_integer()}.
-parse_address(Addr) ->
-    %% re:run("[1080:0:0:0:8:800:200C:417A]:180$", "(.*):(\\d+)$", [{capture, all_but_first, list}])
-    %% {match,["[1080:0:0:0:8:800:200C:417A]","180"]}
-    %% re:run("[1080:0:0:0:8:800:200C:417A]", "(.*):(\\d+)$", [{capture, all_but_first, list}])
-    %% nomatch
-    case re:run(Addr, "(.*):(\\d+)$", [{capture, all_but_first, list}]) of
-	{match, [Host, Port]} -> {Host, list_to_integer(Port)};
-	nomatch	       -> {Addr, 6881}
-    end.
+%%
+%% DISK STATE
+%% ----------------------------------
 
-
-dns_lookup(Addr) ->
-    %% inet:gethostbyname("8.8.8.8").
-    %% {ok,{hostent,"8.8.8.8",[],inet,4,[{8,8,8,8}]}}
-    %% inet:gethostbyname("8.8.8.8").
-    %% {ok,{hostent,"8.8.8.8",[],inet,4,[{8,8,8,8}]}}
-    case inet_res:gethostbyname(Addr) of
-	{ok, #hostent{h_addr_list=IPs}} -> IPs;
-	{error, Reason} ->
-	    ok = error_logger:error_msg("Cannot lookup address ~p because ~p.", [Addr, Reason]),
-	    []
-    end.
-
-%% On-disk State
 dump_state(Filename, NodeID, NodeList) ->
     file:write_file(Filename, term_to_binary(#{ node_id => NodeID, node_set => NodeList })).
 
