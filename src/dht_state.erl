@@ -471,15 +471,15 @@ handle_call({closest_to, InputID, NumNodes}, _, State) ->
     NF = fun (N) -> not has_timed_out(N, NTimeout, NTimers) end,
     CloseNodes = dht_bucket:closest_to(ID, Self, Buckets, NF, NumNodes),
     {reply, CloseNodes, State};
-handle_call({request_timeout, InputID, IP, Port}, _, State) ->
+handle_call({request_timeout, InputID, IP, Port}, _,
+	#state{
+	  node_id=Self,
+	  buckets=Buckets,
+	  node_timeout=NTimeout,
+	  node_timers=PrevNTimers} = State) ->
     ID   = int(InputID),
     Node = {ID, IP, Port},
     Now  = os:timestamp(),
-    #state{
-	node_id=Self,
-	buckets=Buckets,
-	node_timeout=NTimeout,
-	node_timers=PrevNTimers} = State,
 
     NewNTimers = case dht_bucket:is_member(ID, IP, Port, Self, Buckets) of
 	false ->
@@ -492,58 +492,36 @@ handle_call({request_timeout, InputID, IP, Port}, _, State) ->
     end,
     NewState = State#state{node_timers=NewNTimers},
     {reply, ok, NewState};
-handle_call({request_success, InputID, IP, Port}, _, State) ->
-    ID   = int(InputID),
-    Now  = os:timestamp(),
-    Node = {ID, IP, Port},
-    #state{
-	node_id=Self,
-	buckets=Buckets,
-	node_timers=PrevNTimers,
-	buck_timers=PrevBTimers,
-	node_timeout=NTimeout,
-	buck_timeout=BTimeout} = State,
-    NewState = case dht_bucket:is_member(ID, IP, Port, Self, Buckets) of
+handle_call({request_success, ID, IP, Port}, _,
+	#state{
+	  node_id=Self,
+	  buckets=Buckets} = State) when is_integer(ID) ->
+    case dht_bucket:is_member(ID, IP, Port, Self, Buckets) of
 	false ->
-	    State;
+	    {reply, ok, State};
 	true ->
-	    Range = dht_bucket:range(ID, Self, Buckets),
-
-	    {NLActive, _} = timer_get(Node, PrevNTimers),
-	    TmpNTimers    = timer_del(Node, PrevNTimers),
-	    NTimer	= node_timer_from(Now, NTimeout, Node),
-	    NewNTimers    = timer_add(Node, NLActive, NTimer, TmpNTimers),
-
-	    {BActive, _} = timer_get(Range, PrevBTimers),
-	    TmpBTimers   = timer_del(Range, PrevBTimers),
-	    BMembers     = dht_bucket:members(Range, Self, Buckets),
-	    LNRecent     = oldest_time(BMembers, NewNTimers),
-	    BTimer       = bucket_timer_from(
-			       BActive, BTimeout, LNRecent, NTimeout, Range),
-	    NewBTimers    = timer_add(Range, BActive, BTimer, TmpBTimers),
-
-	    State#state{
-		node_timers=NewNTimers,
-		buck_timers=NewBTimers}
-    end,
-    {reply, ok, NewState};
+	    Now  = os:timestamp(),
+	    Node = {ID, IP, Port},
+	    {reply, ok, 
+	        cycle_bucket_timers(ID, Self,
+	          cycle_node_timer(Node, Now, State))}
+    end;
 handle_call({request_from, ID, IP, Port}, From, State) ->
     handle_call({request_success, ID, IP, Port}, From, State);
-handle_call({dump_state}, _From, State) ->
-    #state{
-	node_id=Self,
-	buckets=Buckets,
-	state_file=StateFile} = State,
+handle_call({dump_state}, _From,
+	#state{
+	  node_id=Self,
+	  buckets=Buckets,
+	  state_file=StateFile} = State) ->
     catch dump_state(StateFile, Self, dht_bucket:node_list(Buckets)),
     {reply, State, State};
-handle_call({dump_state, StateFile}, _From, State) ->
-    #state{
-	node_id=Self,
-	buckets=Buckets} = State,
+handle_call({dump_state, StateFile}, _From,
+	#state{
+	  node_id=Self,
+	  buckets=Buckets} = State) ->
     catch dump_state(StateFile, Self, dht_bucket:node_list(Buckets)),
     {reply, ok, State};
-handle_call(node_id, _From, State) ->
-    #state{node_id=Self} = State,
+handle_call(node_id, _From, #state{node_id=Self} = State) ->
     {reply, int(Self), State}.
 
 %% @private
@@ -647,6 +625,29 @@ active_nodes(Nodes, Timeout, Timers) ->
 node_timer_from(Time, Timeout, {ID, IP, Port}) ->
     Msg = {inactive_node, ID, IP, Port},
     timer_from(Time, Timeout, Msg).
+
+%% Go through the state and update the timer infrastructure
+cycle_node_timer(Node, Now, #state { node_timers = NTimers, node_timeout = NTimeout } = State) ->
+    {NLActive, _} = timer_get(Node, NTimers),
+    Removed = timer_del(Node, NTimers),
+    TimerRef = node_timer_from(Now, NTimeout, Node),
+    State#state { node_timers = timer_add(Node, NLActive, TimerRef, Removed) }.
+
+cycle_bucket_timers(ID, Self,
+	#state {
+	  buckets = Buckets,
+	  buck_timers = PrevBTimers,
+	  node_timers = NTimers,
+	  node_timeout = NTimeout,
+	  buck_timeout = BTimeout  } = State) ->
+    Range = dht_bucket:range(ID, Self, Buckets),
+    {BActive, _} = timer_get(Range, PrevBTimers),
+    TmpBTimers = timer_del(Range, PrevBTimers),
+    BMembers = dht_bucket:members(Range, Self, Buckets),
+    LNRecent = oldest_time(BMembers, NTimers),
+    BTimer = bucket_timer_from( BActive, BTimeout, LNRecent, NTimeout, Range),
+    NewBTimers = timer_add(Range, BActive, BTimer, TmpBTimers),
+    State#state { buck_timers = NewBTimers }.
 
 bucket_timer_from(Time, BTimeout, LeastRecent, NTimeout, Range) ->
     % In the best case, the bucket should time out N seconds
