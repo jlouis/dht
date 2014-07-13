@@ -3,3 +3,5 @@ deps/
 ebin/*.app
 .dht_bt.plt
 src/dialyzer.out
+.dht.plt
+src/dialyze.out

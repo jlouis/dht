@@ -247,7 +247,6 @@ unsafe_ping(IP, Port) ->
 		    RandNode = random_node_tag(),
 		    DelSpec = [{{'_', RandNode}, [], [true]}],
 		    _ = ets:select_delete(?UNREACHABLE_TAB, DelSpec),
-		    ok = lager:debug("~p:~p is unreachable.", [IP, Port]),
 		    ets:insert(?UNREACHABLE_TAB, {{IP, Port}, RandNode}),
 		    pang;
 		NodeID ->
@@ -585,7 +584,6 @@ handle_info({inactive_node, InputID, IP, Port}, State) ->
 		       State;
 		   true ->
 		       if HasTimed ->
-			       ok = lager:debug("Node at ~w:~w timed out", [IP, Port]),
 			       spawn_keepalive(ID, IP, Port);
 			  true ->
 			       ok
@@ -624,8 +622,7 @@ handle_info({inactive_bucket, Range}, State) ->
 		   true ->
 		       BMembers   = dht_bucket:members(Range, Self, Buckets),
 		       if HasTimed ->
-			       ok = lager:debug("Bucket timed out"),
-			       _ = spawn_refresh(Range,
+			       spawn_refresh(Range,
 						 inactive_nodes(BMembers, NTimeout, NTimers),
 						 active_nodes(BMembers, NTimeout, NTimers));
 			  true ->
@@ -770,7 +767,7 @@ dns_lookup(Addr) ->
     case inet_res:gethostbyname(Addr) of
 	{ok, #hostent{h_addr_list=IPs}} -> IPs;
 	{error, Reason} ->
-	    ok = lager:error("Cannot lookup address ~p because ~p.", [Addr, Reason]),
+	    ok = error_logger:error_msg("Cannot lookup address ~p because ~p.", [Addr, Reason]),
 	    []
     end.
 
@@ -781,7 +778,7 @@ dump_state(Filename, NodeID, NodeList) ->
 load_state(Filename) ->
     case file:read_file(Filename) of
 	{ok, BinState} ->
-	        #{ node_id := _NodeID, node_set := _NodeList } = binary_to_term(BinState);
+	  #{ node_id := _NodeID, node_set := _NodeList } = binary_to_term(BinState);
         {error, enoent} ->
-        		#{ node_id => dht:random_id(), node_set => [] }
+	  #{ node_id => dht_id:mk_random_id(), node_set => [] }
     end.

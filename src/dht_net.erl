@@ -240,7 +240,7 @@ handle_info({udp, _Socket, IP, Port, Packet}, #state{ sent = Sent, tokens = Toke
         	    {none, {error, _, _, _}} -> {noreply, State};
         	    {none, {Method, ID, Params}} ->
         	        %% Incoming request, handle it
-        	        NodeID = dht:integer_id(benc:get_binary_value("id", Params)),
+        	        <<NodeID:160>> = benc:get_binary_value("id", Params),
         	        spawn_link( fun() -> dht_state:safe_insert_node(NodeID, IP, Port) end),
         	        spawn_link( fun() -> ?MODULE:handle_query(Method, Params, {IP, Port}, ID, Self, Tokens) end),
         	    	{noreply, State};
@@ -272,7 +272,6 @@ handle_response(Client, {response, _ID, Values}) ->
 handle_response(_Client, {_Method, _ID, _Values}) ->
 	%% This triggers if we get a request in for something which is *already* in our list of Active (correlated) messages
 	%% This can only happen if we send a message to ourselves, and we really shouldn't. Crash the system.
-	ok = lager:error("Bad node, don't send queries to yourself!"),
 	exit(bad_node).
 
 %% view_packet_decode/1 is a view on the validity of an incoming packet
@@ -351,7 +350,7 @@ dht_iter_search(SearchType, Target, Width, Retry, Retries,
     FailedCall = make_ref(),
     TmpSuccessful = [case {repack, SearchType, RetVal} of
         {repack, _, {badrpc, Reason}} ->
-            ok = lager:error("A RPC process crashed while sending a request ~p "
+            ok = error_logger:error_msg("A RPC process crashed while sending a request ~p "
                         "to ~p:~p with reason ~p.",
                         [SearchType, IP, Port, Reason]),
             FailedCall;
@@ -382,8 +381,8 @@ dht_iter_search(SearchType, Target, Width, Retry, Retries,
     end || {_, Res} <- Successful],
     AllNodes  = lists:flatten(NodeLists),
     NewNodes  = [Node || Node <- AllNodes, not gb_sets:is_member(Node, NewQueried)],
-    NewNext   = [{dht:distance(ID, Target), ID, IP, Port}
-                ||{ID, IP, Port} <- dht:closest_to(Target, NewNodes, Width)],
+    NewNext   = [{dht_id:dist(ID, Target), ID, IP, Port}
+                || {ID, IP, Port} <- dht:closest_to(Target, NewNodes, Width)],
 
     % Check if the closest node in the work queue is closer
     % to the target than the closest responsive node that was

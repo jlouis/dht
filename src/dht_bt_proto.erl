@@ -23,14 +23,15 @@ decode_msg(InMsg) ->
     end.
 
 decode_response(ping, Values) ->
-     dht:integer_id(benc:get_value(<<"id">>, Values));
+     <<ID:160>> = benc:get_value(<<"id">>, Values),
+     ID;
 decode_response(find_node, Values) ->
-    ID = dht:integer_id(benc:get_value(<<"id">>, Values)),
+    <<ID:160>> = benc:get_value(<<"id">>, Values),
     BinNodes = benc:get_value(<<"nodes">>, Values),
     Nodes = compact_to_node_infos(BinNodes),
     {ID, Nodes};
 decode_response(get_peers, Values) ->
-    ID = dht:integer_id(benc:get_value(<<"id">>, Values)),
+    <<ID:160>> = benc:get_value(<<"id">>, Values),
     Token = benc:get_value(<<"token">>, Values),
     NoPeers = make_ref(),
     MaybePeers = benc:get_value(<<"values">>, Values, NoPeers),
@@ -46,7 +47,8 @@ decode_response(get_peers, Values) ->
     end,
     {ID, Token, Peers, Nodes};
 decode_response(announce, Values) ->
-    dht:integer_id(benc:get_value(<<"id">>, Values)).
+    <<ID:160>> = benc:get_value(<<"id">>, Values),
+    ID.
 
 encode_query(Req, MsgID) ->
     case Req of
@@ -54,10 +56,9 @@ encode_query(Req, MsgID) ->
         {find_node, Target} -> encode_request(<<"find_node">>, [{<<"target">>, <<Target:160>>}], MsgID);
         {get_peers, InfoHash} -> encode_request(<<"get_peers">>, [{<<"info_hash">>, <<InfoHash:160>>}], MsgID);
         {announce, InfoHash, Token, BTPort} ->
-        	LHash = dht:bin_id(InfoHash),
         	encode_request(
         		<<"announce_peer">>,
-        		[{<<"info_hash">>, LHash},
+        		[{<<"info_hash">>, <<InfoHash:160>>},
         		 {<<"port">>, BTPort},
         		 {<<"token">>, Token}],
         		MsgID)
@@ -77,13 +78,13 @@ encode_response(MsgID, Values) ->
 handle_query(ping, _, Peer, MsgID, Self, _Tokens) ->
     dht_net:return(Peer, MsgID, common_params(Self));
 handle_query('find_node', Params, Peer, MsgID, Self, _Tokens) ->
-    Target = dht:integer_id(benc:get_value(<<"target">>, Params)),
+    <<Target:160>> = benc:get_value(<<"target">>, Params),
     CloseNodes = filter_node(Peer, dht_state:closest_to(Target)),
     BinCompact = node_infos_to_compact(CloseNodes),
     Values = [{<<"nodes">>, BinCompact}],
     dht_net:return(Peer, MsgID, common_params(Self) ++ Values);
 handle_query('get_peers', Params, Peer, MsgID, Self, Tokens) ->
-    InfoHash = dht:integer_id(benc:get_value(<<"info_hash">>, Params)),
+    <<InfoHash:160>> = benc:get_value(<<"info_hash">>, Params),
     %% TODO: handle non-local requests.
     Values = case dht_tracker:get_peers(InfoHash) of
         [] ->
@@ -91,7 +92,6 @@ handle_query('get_peers', Params, Peer, MsgID, Self, Tokens) ->
             BinCompact = node_infos_to_compact(Nodes),
             [{<<"nodes">>, BinCompact}];
         Peers ->
-            ok = lager:debug("Get a list of peers from the local tracker ~p", [Peers]),
             PeerList = [peers_to_compact([P]) || P <- Peers],
             [{<<"values">>, PeerList}]
     end,
@@ -99,7 +99,7 @@ handle_query('get_peers', Params, Peer, MsgID, Self, Tokens) ->
     Token = [{<<"token">>, token_value(Peer, RecentToken)}],
     dht_net:return(Peer, MsgID, common_params(Self) ++ Token ++ Values);
 handle_query('announce', Params, {IP, _} = Peer, MsgID, Self, Tokens) ->
-    InfoHash = dht:integer_id(benc:get_value(<<"info_hash">>, Params)),
+    <<InfoHash:160>> = benc:get_value(<<"info_hash">>, Params),
     BTPort = benc:get_value(<<"port">>,   Params),
     Token = benc:get_binary_value(<<"token">>, Params),
     case is_valid_token(Token, Peer, Tokens) of
@@ -107,7 +107,7 @@ handle_query('announce', Params, {IP, _} = Peer, MsgID, Self, Tokens) ->
             %% TODO: handle non-local requests.
             dht_tracker:announce(InfoHash, IP, BTPort);
         false ->
-            ok = lager:error("Invalid token from ~p: ~w", [Peer, Token])
+            ok = error_logger:info_msg("Invalid token from ~p: ~w", [Peer, Token])
     end,
     dht_net:return(Peer, MsgID, common_params(Self)).
 
@@ -138,7 +138,7 @@ common_params() ->
     common_params(NodeID).
 
 common_params(NodeID) ->
-    [{<<"id">>, dht:bin_id(NodeID)}].
+    [{<<"id">>, <<NodeID:160>>}].
 
 %% @doc Delete node with `IP' and `Port' from the list.
 filter_node({IP, Port}, Nodes) ->
