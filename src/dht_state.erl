@@ -52,13 +52,12 @@
 -export([
 	 closest_to/1, closest_to/2,
 	 dump_state/0, dump_state/1, dump_state/3,
-	 is_interesting/3,
 	 keepalive/3,
 	 load_state/1,
 	 log_request_timeout/3, log_request_success/3, log_request_from/3,
 	 node_id/0,
 	 refresh/3,
-	 safe_insert_node/2, safe_insert_node/3, safe_insert_nodes/1,
+	 safe_insert_node/2, safe_insert_node/3, insert_nodes/1,
 	 unsafe_insert_node/3, unsafe_insert_nodes/1
 ]).
 
@@ -70,7 +69,7 @@
 	 code_change/3]).
 
 -record(state, {
-    node_id :: dht:node_id(),
+    node_id :: dht_id:t(),
     buckets=dht_bucket:new(), % The actual routing table
     node_timers=timer_tree(), % Node activity times and timeout references
     buck_timers=timer_tree(),% Bucker activity times and timeout references
@@ -90,8 +89,8 @@
 % rest of the program does that, run these functions whenever an ID
 % enters or leaves this process.
 %
-ensure_bin_id(ID) when is_binary(ID)  -> ID.
-ensure_int_id(ID) when is_integer(ID) -> ID.
+int(ID) when is_integer(ID) -> ID.
+bin(ID) when is_binary(ID) -> ID.
 
 start_link(StateFile, BootstapNodes) ->
     gen_server:start_link({local, ?MODULE},
@@ -101,9 +100,9 @@ start_link(StateFile, BootstapNodes) ->
 
 %% @doc Return a this node id as an integer.
 %% Node ids are generated in a random manner.
--spec node_id() -> dht:node_id().
+-spec node_id() -> dht_id:t().
 node_id() ->
-    gen_server:call(?MODULE, {node_id}).
+    gen_server:call(?MODULE, node_id).
 
 %
 % Check if a node is available and lookup its node id by issuing
@@ -128,7 +127,7 @@ safe_insert_node(IP, Port) ->
 % inserted into the routing table, true if the node was interesting and was
 % inserted into the routing table.
 %
--spec safe_insert_node(dht:node_id(), inet:ip_address(), inet:port_number()) ->
+-spec safe_insert_node(dht_id:t(), inet:ip_address(), inet:port_number()) ->
     {'error', 'timeout'} | boolean().
 safe_insert_node(ID, IP, Port) ->
     case is_interesting(ID, IP, Port) of
@@ -145,8 +144,8 @@ safe_insert_node(ID, IP, Port) ->
 	end
     end.
 
--spec safe_insert_nodes(list(dht:node_info())) -> 'ok'.
-safe_insert_nodes(NodeInfos) ->
+-spec insert_nodes([dht:node_info()]) -> ok.
+insert_nodes(NodeInfos) ->
     [spawn_link(?MODULE, safe_insert_node, [ID, IP, Port])
      || {ID, IP, Port} <- NodeInfos],
     ok.
@@ -158,10 +157,10 @@ safe_insert_nodes(NodeInfos) ->
 % This function returns a boolean value to indicate to the caller if the
 % node was actually inserted into the routing table or not.
 %
--spec unsafe_insert_node(dht:node_id(), inet:ip_address(), inet:port_number()) ->
+-spec unsafe_insert_node(dht_id:t(), inet:ip_address(), inet:port_number()) ->
     boolean().
-unsafe_insert_node(ID, IP, Port) when is_integer(ID) ->
-    _WasInserted = gen_server:call(?MODULE, {insert_node, ID, IP, Port}).
+unsafe_insert_node(ID, IP, Port) ->
+    gen_server:call(?MODULE, {insert_node, ID, IP, Port}).
 
 -spec unsafe_insert_nodes(list(dht:node_info())) -> 'ok'.
 unsafe_insert_nodes(NodeInfos) ->
@@ -176,32 +175,29 @@ unsafe_insert_nodes(NodeInfos) ->
 % this node a query.
 %
 
--spec is_interesting(dht:node_id(), inet:ip_address(), inet:port_number()) -> boolean().
+-spec is_interesting(dht_id:t(), inet:ip_address(), inet:port_number()) -> boolean().
 is_interesting(ID, IP, Port) when is_integer(ID) ->
     gen_server:call(?MODULE, {is_interesting, ID, IP, Port}).
 
--spec closest_to(dht:node_id()) -> list(dht:node_info()).
+-spec closest_to(dht_id:t()) -> list(dht:node_info()).
 closest_to(NodeID) ->
     closest_to(NodeID, 8).
 
--spec closest_to(dht:node_id(), pos_integer()) -> list(dht:node_info()).
+-spec closest_to(dht_id:t(), pos_integer()) -> list(dht:node_info()).
 closest_to(NodeID, NumNodes) ->
     gen_server:call(?MODULE, {closest_to, NodeID, NumNodes}).
 
--spec log_request_timeout(dht:node_id(), inet:ip_address(), inet:port_number()) -> 'ok'.
+-spec log_request_timeout(dht_id:t(), inet:ip_address(), inet:port_number()) -> 'ok'.
 log_request_timeout(ID, IP, Port) ->
-    Call = {request_timeout, ID, IP, Port},
-    gen_server:call(?MODULE, Call).
+    gen_server:call(?MODULE, {request_timeout, ID, IP, Port}).
 
--spec log_request_success(dht:node_id(), inet:ip_address(), inet:port_number()) -> 'ok'.
+-spec log_request_success(dht_id:t(), inet:ip_address(), inet:port_number()) -> 'ok'.
 log_request_success(ID, IP, Port) ->
-    Call = {request_success, ID, IP, Port},
-    gen_server:call(?MODULE, Call).
+    gen_server:call(?MODULE, {request_success, ID, IP, Port}).
 
--spec log_request_from(dht:node_id(), inet:ip_address(), inet:port_number()) -> 'ok'.
+-spec log_request_from(dht_id:t(), inet:ip_address(), inet:port_number()) -> 'ok'.
 log_request_from(ID, IP, Port) ->
-    Call = {request_from, ID, IP, Port},
-    gen_server:call(?MODULE, Call).
+    gen_server:call(?MODULE, {request_from, ID, IP, Port}).
 
 dump_state() ->
     gen_server:call(?MODULE, {dump_state}).
@@ -209,7 +205,7 @@ dump_state() ->
 dump_state(Filename) ->
     gen_server:call(?MODULE, {dump_state, Filename}).
 
--spec keepalive(dht:node_id(), inet:ip_address(), inet:port_number()) -> 'ok'.
+-spec keepalive(dht_id:t(), inet:ip_address(), inet:port_number()) -> 'ok'.
 keepalive(ID, IP, Port) ->
     case safe_ping(IP, Port) of
 	ID    -> log_request_success(ID, IP, Port);
@@ -225,7 +221,7 @@ spawn_keepalive(ID, IP, Port) ->
 % when checking if a node that is already a member of the routing table
 % is online.
 %
--spec safe_ping(inet:ip_address(), inet:port_number()) -> pang | dht:node_id().
+-spec safe_ping(inet:ip_address(), inet:port_number()) -> pang | dht_id:t().
 safe_ping(IP, Port) ->
     dht_net:ping(IP, Port).
 
@@ -235,8 +231,8 @@ safe_ping(IP, Port) ->
 % be reachable. If a node has not been queried before, a safe_ping
 % will always be performed.
 %
-% Returns pand, if the node is unreachable.
--spec unsafe_ping(inet:ip_address(), inet:port_number()) -> pang | dht:node_id().
+% Returns pang, if the node is unreachable.
+-spec unsafe_ping(inet:ip_address(), inet:port_number()) -> pang | dht_id:t().
 unsafe_ping(IP, Port) ->
     case ets:member(?UNREACHABLE_TAB, {IP, Port}) of
 	true ->
@@ -287,7 +283,7 @@ do_refresh_inserts({Min, Max}=Range, [{ID, IP, Port}|T]) when ?in_range(ID, Min,
 	true ->
 	    do_refresh_inserts(Range, T);
 	false ->
-	    safe_insert_nodes(T),
+	    insert_nodes(T),
 	    false
     end;
 
@@ -296,9 +292,9 @@ do_refresh_inserts(Range, [{ID, IP, Port}|T]) ->
     do_refresh_inserts(Range, T).
 
 spawn_refresh(Range, InputInactive, InputActive) ->
-    Inactive = [{ensure_bin_id(ID), IP, Port}
+    Inactive = [{bin(ID), IP, Port}
 	       || {ID, IP, Port} <- InputInactive],
-    Active   = [{ensure_bin_id(ID), IP, Port}
+    Active   = [{bin(ID), IP, Port}
 	       || {ID, IP, Port} <- InputActive],
     spawn(?MODULE, refresh, [Range, Inactive, Active]).
 
@@ -307,7 +303,7 @@ random_node_tag() ->
     random:uniform(?MAX_UNREACHABLE).
 
 %% @private
-init([StateFile, BootstapNodes]) ->
+init([StateFile, BootstrapNodes]) ->
     %% For now, we trap exits which ensures the state table is dumped upon termination of the process.
     %% @todo lift this restriction. Periodically dump state, but don't do it if an invariant is broken for some reason
     erlang:process_flag(trap_exit, true),
@@ -319,13 +315,13 @@ init([StateFile, BootstapNodes]) ->
 
     #{ node_id := NodeID, node_set := NodeList} = load_state(StateFile),
 
-    [spawn_link(fun() -> safe_insert_node(BN) end) || BN <- BootstapNodes],
+    insert_nodes(BootstrapNodes),
 
     %% Insert any nodes loaded from the persistent state later
     %% when we are up and running. Use unsafe insertions or the
     %% whole state will be lost if dht starts without
     %% internet connectivity.
-    [spawn(?MODULE, unsafe_insert_node, [ensure_bin_id(ID), IP, Port]) || {ID, IP, Port} <- NodeList],
+    [spawn(?MODULE, unsafe_insert_node, [int(ID), IP, Port]) || {ID, IP, Port} <- NodeList],
 
     #state{
 	buckets=Buckets,
@@ -340,14 +336,16 @@ init([StateFile, BootstapNodes]) ->
     end, InitBTimers, dht_bucket:ranges(Buckets)),
 
     State = #state{
-	node_id=ensure_int_id(NodeID),
+	node_id=int(NodeID),
 	buck_timers=BTimers,
 	state_file=StateFile},
     {ok, State}.
 
+
+
 %% @private
 handle_call({is_interesting, InputID, IP, Port}, _From, State) ->
-    ID = ensure_int_id(InputID),
+    ID = int(InputID),
     #state{
 	node_id=Self,
 	buckets=Buckets,
@@ -366,9 +364,8 @@ handle_call({is_interesting, InputID, IP, Port}, _From, State) ->
 	    end
     end,
     {reply, IsInteresting, State};
-
 handle_call({insert_node, InputID, IP, Port}, _From, State) ->
-    ID   = ensure_int_id(InputID),
+    ID   = int(InputID),
     Now  = os:timestamp(),
     Node = {ID, IP, Port},
     #state{
@@ -462,12 +459,8 @@ handle_call({insert_node, InputID, IP, Port}, _From, State) ->
 	node_timers=NewNTimers,
 	buck_timers=NewBTimers},
     {reply, ((not IsPrevMember) and IsNewMember), NewState};
-
-
-
-
 handle_call({closest_to, InputID, NumNodes}, _, State) ->
-    ID = ensure_int_id(InputID),
+    ID = int(InputID),
     #state{
 	node_id=Self,
 	buckets=Buckets,
@@ -476,10 +469,8 @@ handle_call({closest_to, InputID, NumNodes}, _, State) ->
     NF = fun (N) -> not has_timed_out(N, NTimeout, NTimers) end,
     CloseNodes = dht_bucket:closest_to(ID, Self, Buckets, NF, NumNodes),
     {reply, CloseNodes, State};
-
-
 handle_call({request_timeout, InputID, IP, Port}, _, State) ->
-    ID   = ensure_int_id(InputID),
+    ID   = int(InputID),
     Node = {ID, IP, Port},
     Now  = os:timestamp(),
     #state{
@@ -499,9 +490,8 @@ handle_call({request_timeout, InputID, IP, Port}, _, State) ->
     end,
     NewState = State#state{node_timers=NewNTimers},
     {reply, ok, NewState};
-
 handle_call({request_success, InputID, IP, Port}, _, State) ->
-    ID   = ensure_int_id(InputID),
+    ID   = int(InputID),
     Now  = os:timestamp(),
     Node = {ID, IP, Port},
     #state{
@@ -535,11 +525,8 @@ handle_call({request_success, InputID, IP, Port}, _, State) ->
 		buck_timers=NewBTimers}
     end,
     {reply, ok, NewState};
-
-
 handle_call({request_from, ID, IP, Port}, From, State) ->
     handle_call({request_success, ID, IP, Port}, From, State);
-
 handle_call({dump_state}, _From, State) ->
     #state{
 	node_id=Self,
@@ -547,17 +534,15 @@ handle_call({dump_state}, _From, State) ->
 	state_file=StateFile} = State,
     catch dump_state(StateFile, Self, dht_bucket:node_list(Buckets)),
     {reply, State, State};
-
 handle_call({dump_state, StateFile}, _From, State) ->
     #state{
 	node_id=Self,
 	buckets=Buckets} = State,
     catch dump_state(StateFile, Self, dht_bucket:node_list(Buckets)),
     {reply, ok, State};
-
-handle_call({node_id}, _From, State) ->
+handle_call(node_id, _From, State) ->
     #state{node_id=Self} = State,
-    {reply, ensure_int_id(Self), State}.
+    {reply, int(Self), State}.
 
 %% @private
 handle_cast(_, State) ->
@@ -565,7 +550,7 @@ handle_cast(_, State) ->
 
 %% @private
 handle_info({inactive_node, InputID, IP, Port}, State) ->
-    ID = ensure_int_id(InputID),
+    ID = int(InputID),
     Now = os:timestamp(),
     Node = {ID, IP, Port},
     #state{
@@ -720,7 +705,6 @@ least_recent(Items, Times) ->
 safe_insert_node(NodeAddr) ->
     Addrs = decode_node_address(NodeAddr),
     safe_insert_node_oneof(Addrs).
-
 
 %% Try to connect to the node, using different addresses.
 safe_insert_node_oneof([{IP, Port}|Addrs]) ->

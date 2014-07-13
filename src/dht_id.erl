@@ -13,31 +13,38 @@
 -export([mk_random_id/0, dist/2]).
 -export([neighborhood/3]).
 
--type id() :: non_neg_integer().
+-type t() :: non_neg_integer().
 
 -record(peer, {
-	id :: id(),
+	id :: t(),
 	addr :: inet:ip_address(),
 	port :: inet:port_number()
 }).
 
 -type peer() :: #peer{}.
--export_type([id/0, peer/0]).
+-export_type([t/0, peer/0]).
 
 %% @doc mk_random_id/0 constructs a new random ID
 %% @end
--spec mk_random_id() -> id().
+-spec mk_random_id() -> t().
 mk_random_id() ->
 	<<ID:160>> = crypto:rand_bytes(20),
 	ID.
 
 %% @doc dist/2 calculates the distance between two random IDs
 %% @end
+-spec dist(t(), t()) -> t().
 dist(ID1, ID2) -> ID1 bxor ID2.
 
 %% @doc neighborhood/3 finds known nodes close to an ID
 %% neighborhood(ID, Nodes, Limit) searches for Limit nodes in the neighborhood of ID. Nodes is the list of known nodes.
 %% @end
+-spec neighborhood(ID, Nodes, Limit) -> [peer()]
+  when
+    ID :: t(),
+    Nodes :: [peer()],
+    Limit :: non_neg_integer().
+
 neighborhood(ID, Nodes, Limit) ->
 	Distances = [{dist(ID, NID), N} || #peer { id = NID } = N <- Nodes],
 	Eligible = case lists:sort(Distances) of
