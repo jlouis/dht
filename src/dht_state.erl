@@ -98,7 +98,7 @@ start_link(StateFile, BootstapNodes) ->
 			  [StateFile, BootstapNodes], []).
 
 
-%% @doc Return a this node id as an integer.
+%% @doc Return this node id as an integer.
 %% Node ids are generated in a random manner.
 -spec node_id() -> dht_id:t().
 node_id() ->
@@ -720,5 +720,5 @@ load_state(Filename) ->
 	{ok, BinState} ->
 	  #{ node_id := _NodeID, node_set := _NodeList } = binary_to_term(BinState);
         {error, enoent} ->
-	  #{ node_id => dht_id:mk_random_id(), node_set => [] }
+	  #{ node_id => dht_metric:mk(), node_set => []}
     end.

@@ -8,9 +8,9 @@
 %%% representing these. The internal representation chosen are 160 bit integers,
 %%% which in erlang are the integer() type.
 %%% @end
--module(dht_id).
+-module(dht_metric).
 
--export([mk_random_id/0, dist/2]).
+-export([mk/0, d/2]).
 -export([neighborhood/3]).
 
 -type t() :: non_neg_integer().
@@ -26,15 +26,15 @@
 
 %% @doc mk_random_id/0 constructs a new random ID
 %% @end
--spec mk_random_id() -> t().
-mk_random_id() ->
+-spec mk() ->  t().
+mk() ->
 	<<ID:160>> = crypto:rand_bytes(20),
 	ID.
 
 %% @doc dist/2 calculates the distance between two random IDs
 %% @end
--spec dist(t(), t()) -> t().
-dist(ID1, ID2) -> ID1 bxor ID2.
+-spec d(t(), t()) ->  t().
+d(ID1, ID2) -> ID1 bxor ID2.
 
 %% @doc neighborhood/3 finds known nodes close to an ID
 %% neighborhood(ID, Nodes, Limit) searches for Limit nodes in the neighborhood of ID. Nodes is the list of known nodes.
@@ -46,7 +46,7 @@ dist(ID1, ID2) -> ID1 bxor ID2.
     Limit :: non_neg_integer().
 
 neighborhood(ID, Nodes, Limit) ->
-	Distances = [{dist(ID, NID), N} || #peer { id = NID } = N <- Nodes],
+	Distances = [{d(ID, NID), N} || #peer {id = NID} = N <- Nodes],
 	Eligible = case lists:sort(Distances) of
 	    Sorted when length(Sorted) =< Limit -> Sorted;
 	    Sorted when length(Sorted) > Limit ->

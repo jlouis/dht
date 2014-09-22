@@ -17,17 +17,17 @@
 -define(K, 8).
 -define(in_range(Dist, Min, Max), ((Dist >= Min) andalso (Dist < Max))).
 
-%
-% Create a new bucket list
-%
+%%
+%% Create a new bucket list
+%%
 new() ->
     MaxID = 1 bsl 160,
     [{0, MaxID, []}].
 
 
-%
-% Insert a new node into a bucket list
-%
+%%
+%% Insert a new node into a bucket list
+%%
 insert(Self, ID, IP, Port, Buckets) when is_integer(ID),
                                            is_integer(Port) ->
     {Rest, Acc} = insert_(distance(Self, ID), Self, ID, IP, Port, ?K, Buckets, []),
@@ -69,9 +69,8 @@ insert_(Dist, _Self, ID, IP, Port, K, [{Min, Max, Members}|T], Acc) when ?in_ran
 insert_(Dist, Self, ID, IP, Port, K, [H|T], Acc) ->
     insert_(Dist, Self, ID, IP, Port, K, T, [H|Acc]).
 
-                                                %
-% Get all ranges present in a bucket list
-%
+%% Get all ranges present in a bucket list
+%%
 ranges([]) -> [];
 ranges([{Min, Max, _}|T]) -> [{Min, Max}|ranges(T)].
 
@@ -133,9 +132,9 @@ is_member_(Dist, ID, IP, Port, [_|T]) ->
     is_member_(Dist, ID, IP, Port, T).
 
 
-%
-% Check if a bucket exists in a bucket list
-%
+%%
+%% Check if a bucket exists in a bucket list
+%%
 has_bucket({_, _}, []) ->
     false;
 has_bucket({Min, Max}, [{Min, Max, _}|_]) ->
@@ -169,9 +168,9 @@ closest_to_2(Dist, ID, Num, [{_Min, _Max, Members}|T], NodeFilterF, Acc) ->
     NxtAcc = [ClosestNodes|Acc],
     closest_to_2(Dist, ID, NxtN, T, NodeFilterF, NxtAcc).
 
-%
-% Return a list of all members, combined, in all buckets.
-%
+%%
+%% Return a list of all members, combined, in all buckets.
+%%
 node_list([]) ->
     [];
 node_list([{_, _, Members}|T]) ->

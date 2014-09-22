@@ -7,6 +7,15 @@
 	find_self/0
 ]).
 
+%% API for others to use
+-export([
+	ping/2,
+	store/3,
+	store_term/3,
+	find_node/3,
+	find_value/3
+]).
+
 -type node_id() :: non_neg_integer().
 -type node_info() :: {node_id(), inet:ip_address(), inet:port_number()}.
 -type peer_info() :: {inet:ip_address(), inet:port_number()}.
@@ -18,4 +27,26 @@ find_self() ->
     Self = dht_state:node_id(),
     dht_net:find_node_search(Self).
 
+
+%% API Functions
+-spec ping(IP, Port) -> pang | node_id()
+  when
+    IP :: inet:ip_address(),
+    Port :: inet:port_number().
+
+ping(IP, Port) ->
+	dht_net:ping(IP, Port).
+	
+store(IP, Port, Data) ->
+	dht_net:store(IP, Port, Data).
+
+store_term(IP, Port, Data) ->
+	store(IP, Port, term_to_binary(Data, [compressed])).
+
+
+find_node(IP, Port, Target) ->
+	dht_net:find_node(IP, Port, Target).
+
+find_value(IP, Port, ID) ->
+	dht_net:find_value(IP, Port, ID).
 

@@ -1,6 +1,7 @@
 %% @author Magnus Klaar <magnus.klaar@sgsstudentbostader.se>
 %% @doc DHT networking code
 %% @end
+%% @private
 -module(dht_net).
 
 -behaviour(gen_server).
@@ -381,7 +382,7 @@ dht_iter_search(SearchType, Target, Width, Retry, Retries,
     end || {_, Res} <- Successful],
     AllNodes  = lists:flatten(NodeLists),
     NewNodes  = [Node || Node <- AllNodes, not gb_sets:is_member(Node, NewQueried)],
-    NewNext   = [{dht_id:dist(ID, Target), ID, IP, Port}
+    NewNext   = [{dht_metric:d(ID, Target), ID, IP, Port}
                 || {ID, IP, Port} <- dht:closest_to(Target, NewNodes, Width)],
 
     % Check if the closest node in the work queue is closer
