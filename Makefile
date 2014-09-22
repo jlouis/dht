@@ -18,5 +18,9 @@ dep_recon = https://github.com/ferd/recon.git master
 analyze:
 	@dialyzer ebin --no_native $(DIALYZER_OPTS)
 
+# EQC
+eqc-ci: all
+	erlc -o ebin eqc_test/*.erl
+
 include erlang.mk
 
