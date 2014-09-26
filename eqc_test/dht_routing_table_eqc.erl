@@ -104,6 +104,20 @@ is_member_pre(S) ->
 is_member_args(#state { nodes = Ns, self = Self }) ->
 	[elements(Ns), Self].
 
+%% Currently skipped commands
+%% has_bucket/2
+%% closest_to(ID, Self, Buckets, Filter, Num)/5
+%% node_list/0 - easy to implement
+
+%% Invariant
+%% ---------
+%%
+%% · No bucket has more than 8 members
+%% · Buckets can't overlap
+%% · Members of a bucket share a property: a common prefix
+%% · The common prefix is given by the depth/width of the bucket
+
+
 %% Properties
 %% ----------
 
