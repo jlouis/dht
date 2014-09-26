@@ -3,10 +3,10 @@
 -export([new/0]).
 -export([
 	closest_to/5,
-	delete/5,
+	delete/3,
 	has_bucket/2,
 	insert/3,
-	is_member/5,
+	is_member/3,
 	members/3,
 	node_list/1,
 	range/3,
@@ -57,7 +57,7 @@ insert_split_bucket({Min, Max, Members}, Self) ->
   Diff = Max - Min,
   Half = Max - (Diff div 2),
   {Lower, Upper} = split_partition(Members, Self, Min, Half),
-  [{Half, Max, Upper}, {Min, Half, Lower}].
+  [{Min, Half, Lower}, {Half, Max, Upper}].
 
 split_partition(Members, Self, Min, Half) ->
 	{Lower, Upper} =
@@ -69,7 +69,7 @@ split_partition(Members, Self, Min, Half) ->
 	              end,
 	              {[], []},
 	              Members),
-	{lists:reverse(Upper), lists:reverse(Lower)}.
+	{lists:reverse(Lower), lists:reverse(Upper)}.
 
 
 %% Get all ranges present in a bucket list
@@ -91,17 +91,16 @@ range_(Dist, [_|T]) ->
 %%
 %% Delete a node from a bucket list
 %%
-delete(ID, IP, Port, Self, Buckets) ->
-    {Rest, Acc} = delete_(dht_metric:d(ID, Self), ID, IP, Port, Buckets, []),
+delete({ID, _, _} = Node, Self, RoutingTable) ->
+    {Rest, Acc} = delete_(dht_metric:d(ID, Self), Node, RoutingTable, []),
     lists:reverse(Acc) ++ Rest.
 
-delete_(_, _, _, _, [], Acc) ->
-    {[], Acc};
-delete_(Dist, ID, IP, Port, [{Min, Max, Members}|T], Acc) when ?in_range(Dist, Min, Max) ->
-    NewMembers = ordsets:del_element({ID, IP, Port}, Members),
+delete_(_, _, [], Acc) -> {[], Acc};
+delete_(Dist, Node, [{Min, Max, Members}|T], Acc) when ?in_range(Dist, Min, Max) ->
+    NewMembers = ordsets:del_element(Node, Members),
     {[{Min, Max, NewMembers}|T], Acc};
-delete_(Dist, ID, IP, Port, [H|T], Acc) ->
-    delete_(Dist, ID, IP, Port, T, [H|Acc]).
+delete_(Dist, Node, [H|T], Acc) ->
+    delete_(Dist, Node, T, [H|Acc]).
 
 %%
 %% Return all members of the bucket that this node is a member of
@@ -124,15 +123,14 @@ members_2(Dist, [_|T]) ->
 %%
 %% Check if a node is a member of a bucket list
 %%
-is_member(ID, IP, Port, Self, Buckets) ->
-    is_member_(dht_metric:d(Self, ID), ID, IP, Port, Buckets).
+is_member({ID, _, _} = Node, Self, RoutingTable) ->
+    is_member_(dht_metric:d(Self, ID), Node, RoutingTable).
 
-is_member_(_, _, _, _, []) ->
-    false;
-is_member_(Dist, ID, IP, Port, [{Min, Max, Members}|_]) when ?in_range(Dist, Min, Max) ->
-    lists:member({ID, IP, Port}, Members);
-is_member_(Dist, ID, IP, Port, [_|T]) ->
-    is_member_(Dist, ID, IP, Port, T).
+is_member_(_Dist, _Node, []) -> false;
+is_member_(Dist, Node, [{Min, Max, Members} | _Tail]) when ?in_range(Dist, Min, Max) ->
+    lists:member(Node, Members);
+is_member_(Dist, Node, [_|Tail]) ->
+    is_member_(Dist, Node, Tail).
 
 
 %%

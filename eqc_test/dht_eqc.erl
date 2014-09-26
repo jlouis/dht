@@ -9,6 +9,13 @@ id() ->
     ?LET(<<ID:160>>, binary(20),
         ID).
 
+ip() ->
+    ?LET([B1, B2, B3, B4], vector(4, choose(0,255)),
+      {B1, B2, B3, B4}).
+      
+port() ->
+    choose(0, 65535).
+
 %% Operation properties
 prop_op_refl() ->
     ?FORALL(X, id(),
