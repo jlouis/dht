@@ -5,7 +5,7 @@
 	closest_to/5,
 	delete/5,
 	has_bucket/2,
-	insert/5,
+	insert/3,
 	is_member/5,
 	members/3,
 	node_list/1,
@@ -28,46 +28,49 @@ new() ->
 %%
 %% Insert a new node into a bucket list
 %%
-insert(Self, ID, IP, Port, Buckets) when is_integer(ID),
-                                           is_integer(Port) ->
-    {Rest, Acc} = insert_(distance(Self, ID), Self, ID, IP, Port, ?K, Buckets, []),
+insert(Self, {ID, _, _} = Node, Buckets) ->
+    {Rest, Acc} = insert_(dht_metric:d(Self, ID), Self, Node, ?K, Buckets, []),
     lists:reverse(Acc) ++ Rest.
 
-insert_(0, _Self, _ID, _IP, _Port, _K, Buckets, Acc) ->
+%% The recursive runner for insertion
+insert_(0, _Self, _Node, _K, Buckets, Acc) ->
     {Buckets, Acc};
-insert_(1, _Self, ID, IP, Port, _K, [{Min=0, Max=1, Members}], Acc) ->
-    NewMembers = ordsets:add_element({ID, IP, Port}, Members),
+insert_(1, _Self, Node, _K, [{Min=0, Max=1, Members}], Acc) ->
+    NewMembers = ordsets:add_element(Node, Members),
     {[{Min, Max, NewMembers}], Acc};
-insert_(Dist, Self, ID, IP, Port, K, [{Min, Max, Members}], Acc) when ?in_range(Dist, Min, Max) ->
-    NumMembers = length(Members),
-    if  NumMembers < K ->
-            NewMembers = ordsets:add_element({ID, IP, Port}, Members),
-            {[{Min, Max, NewMembers}], Acc};
-        NumMembers == K ->
-            Diff  = Max - Min,
-            Half  = Max - (Diff div 2),
-            {Lower, Upper} = lists:foldl(fun ({MID, _, _}=N, {Ls,Us}) ->
-                                                 case ?in_range(distance(MID, Self), Min, Half) of
-                                                     true ->
-                                                         {[N|Ls], Us};
-                                                     false ->
-                                                         {Ls, [N|Us]}
-                                                 end
-                                         end, {[], []}, Members),
-            WithSplit = [{Half, Max, lists:reverse(Upper)},
-                         {Min, Half, lists:reverse(Lower)}],
-            insert_(Dist, Self, ID, IP, Port, K, WithSplit, Acc)
-    end;
-insert_(Dist, _Self, ID, IP, Port, K, [{Min, Max, Members}|T], Acc) when ?in_range(Dist, Min, Max) ->
-    NumMembers = length(Members),
-    if  NumMembers < K ->
-            NewMembers = ordsets:add_element({ID, IP, Port}, Members),
-            {[{Min, Max, NewMembers}|T], Acc};
-        NumMembers == K ->
-            {[{Min, Max, Members}|T], Acc}
-    end;
-insert_(Dist, Self, ID, IP, Port, K, [H|T], Acc) ->
-    insert_(Dist, Self, ID, IP, Port, K, T, [H|Acc]).
+insert_(Dist, Self, Node, K, [{Min, Max, Members} | Next], Acc)
+  when ?in_range(Dist, Min, Max) ->
+    %% We analyze the numbers of members and either insert or split the bucket
+    case length(Members) of
+      L when L < K ->
+        {[{Min, Max, ordsets:add_element(Node, Members)} | Next], Acc};
+      L when L == K, Next /= [] ->
+        {[{Min, Max, Members} | Next], Acc};
+      L when L == K ->
+        Splitted = insert_split_bucket({Min, Max, Members}, Self),
+        insert_(Dist, Self, Node, K, Splitted, Acc)
+	end;
+insert_(Dist, Self, Node, K, [H|T], Acc) ->
+    insert_(Dist, Self, Node, K, T, [H|Acc]).
+        
+insert_split_bucket({Min, Max, Members}, Self) ->
+  Diff = Max - Min,
+  Half = Max - (Diff div 2),
+  {Lower, Upper} = split_partition(Members, Self, Min, Half),
+  [{Half, Max, Upper}, {Min, Half, Lower}].
+
+split_partition(Members, Self, Min, Half) ->
+	{Lower, Upper} =
+	  lists:foldl(fun ({MID, _, _} = N, {Ls, Us}) ->
+	                case ?in_range(dht_metric:d(MID, Self), Min, Half) of
+	                  true -> {[N | Ls ], Us};
+	                  false -> {Ls, [N | Us]}
+	                end
+	              end,
+	              {[], []},
+	              Members),
+	{lists:reverse(Upper), lists:reverse(Lower)}.
+
 
 %% Get all ranges present in a bucket list
 %%
@@ -78,7 +81,7 @@ ranges([{Min, Max, _}|T]) -> [{Min, Max}|ranges(T)].
 %% Return the range of the bucket that a node falls within
 %%
 range(ID, Self, Buckets) ->
-    range_(distance(ID, Self), Buckets).
+    range_(dht_metric:d(ID, Self), Buckets).
 
 range_(Dist, [{Min, Max, _}|_]) when ?in_range(Dist, Min, Max) ->
     {Min, Max};
@@ -89,7 +92,7 @@ range_(Dist, [_|T]) ->
 %% Delete a node from a bucket list
 %%
 delete(ID, IP, Port, Self, Buckets) ->
-    {Rest, Acc} = delete_(distance(ID, Self), ID, IP, Port, Buckets, []),
+    {Rest, Acc} = delete_(dht_metric:d(ID, Self), ID, IP, Port, Buckets, []),
     lists:reverse(Acc) ++ Rest.
 
 delete_(_, _, _, _, [], Acc) ->
@@ -106,7 +109,7 @@ delete_(Dist, ID, IP, Port, [H|T], Acc) ->
 members(Range={_Min, _Max}, _Self, Buckets) ->
     members_1(Range, Buckets);
 members(ID, Self, Buckets) ->
-    members_2(distance(ID, Self), Buckets).
+    members_2(dht_metric:d(ID, Self), Buckets).
 
 members_1({Min, Max}, [{Min, Max, Members}|_]) ->
     Members;
@@ -122,7 +125,7 @@ members_2(Dist, [_|T]) ->
 %% Check if a node is a member of a bucket list
 %%
 is_member(ID, IP, Port, Self, Buckets) ->
-    is_member_(distance(Self, ID), ID, IP, Port, Buckets).
+    is_member_(dht_metric:d(Self, ID), ID, IP, Port, Buckets).
 
 is_member_(_, _, _, _, []) ->
     false;
@@ -143,7 +146,7 @@ has_bucket({Min, Max}, [{_, _, _}|T]) ->
     has_bucket({Min, Max}, T).
 
 closest_to(ID, Self, Buckets, NodeFilterF, Num) ->
-    lists:flatten(closest_to_1(distance(ID, Self), ID, Num, Buckets, NodeFilterF, [], [])).
+    lists:flatten(closest_to_1(dht_metric:d(ID, Self), ID, Num, Buckets, NodeFilterF, [], [])).
 
 closest_to_1(_, _, 0, _, _, _, Ret) ->
     Ret;
@@ -175,9 +178,3 @@ node_list([]) ->
     [];
 node_list([{_, _, Members}|T]) ->
     Members ++ node_list(T).
-
-%% INTERNAL FUNCTIONS
-%% -------------------
-
-distance(ID1, ID2) ->
-    ID1 bxor ID2.
