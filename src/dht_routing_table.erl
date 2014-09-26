@@ -1,4 +1,4 @@
--module(dht_bucket).
+-module(dht_routing_table).
 
 -export([new/0]).
 -export([

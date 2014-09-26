@@ -333,7 +333,7 @@ init([StateFile, BootstrapNodes]) ->
     BTimers = lists:foldl(fun(Range, Acc) ->
 	BTimer = bucket_timer_from(Now, NTimeout, Now, BTimeout, Range),
 	timer_add(Range, Now, BTimer, Acc)
-    end, InitBTimers, dht_bucket:ranges(Buckets)),
+                          end, InitBTimers, dht_routing_table:ranges(Buckets)),
 
     State = #state{
 	node_id=int(NodeID),
@@ -351,21 +351,21 @@ handle_call({is_interesting, InputID, IP, Port}, _From,
 	  node_timeout = NTimeout,
 	  node_timers = NTimers } = State) ->
     ID = int(InputID),
-    case dht_bucket:is_member(ID, IP, Port, Self, Buckets) of
+    case dht_routing_table:is_member(ID, IP, Port, Self, Buckets) of
         true ->
             %% Already a member, the ID is not interesting
             {reply, false, State};
         false ->
             %% Analyze the bucket in which the ID resides
-            Members = dht_bucket:members(ID, Self, Buckets),
+            Members = dht_routing_table:members(ID, Self, Buckets),
             Inactive = inactive_nodes(Members, NTimeout, NTimers),
             case (Inactive /= []) orelse (length(Members) < ?K) of
                 true ->
                     %% There are Inactive members or there are too few members, this is an interesting ID
                     {reply, true, State};
                 false ->
-                    Try = dht_bucket:insert(Self, ID, IP, Port, Buckets),
-                    {reply, dht_bucket:is_member(ID, IP, Port, Self, Try), State}
+                    Try = dht_routing_table:insert(Self, ID, IP, Port, Buckets),
+                    {reply, dht_routing_table:is_member(ID, IP, Port, Self, Try), State}
             end
 	end;
 handle_call({insert_node, InputID, IP, Port}, _From,
@@ -380,11 +380,11 @@ handle_call({insert_node, InputID, IP, Port}, _From,
     Now  = os:timestamp(),
     Node = {ID, IP, Port},
 
-    IsPrevMember = dht_bucket:is_member(ID, IP, Port, Self, PrevBuckets),
+    IsPrevMember = dht_routing_table:is_member(ID, IP, Port, Self, PrevBuckets),
     Inactive = case IsPrevMember of
 	true  -> [];
 	false ->
-	    PrevBMembers = dht_bucket:members(ID, Self, PrevBuckets),
+	    PrevBMembers = dht_routing_table:members(ID, Self, PrevBuckets),
 	    inactive_nodes(PrevBMembers, NTimeout, PrevNTimers)
     end,
 
@@ -397,14 +397,14 @@ handle_call({insert_node, InputID, IP, Port}, _From,
 	{false, []} ->
 	    % If there are no disconnected nodes in the bucket
 	    % insert it anyways and check later if it was actually added
-	    {dht_bucket:insert(Self, ID, IP, Port, PrevBuckets), none};
+	    {dht_routing_table:insert(Self, ID, IP, Port, PrevBuckets), none};
 
 	{false, [{OID, OIP, OPort}=Old|_]} ->
 	    % If there is one or more disconnected nodes in the bucket
 	    % Remove the old one and insert the new node.
-	    TmpBuckets = dht_bucket:delete(OID, OIP, OPort, Self, PrevBuckets),
-	    {dht_bucket:insert(Self, ID, IP, Port, TmpBuckets), Old}
-    end,
+	    TmpBuckets = dht_routing_table:delete(OID, OIP, OPort, Self, PrevBuckets),
+	    {dht_routing_table:insert(Self, ID, IP, Port, TmpBuckets), Old}
+                            end,
 
     % If the new node replaced a new, remove all timer and access time
     % information from the state
@@ -415,7 +415,7 @@ handle_call({insert_node, InputID, IP, Port}, _From,
 	    timer_del(DNode, PrevNTimers)
     end,
 
-    IsNewMember = dht_bucket:is_member(ID, IP, Port, Self, NewBuckets),
+    IsNewMember = dht_routing_table:is_member(ID, IP, Port, Self, NewBuckets),
     NewNTimers  = case {IsPrevMember, IsNewMember} of
 	{false, false} ->
 	    TmpNTimers;
@@ -433,8 +433,8 @@ handle_call({insert_node, InputID, IP, Port}, _From,
 	    PrevBTimers;
 
 	{false, _} ->
-	    AllPrevRanges = dht_bucket:ranges(PrevBuckets),
-	    AllNewRanges  = dht_bucket:ranges(NewBuckets),
+	    AllPrevRanges = dht_routing_table:ranges(PrevBuckets),
+	    AllNewRanges  = dht_routing_table:ranges(NewBuckets),
 	    %% route table can be splitted but node's bucket can remain full,
 	    %% so we can get new bucket but node was not inserted
 	    if length(AllPrevRanges) /= length(AllNewRanges) ->
@@ -446,7 +446,7 @@ handle_call({insert_node, InputID, IP, Port}, _From,
 		end, PrevBTimers, DelRanges),
 
 		lists:foldl(fun(Range, Acc) ->
-		    BMembers = dht_bucket:members(Range, Self, NewBuckets),
+		    BMembers = dht_routing_table:members(Range, Self, NewBuckets),
 		    LRecent = oldest_time(BMembers, NewNTimers),
 		    BTimer = bucket_timer_from(
 				 Now, BTimeout, LRecent, NTimeout, Range),
@@ -469,7 +469,7 @@ handle_call({closest_to, InputID, NumNodes}, _, State) ->
 	node_timers=NTimers,
 	node_timeout=NTimeout} = State,
     NF = fun (N) -> not has_timed_out(N, NTimeout, NTimers) end,
-    CloseNodes = dht_bucket:closest_to(ID, Self, Buckets, NF, NumNodes),
+    CloseNodes = dht_routing_table:closest_to(ID, Self, Buckets, NF, NumNodes),
     {reply, CloseNodes, State};
 handle_call({request_timeout, InputID, IP, Port}, _,
 	#state{
@@ -481,7 +481,7 @@ handle_call({request_timeout, InputID, IP, Port}, _,
     Node = {ID, IP, Port},
     Now  = os:timestamp(),
 
-    NewNTimers = case dht_bucket:is_member(ID, IP, Port, Self, Buckets) of
+    NewNTimers = case dht_routing_table:is_member(ID, IP, Port, Self, Buckets) of
 	false ->
 	    PrevNTimers;
 	true ->
@@ -496,7 +496,7 @@ handle_call({request_success, ID, IP, Port}, _,
 	#state{
 	  node_id=Self,
 	  buckets=Buckets} = State) when is_integer(ID) ->
-    case dht_bucket:is_member(ID, IP, Port, Self, Buckets) of
+    case dht_routing_table:is_member(ID, IP, Port, Self, Buckets) of
 	false ->
 	    {reply, ok, State};
 	true ->
@@ -513,13 +513,13 @@ handle_call({dump_state}, _From,
 	  node_id=Self,
 	  buckets=Buckets,
 	  state_file=StateFile} = State) ->
-    catch dump_state(StateFile, Self, dht_bucket:node_list(Buckets)),
+    catch dump_state(StateFile, Self, dht_routing_table:node_list(Buckets)),
     {reply, State, State};
 handle_call({dump_state, StateFile}, _From,
 	#state{
 	  node_id=Self,
 	  buckets=Buckets} = State) ->
-    catch dump_state(StateFile, Self, dht_bucket:node_list(Buckets)),
+    catch dump_state(StateFile, Self, dht_routing_table:node_list(Buckets)),
     {reply, ok, State};
 handle_call(node_id, _From, #state{node_id=Self} = State) ->
     {reply, int(Self), State}.
@@ -539,7 +539,7 @@ handle_info({inactive_node, InputID, IP, Port}, State) ->
 	node_timers=PrevNTimers,
 	node_timeout=NTimeout} = State,
 
-    IsMember = dht_bucket:is_member(ID, IP, Port, Self, Buckets),
+    IsMember = dht_routing_table:is_member(ID, IP, Port, Self, Buckets),
     HasTimed = case IsMember of
 	false -> false;
 	true  -> has_timed_out(Node, NTimeout, PrevNTimers)
@@ -576,7 +576,7 @@ handle_info({inactive_bucket, Range}, State) ->
 	node_timeout=NTimeout,
 	buck_timeout=BTimeout} = State,
 
-    BucketExists = dht_bucket:has_bucket(Range, Buckets),
+    BucketExists = dht_routing_table:has_bucket(Range, Buckets),
     HasTimed = case BucketExists of
 	false -> false;
 	true  -> has_timed_out(Range, BTimeout, PrevBTimers)
@@ -585,7 +585,7 @@ handle_info({inactive_bucket, Range}, State) ->
 		   false ->
 		       State;
 		   true ->
-		       BMembers   = dht_bucket:members(Range, Self, Buckets),
+		       BMembers   = dht_routing_table:members(Range, Self, Buckets),
 		       if HasTimed ->
 			       spawn_refresh(Range,
 						 inactive_nodes(BMembers, NTimeout, NTimers),
@@ -610,7 +610,7 @@ handle_info({inactive_bucket, Range}, State) ->
 
 %% @private
 terminate(_, #state{ node_id=NodeID, buckets=Buckets,  state_file=StateFile}) ->
-	dump_state(StateFile, NodeID, dht_bucket:node_list(Buckets)).
+	dump_state(StateFile, NodeID, dht_routing_table:node_list(Buckets)).
 
 %% @private
 code_change(_, State, _) ->
@@ -640,10 +640,10 @@ cycle_bucket_timers(ID, Self,
 	  node_timers = NTimers,
 	  node_timeout = NTimeout,
 	  buck_timeout = BTimeout  } = State) ->
-    Range = dht_bucket:range(ID, Self, Buckets),
+    Range = dht_routing_table:range(ID, Self, Buckets),
     {BActive, _} = timer_get(Range, PrevBTimers),
     TmpBTimers = timer_del(Range, PrevBTimers),
-    BMembers = dht_bucket:members(Range, Self, Buckets),
+    BMembers = dht_routing_table:members(Range, Self, Buckets),
     LNRecent = oldest_time(BMembers, NTimers),
     BTimer = bucket_timer_from( BActive, BTimeout, LNRecent, NTimeout, Range),
     NewBTimers = timer_add(Range, BActive, BTimer, TmpBTimers),
