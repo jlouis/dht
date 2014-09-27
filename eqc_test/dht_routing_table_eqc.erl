@@ -31,12 +31,6 @@ bucket(Low, High) ->
             [return({Low, High})])}
   ]).
 
-%% Initial state of the system
-%% --------------------------------
-
-%% initial_state() ->
-%%    #state{ self = 12230598239058230958235 }.
-
 %% Insertion of new entries into the routing table
 %% -----------------------------------------------
 insert(Self, {ID, IP, Port}) ->
@@ -149,12 +143,22 @@ node_list_post(#state { nodes = Ns }, _Args, RNs) ->
 	is_subset(RNs, Ns).
 
 %% Ask if the routing table has a bucket
+%% -------------------------------------
 has_bucket(B) ->
 	routing_table:has_bucket(B).
 	
 has_bucket_args(_S) ->
 	[bucket()].
 
+%% Ask who is closest to a given ID
+%% --------------------------------
+closest_to(ID, Self, Num) ->
+	routing_table:closest_to(ID, Self, fun(_X) -> true end, Num).
+	
+closest_to_args(#state { self = Self }) ->
+	[dht_eqc:id(), Self, nat()].
+
+    
 %% Currently skipped commands
 %% closest_to(ID, Self, Buckets, Filter, Num)/5
 

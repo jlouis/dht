@@ -152,7 +152,7 @@ closest_to_1(Dist, ID, Num, [], NodeFilterF, Rest, Ret) ->
     closest_to_2(Dist, ID, Num, Rest, NodeFilterF, Ret);
 closest_to_1(Dist, ID, Num, [{Min, _Max, Members}|T], NodeFilterF, Rest, Acc)
   when (Dist band Min) > 0 ->
-    CloseNodes = dht:closest_to(ID, [M || M <- Members, NodeFilterF(M)], Num),
+    CloseNodes = dht_metric:neighborhood(ID, [M || M <- Members, NodeFilterF(M)], Num),
     NxtNum = max(0, Num - length(CloseNodes)),
     NxtAcc = [CloseNodes|Acc],
     closest_to_1(Dist, ID, NxtNum, T, NodeFilterF, Rest, NxtAcc);
@@ -164,7 +164,7 @@ closest_to_2(_, _, 0, _, _, Ret) ->
 closest_to_2(_, _, _, [], _, Ret) ->
     Ret;
 closest_to_2(Dist, ID, Num, [{_Min, _Max, Members}|T], NodeFilterF, Acc) ->
-    ClosestNodes = dht:closest_to(ID, [M || M <- Members, NodeFilterF(M)], Num) ++ Acc,
+    ClosestNodes = dht_metric:neighborhood(ID, [M || M <- Members, NodeFilterF(M)], Num) ++ Acc,
     NxtN = max(0, Num - length(ClosestNodes)),
     NxtAcc = [ClosestNodes|Acc],
     closest_to_2(Dist, ID, NxtN, T, NodeFilterF, NxtAcc).

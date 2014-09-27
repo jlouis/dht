@@ -1,7 +1,7 @@
 -module(routing_table).
 -behaviour(gen_server).
 
--export([start_link/0, reset/0, insert/2, ranges/0, range/2, delete/2, members/2, is_member/2, invariant/0, node_list/0, has_bucket/1]).
+-export([start_link/0, reset/0, insert/2, ranges/0, range/2, delete/2, members/2, is_member/2, invariant/0, node_list/0, has_bucket/1, closest_to/4]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2, code_change/3]).
 
@@ -45,6 +45,9 @@ node_list() ->
 has_bucket(B) ->
 	gen_server:call(?MODULE, {has_bucket, B}).
 
+closest_to(ID, Self, Filter, Num) ->
+	gen_server:call(?MODULE, {closest_to, ID, Self, Filter, Num}).
+
 invariant() ->
 	gen_server:call(?MODULE, invariant).
 
@@ -74,6 +77,8 @@ handle_call(node_list, _From, #state { table = RT } = State) ->
 	{reply, dht_routing_table:node_list(RT), State};
 handle_call({has_bucket, B}, _From, #state { table = RT } = State) ->
 	{reply, dht_routing_table:has_bucket(B, RT), State};
+handle_call({closest_to, ID, Self, Filter, Num}, _From, #state { table = RT } = State) ->
+	{reply, dht_routing_table:closest_to(ID, Self, RT, Filter, Num), State};
 handle_call(invariant, _From, #state { table = RT } = State) ->
 	{reply, check_invariants(RT), State};
 handle_call(_Msg, _From, State) ->
