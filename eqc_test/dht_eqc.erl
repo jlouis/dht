@@ -28,4 +28,3 @@ prop_op_sym() ->
 prop_op_triangle_ineq() ->
     ?FORALL({X, Y, Z}, {id(), id(), id()},
         dht_id:dist(X, Y) + dht_id:dist(Y, Z) >= dht_id:dist(X, Z)).
-

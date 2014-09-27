@@ -116,6 +116,8 @@ is_member_args(#state { nodes = Ns, self = Self }) ->
 %% · Buckets can't overlap
 %% · Members of a bucket share a property: a common prefix
 %% · The common prefix is given by the depth/width of the bucket
+invariant(_S) ->
+	routing_table:invariant().
 
 
 %% Properties
