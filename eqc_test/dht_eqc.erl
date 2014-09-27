@@ -19,12 +19,12 @@ port() ->
 %% Operation properties
 prop_op_refl() ->
     ?FORALL(X, id(),
-        dht_id:dist(X, X) == 0).
+        dht_metric:d(X, X) == 0).
 
 prop_op_sym() ->
     ?FORALL({X, Y}, {id(), id()},
-        dht_id:dist(X, Y) == dht_id:dist(Y, X)).
+        dht_metric:d(X, Y) == dht_metric:d(Y, X)).
 
 prop_op_triangle_ineq() ->
     ?FORALL({X, Y, Z}, {id(), id(), id()},
-        dht_id:dist(X, Y) + dht_id:dist(Y, Z) >= dht_id:dist(X, Z)).
+        dht_metric:d(X, Y) + dht_metric:d(Y, Z) >= dht_metric:d(X, Z)).
