@@ -34,8 +34,8 @@ bucket(Low, High) ->
 %% Initial state of the system
 %% --------------------------------
 
-initial_state() ->
-	#state{ self = dht_eqc:id() }.
+%% initial_state() ->
+%%    #state{ self = 12230598239058230958235 }.
 
 %% Insertion of new entries into the routing table
 %% -----------------------------------------------
@@ -169,6 +169,14 @@ invariant(_S) ->
 	routing_table:invariant().
 
 
+%% Weights
+%% -------
+%%
+%% It is more interesting to manipulate the structure than it is to query it:
+weight(_S, insert) -> 3;
+weight(_S, delete) -> 3;
+weight(_S, _Cmd) -> 1.
+
 %% Properties
 %% ----------
 
@@ -177,13 +185,14 @@ prop_seq() ->
         ok,
         fun() -> ok end
       end,
-    ?FORALL(Cmds, commands(?MODULE),
+    ?FORALL(Self, dht_eqc:id(),
+    ?FORALL(Cmds, commands(?MODULE, #state { self = Self}),
       begin
         ok = routing_table:reset(),
         {H, S, R} = run_commands(?MODULE, Cmds),
         aggregate(command_names(Cmds),
           pretty_commands(?MODULE, Cmds, {H, S, R}, R == ok))
-      end)).
+      end))).
 
 %% Internal functions
 %% ------------------
