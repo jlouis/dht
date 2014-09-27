@@ -1,7 +1,7 @@
 -module(routing_table).
 -behaviour(gen_server).
 
--export([start_link/0, reset/0, insert/2, ranges/0, range/2, delete/2, members/2, is_member/2, invariant/0]).
+-export([start_link/0, reset/0, insert/2, ranges/0, range/2, delete/2, members/2, is_member/2, invariant/0, node_list/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2, code_change/3]).
 
@@ -39,6 +39,9 @@ members(ID, Self) ->
 is_member(Node, Self) ->
 	gen_server:call(?MODULE, {is_member, Node, Self}).
 
+node_list() ->
+	gen_server:call(?MODULE, node_list).
+
 invariant() ->
 	gen_server:call(?MODULE, invariant).
 
@@ -64,6 +67,8 @@ handle_call({members, ID, Self}, _From, #state { table = RT } = State) ->
 	{reply, dht_routing_table:members(ID, Self, RT), State};
 handle_call({is_member, Node, Self}, _From, #state { table = RT } = State) ->
 	{reply, dht_routing_table:is_member(Node, Self, RT), State};
+handle_call(node_list, _From, #state { table = RT } = State) ->
+	{reply, dht_routing_table:node_list(RT), State};
 handle_call(invariant, _From, #state { table = RT } = State) ->
 	{reply, check_invariants(RT), State};
 handle_call(_Msg, _From, State) ->

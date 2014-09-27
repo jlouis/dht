@@ -99,10 +99,31 @@ is_member(Node, Self) ->
 	routing_table:is_member(Node, Self).
 
 is_member_pre(S) ->
-	has_nodes(S).
+	has_nodes(S) orelse has_deleted_nodes(S).
 
-is_member_args(#state { nodes = Ns, self = Self }) ->
-	[elements(Ns), Self].
+is_member_args(#state { nodes = Ns, deleted = DNs, self = Self }) ->
+	[elements(Ns ++ DNs), Self].
+
+is_member_post(#state { deleted = DNs }, [N, _], Res) ->
+    case lists:member(N, DNs) of
+      true ->
+        %% Among the deleted nodes, must never be in the routing table
+        Res == false;
+      false ->
+        %% Not among the deleted nodes, can be a subset so this is always ok
+        true
+    end.
+
+%% Ask for the node list
+%% -----------------------
+node_list() ->
+    routing_table:node_list().
+    
+node_list_args(_S) ->
+	[].
+	
+node_list_post(#state { nodes = Ns }, _Args, RNs) ->
+	is_subset(RNs, Ns).
 
 %% Currently skipped commands
 %% has_bucket/2
@@ -149,6 +170,12 @@ contiguous([X, Y | _T]) ->
 has_nodes(#state { nodes = [] }) -> false;
 has_nodes(#state { nodes = [_|_] }) -> true.
 
+has_deleted_nodes(#state { deleted = [] }) -> false;
+has_deleted_nodes(#state { deleted = [_|_] }) -> true.
+
 ids(Nodes) ->
   [ID || {ID, _, _} <- Nodes].
 
+is_subset([X | Xs], Set) ->
+    lists:member(X, Set) andalso is_subset(Xs, Set);
+is_subset([], _Set) -> true.
