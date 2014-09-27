@@ -11,6 +11,29 @@
 	  deleted = []
     }).
 
+%% Generators
+%% ----------
+
+bucket() ->
+    MaxID = 1 bsl 160,
+    bucket(0, MaxID).
+    
+bucket(Low, High) when High - Low < 8 -> return({Low, High});
+bucket(Low, High) ->
+  Diff = High - Low,
+  Half = High - (Diff div 2),
+
+  frequency([
+    {1, return({Low, High})},
+    {8, ?SHRINK(
+            oneof([?LAZY(bucket(Half, High)),
+                   ?LAZY(bucket(Low, Half))]),
+            [return({Low, High})])}
+  ]).
+
+%% Initial state of the system
+%% --------------------------------
+
 initial_state() ->
 	#state{ self = dht_eqc:id() }.
 
@@ -125,10 +148,15 @@ node_list_args(_S) ->
 node_list_post(#state { nodes = Ns }, _Args, RNs) ->
 	is_subset(RNs, Ns).
 
+%% Ask if the routing table has a bucket
+has_bucket(B) ->
+	routing_table:has_bucket(B).
+	
+has_bucket_args(_S) ->
+	[bucket()].
+
 %% Currently skipped commands
-%% has_bucket/2
 %% closest_to(ID, Self, Buckets, Filter, Num)/5
-%% node_list/0 - easy to implement
 
 %% Invariant
 %% ---------
