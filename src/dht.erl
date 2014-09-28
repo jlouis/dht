@@ -17,11 +17,11 @@
 ]).
 
 -type node_id() :: non_neg_integer().
--type node_info() :: {node_id(), inet:ip_address(), inet:port_number()}.
+-type node_t() :: {node_id(), inet:ip_address(), inet:port_number()}.
 -type peer_info() :: {inet:ip_address(), inet:port_number()}.
 
 
--export_type([node_id/0, node_info/0, peer_info/0]).
+-export_type([node_id/0, node_t/0, peer_info/0]).
 
 find_self() ->
     Self = dht_state:node_id(),

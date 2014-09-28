@@ -115,7 +115,7 @@ ping(IP, Port) ->
 %% Search at the target IP/Port pair for the NodeID given by `Target'. May time out.
 %% @end
 -spec find_node(inet:ip_address(), inet:port_number(), dht:node_id()) ->
-    {'error', 'timeout'} | {dht:node_id(), list(dht:node_info())}.
+    {'error', 'timeout'} | {dht:node_id(), list(dht:node_t())}.
 find_node(IP, Port, Target)  ->
     case gen_server:call(?MODULE, {request, {find_node, Target}, {IP, Port}}) of
         timeout ->
@@ -127,7 +127,7 @@ find_node(IP, Port, Target)  ->
     end.
 
 -spec get_peers(inet:ip_address(), inet:port_number(), infohash()) ->
-    {dht:node_id(), token(), list(dht:peer_info()), list(dht:node_info())} | {error, any()}.
+    {dht:node_id(), token(), list(dht:peer_info()), list(dht:node_t())} | {error, any()}.
 get_peers(IP, Port, InfoHash)  ->
     case gen_server:call(?MODULE, {request, {get_peers, InfoHash}, {IP, Port}}) of
         timeout ->
@@ -153,25 +153,25 @@ return(Peer, ID, Response) ->
 %% SEARCH API
 %% ---------------------------------------------------
 
--spec find_node_search(dht:node_id()) -> list(dht:node_info()).
+-spec find_node_search(dht:node_id()) -> list(dht:node_t()).
 find_node_search(NodeID) ->
     Width = search_width(),
     dht_iter_search(find_node, NodeID, Width, search_retries(), dht_state:closest_to(NodeID, Width)).
 
--spec find_node_search(dht:node_id(), list(dht:node_info())) -> list(dht:node_info()).
+-spec find_node_search(dht:node_id(), list(dht:node_t())) -> list(dht:node_t()).
 find_node_search(NodeID, Nodes) ->
     Width = search_width(),
     dht_iter_search(find_node, NodeID, Width, search_retries(), Nodes).
 
 -spec get_peers_search(infohash()) ->
-    {list(trackerinfo()), list(dht:peer_info()), list(dht:node_info())}.
+    {list(trackerinfo()), list(dht:peer_info()), list(dht:node_t())}.
 get_peers_search(InfoHash) ->
     Width = search_width(),
     Nodes = dht_state:closest_to(InfoHash, Width), 
     dht_iter_search(get_peers, InfoHash, Width, search_retries(), Nodes).
 
--spec get_peers_search(infohash(), list(dht:node_info())) ->
-    {list(trackerinfo()), list(dht:peer_info()), list(dht:node_info())}.
+-spec get_peers_search(infohash(), list(dht:node_t())) ->
+    {list(trackerinfo()), list(dht:peer_info()), list(dht:node_t())}.
 get_peers_search(InfoHash, Nodes) ->
     Width = search_width(),
     Retry = search_retries(),
