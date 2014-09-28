@@ -33,14 +33,14 @@ bucket(Low, High) ->
 
 %% Insertion of new entries into the routing table
 %% -----------------------------------------------
-insert(Self, {ID, IP, Port}) ->
-	routing_table:insert(Self, {ID, IP, Port}).
+insert({ID, IP, Port}) ->
+	routing_table:insert({ID, IP, Port}).
 	
-insert_args(#state { self = Self }) ->
+insert_args(#state {}) ->
 	?LET({ID, IP, Port}, {dht_eqc:id(), dht_eqc:ip(), dht_eqc:port()},
-	  [Self, {ID, IP, Port}]).
+	  [{ID, IP, Port}]).
 	  
-insert_next(#state { nodes = Nodes } = State, _V, [_Self, Node]) ->
+insert_next(#state { nodes = Nodes } = State, _V, [Node]) ->
 	State#state { nodes = Nodes ++ [Node] }.
 
 %% Ask the system for the current state table ranges
@@ -58,38 +58,38 @@ ranges_post(#state {}, [], Ranges) ->
 
 %% Ask in what range a random ID falls in
 %% --------------------------------------
-range(ID, Self) ->
-	routing_table:range(ID, Self).
+range(ID) ->
+	routing_table:range(ID).
 	
-range_args(#state { self = Self }) ->
-	[dht_eqc:id(), Self].
+range_args(_S) ->
+	[dht_eqc:id()].
 	
 %% Delete a node from the routing table
 %% In this case, the node does not exist
 %% ------------------------------------
-delete_not_existing(Node, Self) ->
-	routing_table:delete(Node, Self).
+delete_not_existing(Node) ->
+	routing_table:delete(Node).
 	
-delete_not_existing_args(#state { self = Self}) ->
+delete_not_existing_args(#state {}) ->
 	?LET({ID, IP, Port}, {dht_eqc:id(), dht_eqc:ip(), dht_eqc:port()},
-	  [{ID, IP, Port}, Self]).
+	  [{ID, IP, Port}]).
 	  
-delete_not_existing_pre(#state { nodes = Ns }, [N, _]) ->
+delete_not_existing_pre(#state { nodes = Ns }, [N]) ->
     not lists:member(N, Ns).
 
 %% Delete a node from the routing table
 %% In this case, the node does exist in the table
 %% ------------------------------------
-delete(Node, Self) ->
-	routing_table:delete(Node, Self).
+delete(Node) ->
+	routing_table:delete(Node).
 	
 delete_pre(S) ->
 	has_nodes(S).
 
-delete_args(#state { self = Self, nodes = Ns}) ->
-	[elements(Ns), Self].
+delete_args(#state { nodes = Ns}) ->
+	[elements(Ns)].
 	
-delete_next(#state { nodes = Ns, deleted = Ds } = State, _, [Node, _]) ->
+delete_next(#state { nodes = Ns, deleted = Ds } = State, _, [Node]) ->
 	State#state {
 		nodes = lists:delete(Node, Ns),
 		deleted = Ds ++ [Node]
@@ -98,30 +98,29 @@ delete_next(#state { nodes = Ns, deleted = Ds } = State, _, [Node, _]) ->
 %% Ask for members of a given ID
 %% Currently, we only ask for existing members, but this could also fault-inject
 %% -----------------------------
-members(ID, Self) ->
-	routing_table:members(ID, Self).
+members(ID) ->
+	routing_table:members(ID).
 
 members_pre(S) ->
     has_nodes(S).
 
-members_args(#state { nodes = Ns, self = Self }) ->
-	[elements(ids(Ns)), Self].
+members_args(#state { nodes = Ns }) ->
+	[elements(ids(Ns))].
 
-members_post(#state{}, [_ID, _], Res) ->
-	length(Res) =< 8.
+members_post(#state{}, [_ID], Res) -> length(Res) =< 8.
 
 %% Ask for membership of the Routing Table
 %% ---------------------------------------
-is_member(Node, Self) ->
-	routing_table:is_member(Node, Self).
+is_member(Node) ->
+    routing_table:is_member(Node).
 
 is_member_pre(S) ->
 	has_nodes(S) orelse has_deleted_nodes(S).
 
-is_member_args(#state { nodes = Ns, deleted = DNs, self = Self }) ->
-	[elements(Ns ++ DNs), Self].
+is_member_args(#state { nodes = Ns, deleted = DNs }) ->
+	[elements(Ns ++ DNs)].
 
-is_member_post(#state { deleted = DNs }, [N, _], Res) ->
+is_member_post(#state { deleted = DNs }, [N], Res) ->
     case lists:member(N, DNs) of
       true ->
         %% Among the deleted nodes, must never be in the routing table
@@ -152,13 +151,12 @@ has_bucket_args(_S) ->
 
 %% Ask who is closest to a given ID
 %% --------------------------------
-closest_to(ID, Self, Num) ->
-	routing_table:closest_to(ID, Self, fun(_X) -> true end, Num).
+closest_to(ID, Num) ->
+	routing_table:closest_to(ID, fun(_X) -> true end, Num).
 	
-closest_to_args(#state { self = Self }) ->
-	[dht_eqc:id(), Self, nat()].
+closest_to_args(#state { }) ->
+	[dht_eqc:id(), nat()].
 
-    
 %% Currently skipped commands
 %% closest_to(ID, Self, Buckets, Filter, Num)/5
 
@@ -192,7 +190,7 @@ prop_seq() ->
     ?FORALL(Self, dht_eqc:id(),
     ?FORALL(Cmds, commands(?MODULE, #state { self = Self}),
       begin
-        ok = routing_table:reset(),
+        ok = routing_table:reset(Self),
         {H, S, R} = run_commands(?MODULE, Cmds),
         aggregate(command_names(Cmds),
           pretty_commands(?MODULE, Cmds, {H, S, R}, R == ok))

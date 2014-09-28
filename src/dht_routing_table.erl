@@ -1,15 +1,15 @@
 -module(dht_routing_table).
 
--export([new/0]).
+-export([new/1]).
 -export([
-	closest_to/5,
-	delete/3,
+	closest_to/4,
+	delete/2,
 	has_bucket/2,
-	insert/3,
-	is_member/3,
-	members/3,
+	insert/2,
+	is_member/2,
+	members/2,
 	node_list/1,
-	range/3,
+	range/2,
 	ranges/1
 ]).
 
@@ -17,20 +17,31 @@
 -define(K, 8).
 -define(in_range(Dist, Min, Max), ((Dist >= Min) andalso (Dist < Max))).
 
+-type member() :: {dht:node_id(), inet:ip_address(), inet:port_number()}.
+-record(routing_table,
+        { self :: dht:node_id(),
+          table :: [{dht:node_id(), dht:node_id(), [member()]}]
+        }).
+-type routing_table() :: #routing_table{}.
+
 %%
 %% Create a new bucket list
 %%
-new() ->
+-spec new(dht:node_id()) -> routing_table().
+new(Self) when is_integer(Self), Self >= 0 ->
     MaxID = 1 bsl 160,
-    [{0, MaxID, []}].
+    #routing_table {
+       self = Self,
+       table = [{0, MaxID, []}]
+    }.
 
 
 %%
 %% Insert a new node into a bucket list
 %%
-insert(Self, {ID, _, _} = Node, Buckets) ->
+insert({ID, _, _} = Node, #routing_table { self = Self, table = Buckets} = Tbl) ->
     {Rest, Acc} = insert_(dht_metric:d(Self, ID), Self, Node, ?K, Buckets, []),
-    lists:reverse(Acc) ++ Rest.
+    Tbl#routing_table { table = lists:reverse(Acc) ++ Rest}.
 
 %% The recursive runner for insertion
 insert_(0, _Self, _Node, _K, Buckets, Acc) ->
@@ -74,13 +85,13 @@ split_partition(Members, Self, Min, Half) ->
 
 %% Get all ranges present in a bucket list
 %%
-ranges([]) -> [];
-ranges([{Min, Max, _}|T]) -> [{Min, Max}|ranges(T)].
+ranges(#routing_table { table = Entries }) ->
+    [{Min, Max} || {Min, Max, _} <- Entries].
 
 %%
 %% Return the range of the bucket that a node falls within
 %%
-range(ID, Self, Buckets) ->
+range(ID, #routing_table { self = Self, table = Buckets}) ->
     range_(dht_metric:d(ID, Self), Buckets).
 
 range_(Dist, [{Min, Max, _}|_]) when ?in_range(Dist, Min, Max) ->
@@ -91,9 +102,9 @@ range_(Dist, [_|T]) ->
 %%
 %% Delete a node from a bucket list
 %%
-delete({ID, _, _} = Node, Self, RoutingTable) ->
+delete({ID, _, _} = Node, #routing_table { self = Self, table = RoutingTable} = Tbl) ->
     {Rest, Acc} = delete_(dht_metric:d(ID, Self), Node, RoutingTable, []),
-    lists:reverse(Acc) ++ Rest.
+    Tbl#routing_table { table = lists:reverse(Acc) ++ Rest }.
 
 delete_(_, _, [], Acc) -> {[], Acc};
 delete_(Dist, Node, [{Min, Max, Members}|T], Acc) when ?in_range(Dist, Min, Max) ->
@@ -105,9 +116,9 @@ delete_(Dist, Node, [H|T], Acc) ->
 %%
 %% Return all members of the bucket that this node is a member of
 %%
-members(Range={_Min, _Max}, _Self, Buckets) ->
+members(Range={_Min, _Max}, #routing_table { table = Buckets}) ->
     members_1(Range, Buckets);
-members(ID, Self, Buckets) ->
+members(ID, #routing_table { self = Self, table = Buckets}) ->
     members_2(dht_metric:d(ID, Self), Buckets).
 
 members_1({Min, Max}, [{Min, Max, Members}|_]) ->
@@ -123,7 +134,7 @@ members_2(Dist, [_|T]) ->
 %%
 %% Check if a node is a member of a bucket list
 %%
-is_member({ID, _, _} = Node, Self, RoutingTable) ->
+is_member({ID, _, _} = Node, #routing_table { self = Self, table = RoutingTable}) ->
     is_member_(dht_metric:d(Self, ID), Node, RoutingTable).
 
 is_member_(_Dist, _Node, []) -> false;
@@ -136,14 +147,10 @@ is_member_(Dist, Node, [_|Tail]) ->
 %%
 %% Check if a bucket exists in a bucket list
 %%
-has_bucket({_, _}, []) ->
-    false;
-has_bucket({Min, Max}, [{Min, Max, _}|_]) ->
-    true;
-has_bucket({Min, Max}, [{_, _, _}|T]) ->
-    has_bucket({Min, Max}, T).
+has_bucket(Bucket, #routing_table { table = Entries}) ->
+    lists:member(Bucket, [{Min, Max} || {Min, Max, _} <- Entries]).
 
-closest_to(ID, Self, Buckets, NodeFilterF, Num) ->
+closest_to(ID, NodeFilterF, Num, #routing_table { self = Self, table = Buckets }) ->
     lists:flatten(closest_to_1(dht_metric:d(ID, Self), ID, Num, Buckets, NodeFilterF, [], [])).
 
 closest_to_1(_, _, 0, _, _, _, Ret) ->
@@ -172,7 +179,6 @@ closest_to_2(Dist, ID, Num, [{_Min, _Max, Members}|T], NodeFilterF, Acc) ->
 %%
 %% Return a list of all members, combined, in all buckets.
 %%
-node_list([]) ->
-    [];
-node_list([{_, _, Members}|T]) ->
-    Members ++ node_list(T).
+node_list(#routing_table { table = Entries }) ->
+    lists:flatmap(fun({_, _, Members}) -> Members end, Entries).
+
