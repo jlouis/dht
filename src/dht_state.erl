@@ -189,18 +189,18 @@ closest_to(NodeID, NumNodes) ->
 
 -spec log_request_timeout(dht_id:t(), inet:ip_address(), inet:port_number()) -> 'ok'.
 log_request_timeout(ID, IP, Port) ->
-    gen_server:call(?MODULE, {request_timeout, ID, IP, Port}).
+    gen_server:call(?MODULE, {request_timeout, {ID, IP, Port}}).
 
 -spec log_request_success(dht_id:t(), inet:ip_address(), inet:port_number()) -> 'ok'.
 log_request_success(ID, IP, Port) ->
-    gen_server:call(?MODULE, {request_success, ID, IP, Port}).
+    gen_server:call(?MODULE, {request_success, {ID, IP, Port}}).
 
 -spec log_request_from(dht_id:t(), inet:ip_address(), inet:port_number()) -> 'ok'.
 log_request_from(ID, IP, Port) ->
-    gen_server:call(?MODULE, {request_from, ID, IP, Port}).
+    gen_server:call(?MODULE, {request_from, {ID, IP, Port}}).
 
 dump_state() ->
-    gen_server:call(?MODULE, {dump_state}).
+    gen_server:call(?MODULE, dump_state).
 
 dump_state(Filename) ->
     gen_server:call(?MODULE, {dump_state, Filename}).
@@ -261,51 +261,55 @@ refresh(Range, Inactive, Active) ->
     % If they turn out to be reachable the problem's solved.
     do_refresh(Range, Inactive ++ Active, []).
 
-do_refresh(_, [], _) ->
-    ok; % @todo - perform a find_node_search here?
-do_refresh(Range, [{ID, IP, Port}|T], IDs) ->
-    Continue = case dht_net:find_node(IP, Port, ID) of
-	{error, timeout} ->
-	    true;
-	{_, CloseNodes} ->
-	    do_refresh_inserts(Range, CloseNodes)
-    end,
-    case Continue of
-	false -> ok;
-	true  -> do_refresh(Range, T, [ID|IDs])
+do_refresh(_Range, [], _) -> ok;
+do_refresh(Range, [{ID, _IP, _Port} = Node | T], IDs) ->
+  case do_refresh_find_node(Range, Node) of
+    continue ->
+      do_refresh(Range, T, [ID | IDs]);
+    stop ->
+      ok
+  end.
+  
+do_refresh_find_node(Range, {ID, IP, Port}) ->
+    case dht_net:find_node(IP, Port, ID) of
+        {error, timeout} ->
+            continue;
+        {_, NearNodes} ->
+            do_refresh_inserts(Range, NearNodes)
     end.
 
-do_refresh_inserts({_, _}, []) -> true;
-do_refresh_inserts({Min, Max}=Range, [{ID, IP, Port}|T]) when ?in_range(ID, Min, Max) ->
+do_refresh_inserts({_, _}, []) -> continue;
+do_refresh_inserts({Min, Max} = Range, [{ID, IP, Port}|T]) when ?in_range(ID, Min, Max) ->
     case safe_insert_node(ID, IP, Port) of
-	{error, timeout} ->
-	    do_refresh_inserts(Range, T);
-	true ->
-	    do_refresh_inserts(Range, T);
-	false ->
-	    insert_nodes(T),
-	    false
+      {error, timeout} -> do_refresh_inserts(Range, T);
+      true -> do_refresh_inserts(Range, T);
+      false ->
+          insert_nodes(T),
+          stop
     end;
-
-do_refresh_inserts(Range, [{ID, IP, Port}|T]) ->
-    _ = safe_insert_node(ID, IP, Port),
+do_refresh_inserts(Range, [{ID, IP, Port} | T]) ->
+    safe_insert_node(ID, IP, Port),
     do_refresh_inserts(Range, T).
 
 spawn_refresh(Range, InputInactive, InputActive) ->
-    Inactive = [{bin(ID), IP, Port}
-	       || {ID, IP, Port} <- InputInactive],
-    Active   = [{bin(ID), IP, Port}
-	       || {ID, IP, Port} <- InputActive],
+    Inactive = [{bin(ID), IP, Port} || {ID, IP, Port} <- InputInactive],
+    Active   = [{bin(ID), IP, Port} || {ID, IP, Port} <- InputActive],
     spawn(?MODULE, refresh, [Range, Inactive, Active]).
 
 random_node_tag() ->
     _ = random:seed(erlang:now()),
     random:uniform(?MAX_UNREACHABLE).
 
+bucket_timeout() -> 5 * 60 * 1000.
+node_timeout() -> 10 * 60 * 1000.
+
+
 %% @private
 init([StateFile, BootstrapNodes]) ->
-    %% For now, we trap exits which ensures the state table is dumped upon termination of the process.
-    %% @todo lift this restriction. Periodically dump state, but don't do it if an invariant is broken for some reason
+    %% For now, we trap exits which ensures the state table is dumped upon termination
+    %% of the process.
+    %% @todo lift this restriction. Periodically dump state, but don't do it if an
+    %% invariant is broken for some reason
     erlang:process_flag(trap_exit, true),
 
     % Initialize the table of unreachable nodes when the server is started.
@@ -313,36 +317,28 @@ init([StateFile, BootstrapNodes]) ->
     % of this module so they should fail unless the server is not running.
     _ = ets:new(?UNREACHABLE_TAB, [named_table, public, bag]),
 
-    RoutingTable = load_state(StateFile),
-    
+    RoutingTbl = load_state(StateFile),
     insert_nodes(BootstrapNodes),
 
     %% Insert any nodes loaded from the persistent state later
     %% when we are up and running. Use unsafe insertions or the
     %% whole state will be lost if dht starts without
     %% internet connectivity.
-    NodeList = dht_routing_table:node_list(RoutingTable),
-    NodeID = dht_routing_table:node_id(RoutingTable),
-    [spawn(?MODULE, unsafe_insert_node, [int(ID), IP, Port]) || {ID, IP, Port} <- NodeList],
+    NodeList = dht_routing_table:node_list(RoutingTbl),
+    NodeID = dht_routing_table:node_id(RoutingTbl),
+    [spawn(?MODULE, unsafe_insert_node, [ID, IP, Port]) || {ID, IP, Port} <- NodeList],
 
-    #state{
-	routing_table=RoutingTbl,
-	buck_timers=InitBTimers,
-	node_timeout=NTimeout,
-	buck_timeout=BTimeout} = #state{ node_id = NodeID, routing_table = dht_routing_table:new(NodeID)},
-
+    %% Initialize the timers based on the state
+    
     Now = os:timestamp(),
-    BTimers = lists:foldl(fun(Range, Acc) ->
-	BTimer = bucket_timer_from(Now, NTimeout, Now, BTimeout, Range),
-	timer_add(Range, Now, BTimer, Acc)
-                          end, InitBTimers, dht_routing_table:ranges(RoutingTbl)),
-
-    State = #state{
-	node_id=int(NodeID),
-	buck_timers=BTimers,
-	state_file=StateFile},
-    {ok, State}.
-
+    {ok, #state {
+    	node_id = NodeID,
+    	buck_timers = initialize_timers(Now, RoutingTbl),
+    	state_file = StateFile,
+    	routing_table = RoutingTbl,
+    	buck_timeout = bucket_timeout(),
+    	node_timeout = node_timeout()
+    }}.
 
 
 %% @private
@@ -448,7 +444,7 @@ handle_call({insert_node, InputID, IP, Port}, _From,
 
 		lists:foldl(fun(Range, Acc) ->
 		    BMembers = dht_routing_table:members(Range, NewRoutingTbl),
-		    LRecent = oldest_time(BMembers, NewNTimers),
+		    LRecent = timer_oldest(BMembers, NewNTimers),
 		    BTimer = bucket_timer_from(
 				 Now, BTimeout, LRecent, NTimeout, Range),
 		    timer_add(Range, Now, BTimer, Acc)
@@ -462,59 +458,52 @@ handle_call({insert_node, InputID, IP, Port}, _From,
 	node_timers=NewNTimers,
 	buck_timers=NewBTimers},
     {reply, ((not IsPrevMember) and IsNewMember), NewState};
-handle_call({closest_to, InputID, NumNodes}, _, State) ->
-    ID = int(InputID),
-    #state{
-	routing_table=RoutingTbl,
-	node_timers=NTimers,
-	node_timeout=NTimeout} = State,
-    NF = fun (N) -> not has_timed_out(N, NTimeout, NTimers) end,
-    CloseNodes = dht_routing_table:closest_to(ID, RoutingTbl, NF, NumNodes),
-    {reply, CloseNodes, State};
-handle_call({request_timeout, InputID, IP, Port}, _,
-	#state{
-	  routing_table=RoutingTbl,
-	  node_timeout=NTimeout,
-	  node_timers=PrevNTimers} = State) ->
-    ID   = int(InputID),
-    Node = {ID, IP, Port},
-    Now  = os:timestamp(),
-
-    NewNTimers = case dht_routing_table:is_member({ID, IP, Port}, RoutingTbl) of
-	false ->
-	    PrevNTimers;
-	true ->
-	    {LActive, _} = timer_get(Node, PrevNTimers),
-	    TmpNTimers   = timer_del(Node, PrevNTimers),
-	    NTimer       = node_timer_from(Now, NTimeout, Node),
-	    timer_add(Node, LActive, NTimer, TmpNTimers)
-    end,
-    NewState = State#state{node_timers=NewNTimers},
-    {reply, ok, NewState};
-handle_call({request_success, ID, IP, Port}, _,
-	#state{ routing_table=RoutingTbl } = State) when is_integer(ID) ->
-    case dht_routing_table:is_member({ID, IP, Port}, RoutingTbl) of
-	false ->
-	    {reply, ok, State};
-	true ->
-	    Now  = os:timestamp(),
-	    Node = {ID, IP, Port},
-	    {reply, ok, 
-	        cycle_bucket_timers(ID,
-	          cycle_node_timer(Node, Now, State))}
+handle_call({closest_to, ID, NumNodes}, _From,
+            #state{
+	            routing_table=Tbl,
+	            node_timers=NTimers,
+	            node_timeout=NTimeout} = State) ->
+    Filter = fun (N) ->
+                 not has_timed_out(N, NTimeout, NTimers)
+             end,
+    NearNodes = dht_routing_table:closest_to(ID, Filter, NumNodes, Tbl),
+    {reply, NearNodes, State};
+handle_call({request_timeout, Node}, _From,
+	        #state{
+	          routing_table = Tbl,
+	          node_timeout = NTimeout,
+	          node_timers = PrevNTimers} = State) ->
+    case dht_routing_table:is_member(Node, Tbl) of
+      false ->
+          {reply, ok, State};
+      true ->
+          {LActive, _} = timer_get(Node, PrevNTimers),
+          TmpNTimers = timer_del(Node, PrevNTimers),
+          NTimer = node_timer_from(os:timestamp(), NTimeout, Node),
+          {reply, ok, State#state { 
+                          node_timers = timer_add(Node, LActive, NTimer, TmpNTimers) }}
     end;
-handle_call({request_from, ID, IP, Port}, From, State) ->
-    handle_call({request_success, ID, IP, Port}, From, State);
-handle_call({dump_state}, _From,
-	#state{
-	  routing_table=RoutingTbl,
-	  state_file=StateFile} = State) ->
-    catch dump_state(StateFile, dht_routing_table:node_list(RoutingTbl)),
-    {reply, State, State};
-handle_call({dump_state, StateFile}, _From,
-	#state{ routing_table = RoutingTbl } = State) ->
-    catch dump_state(StateFile, dht_routing_table:node_list(RoutingTbl)),
-    {reply, ok, State};
+handle_call({request_success, {ID, _IP, _Port} = Node}, _From,
+	        #state{ routing_table = Tbl } = State) ->
+    case dht_routing_table:is_member(Node, Tbl) of
+	    false -> {reply, ok, State};
+	    true ->
+	        {reply, ok, 
+	          cycle_bucket_timers(ID,
+	            cycle_node_timer(Node, os:timestamp(), State))}
+    end;
+handle_call({request_from, Node}, From, State) ->
+    handle_call({request_success, Node}, From, State);
+handle_call(dump_state, From, #state{ state_file = StateFile } = State) ->
+    handle_call({dump_state, StateFile}, From, State);
+handle_call({dump_state, StateFile}, _From, #state{ routing_table = Tbl } = State) ->
+    try 
+        dump_state(StateFile, Tbl),
+        {reply, ok, State}
+    catch
+      Class:Err ->
+        {reply, {error, {dump_state_failed, Class, Err}}, State}
+    end;
 handle_call(node_id, _From, #state{node_id=Self} = State) ->
     {reply, int(Self), State}.
 
@@ -559,50 +548,55 @@ handle_info({inactive_node, InputID, IP, Port}, State) ->
 	       end,
     {noreply, NewState};
 
-handle_info({inactive_bucket, Range}, State) ->
+%% @todo Rewire this code path.
+%% My assumption is that if we roll more operations into the #state{} object, then
+%% we can rewrite this code to be cleaner. We don't need to do so right away however
+handle_info({inactive_bucket, Range},
+            #state{
+	           routing_table=RoutingTbl,
+	           node_timers=NTimers,
+	           buck_timers=PrevBTimers,
+	           node_timeout=NTimeout,
+	           buck_timeout=BTimeout} = State) ->
     Now = os:timestamp(),
-    #state{
-	routing_table=RoutingTbl,
-	node_timers=NTimers,
-	buck_timers=PrevBTimers,
-	node_timeout=NTimeout,
-	buck_timeout=BTimeout} = State,
 
     BucketExists = dht_routing_table:has_bucket(Range, RoutingTbl),
     HasTimed = case BucketExists of
-	false -> false;
-	true  -> has_timed_out(Range, BTimeout, PrevBTimers)
-    end,
-    NewState = case BucketExists of
+	               false -> false;
+	               true  -> has_timed_out(Range, BTimeout, PrevBTimers)
+               end,
+    NewState = 
+        case BucketExists of
 		   false ->
 		       State;
 		   true ->
-		       BMembers   = dht_routing_table:members(Range, RoutingTbl),
-		       if HasTimed ->
-			       _ = spawn_refresh(Range,
-						 inactive_nodes(BMembers, NTimeout, NTimers),
-						 active_nodes(BMembers, NTimeout, NTimers));
-			  true ->
-			       ok
+		       BMembers = dht_routing_table:members(Range, RoutingTbl),
+		       if
+		           HasTimed ->
+			           _ = spawn_refresh(Range,
+						                 inactive_nodes(BMembers, NTimeout, NTimers),
+						                 active_nodes(BMembers, NTimeout, NTimers));
+			       true ->
+			           ok
 		       end,
 		       {_, TRef} = timer_get(Range, PrevBTimers),
 		       TimerCanceled = erlang:read_timer(TRef) == false,
-		       if (TimerCanceled orelse HasTimed) ->
-			       TmpBTimers = timer_del(Range, PrevBTimers),
-			       LRecent    = oldest_time(BMembers, NTimers),
-			       NewTimer   = bucket_timer_from(
-					      Now, BTimeout, LRecent, NTimeout, Range),
-			       NewBTimers = timer_add(Range, Now, NewTimer, TmpBTimers),
-			       State#state{buck_timers=NewBTimers};
-			  true ->
-			       State
+		       if
+		           (TimerCanceled orelse HasTimed) ->
+			           TmpBTimers = timer_del(Range, PrevBTimers),
+			           LRecent    = timer_oldest(BMembers, NTimers),
+			           NewTimer   = bucket_timer_from(Now, BTimeout, LRecent, NTimeout, Range),
+			           NewBTimers = timer_add(Range, Now, NewTimer, TmpBTimers),
+			           State#state{buck_timers=NewBTimers};
+			       true ->
+			           State
 		       end
 	       end,
     {noreply, NewState}.
 
 %% @private
-terminate(_, #state{ routing_table=RoutingTbl,  state_file=StateFile}) ->
-	dump_state(StateFile, dht_routing_table:node_list(RoutingTbl)).
+terminate(_, #state{ routing_table = Tbl, state_file=StateFile}) ->
+	dump_state(StateFile, Tbl).
 
 %% @private
 code_change(_, State, _) ->
@@ -619,7 +613,9 @@ node_timer_from(Time, Timeout, {ID, IP, Port}) ->
     timer_from(Time, Timeout, Msg).
 
 %% Go through the state and update the timer infrastructure
-cycle_node_timer(Node, Now, #state { node_timers = NTimers, node_timeout = NTimeout } = State) ->
+cycle_node_timer(Node, Now,
+                 #state { node_timers = NTimers,
+                          node_timeout = NTimeout } = State) ->
     {NLActive, _} = timer_get(Node, NTimers),
     Removed = timer_del(Node, NTimers),
     TimerRef = node_timer_from(Now, NTimeout, Node),
@@ -636,47 +632,49 @@ cycle_bucket_timers(ID,
     {BActive, _} = timer_get(Range, PrevBTimers),
     TmpBTimers = timer_del(Range, PrevBTimers),
     BMembers = dht_routing_table:members(Range, RoutingTbl),
-    LNRecent = oldest_time(BMembers, NTimers),
+    LNRecent = timer_oldest(BMembers, NTimers),
     BTimer = bucket_timer_from( BActive, BTimeout, LNRecent, NTimeout, Range),
     NewBTimers = timer_add(Range, BActive, BTimer, TmpBTimers),
     State#state { buck_timers = NewBTimers }.
 
-bucket_timer_from(Time, BTimeout, LeastRecent, NTimeout, Range) ->
-    % In the best case, the bucket should time out N seconds
-    % after the first node in the bucket timed out. If that node
-    % can't be replaced, a bucket refresh should be performed
-    % at most every N seconds, based on when the bucket was last
-    % marked as active, instead of _constantly_.
-    Msg = {inactive_bucket, Range},
-    if
-	LeastRecent <  Time ->
-	    timer_from(Time, BTimeout, Msg);
-	LeastRecent >= Time ->
-	    SumTimeout = NTimeout + NTimeout,
-	    timer_from(LeastRecent, SumTimeout, Msg)
-    end.
+%% In the best case, the bucket should time out N seconds
+%% after the first node in the bucket timed out. If that node
+%% can't be replaced, a bucket refresh should be performed
+%% at most every N seconds, based on when the bucket was last
+%% marked as active, instead of _constantly_.
+bucket_timer_from(Time, BTimeout, LeastRecent, _NTimeout, Range)
+  when LeastRecent < Time ->
+    timer_from(Time, BTimeout, {inactive_bucket, Range});
+bucket_timer_from(Time, _BTimeout, LeastRecent, NTimeout, Range)
+  when LeastRecent >= Time ->
+    timer_from(LeastRecent, 2*NTimeout, {inactive_bucket, Range}).
 
 timer_from(Time, Timeout, Msg) ->
     Interval = ms_between(Time, Timeout),
     erlang:send_after(Interval, self(), Msg).
 
 ms_between(Time, Timeout) ->
-    MS = Timeout - ms_since(Time),
-    if MS =< 0 -> Timeout;
-       MS >= 0 -> MS
+    case Timeout - ms_since(Time) of
+      MS when MS =< 0 -> Timeout;
+      MS -> MS
     end.
 
 ms_since(Time) ->
     timer:now_diff(Time, os:timestamp()) div 1000.
 
-has_timed_out(Item, Timeout, Times) ->
-    {LastActive, _} = timer_get(Item, Times),
+has_timed_out(Item, Timeout, TimerTree) ->
+    {LastActive, _} = timer_get(Item, TimerTree),
     ms_since(LastActive) > Timeout.
 
-oldest_time([], _) -> os:timestamp(); %% None available
-oldest_time(Items, Times) ->
-    ATimes = [element(1, timer_get(I, Times)) || I <- Items],
-    lists:min(ATimes).
+%% initialize_timers/2 sets the initial timers for the state process
+initialize_timers(Now, RoutingTbl) ->
+    lists:foldl(
+      fun (R, Acc) ->
+        BTimer = bucket_timer_from(Now, node_timeout(), Now, bucket_timeout(), R),
+        timer_add(R, Now, BTimer, Acc)
+      end,
+      timer_empty(),
+      dht_routing_table:ranges(RoutingTbl)).
 
 %%
 %% TIMER TREE CODE
@@ -698,6 +696,11 @@ timer_del(Item, Timers) ->
     {_, TRef} = timer_get(Item, Timers),
     _ = erlang:cancel_timer(TRef),
     gb_trees:delete(Item, Timers).
+
+timer_oldest([], _) -> os:timestamp(); %% None available
+timer_oldest(Items, TimerTree) ->
+    ATimes = [element(1, timer_get(I, TimerTree)) || I <- Items],
+    lists:min(ATimes).
 
 
 %%

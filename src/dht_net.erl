@@ -306,7 +306,7 @@ random_token() ->
     <<ID0:16, ID1:16>>.
 
 dht_iter_search(SearchType, Target, Width, Retry, Nodes)  ->
-    WithDist = [{dht:distance(ID, Target), ID, IP, Port} || {ID, IP, Port} <- Nodes],
+    WithDist = [{dht_metric:d(ID, Target), ID, IP, Port} || {ID, IP, Port} <- Nodes],
     dht_iter_search(SearchType, Target, Width, Retry, 0, WithDist,
                     gb_sets:empty(), gb_sets:empty(), []).
 
@@ -383,7 +383,7 @@ dht_iter_search(SearchType, Target, Width, Retry, Retries,
     AllNodes  = lists:flatten(NodeLists),
     NewNodes  = [Node || Node <- AllNodes, not gb_sets:is_member(Node, NewQueried)],
     NewNext   = [{dht_metric:d(ID, Target), ID, IP, Port}
-                || {ID, IP, Port} <- dht:closest_to(Target, NewNodes, Width)],
+                || {ID, IP, Port} <- dht_metric:neighborhood(Target, NewNodes, Width)],
 
     % Check if the closest node in the work queue is closer
     % to the target than the closest responsive node that was

@@ -8,14 +8,15 @@
 
 %% Query
 -export([
-        node_id/1,
 	closest_to/4,
 	has_bucket/2,
 	is_member/2,
 	members/2,
+	node_id/1,
 	node_list/1,
 	range/2,
 	ranges/1
+
 ]).
 
 %% Conversion to persistent state
