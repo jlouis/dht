@@ -160,7 +160,7 @@ insert_nodes(NodeInfos) ->
 -spec unsafe_insert_node(dht_id:t(), inet:ip_address(), inet:port_number()) ->
     boolean().
 unsafe_insert_node(ID, IP, Port) ->
-    gen_server:call(?MODULE, {insert_node, ID, IP, Port}).
+    gen_server:call(?MODULE, {insert_node, {ID, IP, Port}}).
 
 -spec unsafe_insert_nodes(list(dht:node_t())) -> 'ok'.
 unsafe_insert_nodes(NodeInfos) ->
@@ -177,7 +177,7 @@ unsafe_insert_nodes(NodeInfos) ->
 
 -spec is_interesting(dht_id:t(), inet:ip_address(), inet:port_number()) -> boolean().
 is_interesting(ID, IP, Port) when is_integer(ID) ->
-    gen_server:call(?MODULE, {is_interesting, ID, IP, Port}).
+    gen_server:call(?MODULE, {is_interesting, {ID, IP, Port}}).
 
 -spec closest_to(dht_id:t()) -> list(dht:node_t()).
 closest_to(NodeID) ->
@@ -342,12 +342,11 @@ init([StateFile, BootstrapNodes]) ->
 
 
 %% @private
-handle_call({is_interesting, InputID, IP, Port}, _From,
+handle_call({is_interesting, {ID, IP, Port}}, _From,
 	#state{
 	  routing_table = RoutingTbl,
 	  node_timeout = NTimeout,
 	  node_timers = NTimers } = State) ->
-    ID = int(InputID),
     case dht_routing_table:is_member({ID, IP, Port}, RoutingTbl) of
         true ->
             %% Already a member, the ID is not interesting
@@ -365,107 +364,25 @@ handle_call({is_interesting, InputID, IP, Port}, _From,
                     {reply, dht_routing_table:is_member({ID, IP, Port}, Try), State}
             end
 	end;
-handle_call({insert_node, InputID, IP, Port}, _From,
-	#state {
-	  routing_table = PrevRoutingTbl,
-	  node_timers = PrevNTimers,
-	  buck_timers = PrevBTimers,
-	  node_timeout = NTimeout,
-	  buck_timeout = BTimeout } = State) ->
-    ID   = int(InputID),
-    Now  = os:timestamp(),
-    Node = {ID, IP, Port},
-
-    IsPrevMember = dht_routing_table:is_member({ID, IP, Port}, PrevRoutingTbl),
-    Inactive = case IsPrevMember of
-	true  -> [];
-	false ->
-	    PrevBMembers = dht_routing_table:members(ID, PrevRoutingTbl),
-	    inactive_nodes(PrevBMembers, NTimeout, PrevNTimers)
-    end,
-
-    {NewRoutingTbl, Replace} =
-        case {IsPrevMember, Inactive} of
-            {true, _} ->
-                %% If the node is already a member of the node set,
-                %% don't change a thing
-                {PrevRoutingTbl, none};
-            
-            {false, []} ->
-                %% If there are no disconnected nodes in the bucket
-                %% insert it anyways and check later if it was actually added
-                {dht_routing_table:insert({ID, IP, Port}, PrevRoutingTbl), none};
-
-            {false, [{OID, OIP, OPort}=Old|_]} ->
-                %% If there is one or more disconnected nodes in the bucket
-                %% Remove the old one and insert the new node.
-                TmpRoutingTbl = dht_routing_table:delete({OID, OIP, OPort}, PrevRoutingTbl),
-                {dht_routing_table:insert({ID, IP, Port}, TmpRoutingTbl), Old}
-        end,
-
-    %% If the new node replaced a new, remove all timer and access time
-    %% information from the state
-    TmpNTimers = case Replace of
-	none ->
-	    PrevNTimers;
-	{_, _, _}=DNode ->
-	    timer_del(DNode, PrevNTimers)
-    end,
-
-    IsNewMember = dht_routing_table:is_member({ID, IP, Port}, NewRoutingTbl),
-    NewNTimers  = case {IsPrevMember, IsNewMember} of
-	{false, false} ->
-	    TmpNTimers;
-	{true, true} ->
-	    TmpNTimers;
-	{false, true}  ->
-	    NTimer = node_timer_from(Now, NTimeout, Node),
-	    timer_add(Node, Now, NTimer, TmpNTimers)
-    end,
-
-    NewBTimers = case {IsPrevMember, IsNewMember} of
-	{false, false} ->
-	    PrevBTimers;
-	{true, true} ->
-	    PrevBTimers;
-
-	{false, _} ->
-	    AllPrevRanges = dht_routing_table:ranges(PrevRoutingTbl),
-	    AllNewRanges  = dht_routing_table:ranges(NewRoutingTbl),
-	    %% route table can be splitted but node's bucket can remain full,
-	    %% so we can get new bucket but node was not inserted
-	    if length(AllPrevRanges) /= length(AllNewRanges) ->
-		DelRanges  = ordsets:subtract(AllPrevRanges, AllNewRanges),
-		NewRanges  = ordsets:subtract(AllNewRanges, AllPrevRanges),
-
-		DelBTimers = lists:foldl(fun(Range, Acc) ->
-		    timer_del(Range, Acc)
-		end, PrevBTimers, DelRanges),
-
-		lists:foldl(fun(Range, Acc) ->
-		    BMembers = dht_routing_table:members(Range, NewRoutingTbl),
-		    LRecent = timer_oldest(BMembers, NewNTimers),
-		    BTimer = bucket_timer_from(
-				 Now, BTimeout, LRecent, NTimeout, Range),
-		    timer_add(Range, Now, BTimer, Acc)
-			    end, DelBTimers, NewRanges);
-		   true ->
-			PrevBTimers
-	    end
-    end,
-    NewState = State#state{
-	routing_table=NewRoutingTbl,
-	node_timers=NewNTimers,
-	buck_timers=NewBTimers},
-    {reply, ((not IsPrevMember) and IsNewMember), NewState};
+handle_call({insert_node, Node}, _From, #state { routing_table = Tbl } = State) ->
+    case dht_routing_table:is_member(Node, Tbl) of
+        true ->
+            {reply, false, State};
+        false ->
+            case handle_insert_node_new(Node, State) of
+                {ok, S} -> {reply, true, S};
+                {not_inserted, S} -> {reply, false, S}
+            end
+    end;
 handle_call({closest_to, ID, NumNodes}, _From,
             #state{
-	            routing_table=Tbl,
-	            node_timers=NTimers,
-	            node_timeout=NTimeout} = State) ->
-    Filter = fun (N) ->
-                 not has_timed_out(N, NTimeout, NTimers)
-             end,
+		routing_table=Tbl,
+		node_timers=NTimers,
+		node_timeout=NTimeout} = State) ->
+    Filter =
+        fun (N) ->
+		not has_timed_out(N, NTimeout, NTimers)
+        end,
     NearNodes = dht_routing_table:closest_to(ID, Filter, NumNodes, Tbl),
     {reply, NearNodes, State};
 handle_call({request_timeout, Node}, _From,
@@ -602,6 +519,20 @@ terminate(_, #state{ routing_table = Tbl, state_file=StateFile}) ->
 code_change(_, State, _) ->
     {ok, State}.
 
+%%
+%% HANDLE Section
+%%
+handle_insert_node_new({ID, _, _} = Node, #state{ node_timeout = NTimeout, node_timers = NTimers, routing_table = Tbl } = State) ->
+    Neighbours = dht_routing_table:members(ID, Tbl),
+    case inactive_nodes(Neighbours, NTimeout, NTimers) of
+        [] -> rt_add(Node, State);
+        [Old | _ ] ->
+            routing_table_replace(Old, Node, State)
+    end.
+
+%%
+%% INTERNAL FUNCTIONS
+%%
 inactive_nodes(Nodes, Timeout, Timers) ->
     [N || N <- Nodes, has_timed_out(N, Timeout, Timers)].
 
@@ -717,3 +648,81 @@ load_state(Filename) ->
         {error, enoent} ->
             dht_routing_table:new(dht_metric:mk())
     end.
+
+%%
+%% ROUTING TABLE
+%%
+%% When updating the routing table, one must also update the timer structures. These functions make sure both
+%% happens in order.
+
+%% rt_add/2 attempts to add a node to the routing table
+%% This function in particular makes sure it also gets node and bucket timers right and updated as well
+rt_add(Node, #state {
+		routing_table = Tbl,
+		node_timers = NTimers,
+		node_timeout = NTimeout,
+		buck_timers = BTimers,
+		buck_timeout = BTimeout } = State) ->
+    Now = os:timestamp(),
+    T = dht_routing_table:insert(Node, Tbl),
+    case dht_routing_table:is_member(Node, T) of
+       false ->
+           %% No change. This is the easy case
+           {not_inserted, State#state { routing_table = T }};
+        true ->
+            %% The entry is a new node. Update the node timer
+            NTimer = node_timer_from(Now, NTimeout, Node),
+            NT = timer_add(Node, Now, NTimer, NTimers),
+            
+            %% The next section here determines if there are changes to the bucket tree structure. And if there is,
+            %% it reworks what timers should die, and what timers should be added by folding over the
+            %% bucket structure.
+            PrevRanges = dht_routing_table:ranges(Tbl),
+            NewRanges = dht_routing_table:ranges(T),
+            case
+                dht_routing_table:ranges(Tbl) /= dht_routing_table:ranges(T)
+            of
+                false ->
+                    {ok, State#state {
+                    	routing_table = T,
+                    	node_timers = NT,
+                    	buck_timers = BTimers
+                   }};
+               true ->
+                   DelRanges = ordsets:subtract(PrevRanges, NewRanges),
+                   AddRanges = ordsets:subtract(NewRanges, PrevRanges),
+                   
+                   UpdatedBucketTimers =
+                       lists:foldl(
+                           fun
+                               ({del, R}, TM) -> timer_del(R, TM);
+                               ({add, R}, TM) ->
+                                   Members = dht_routing_table:members(R, T),
+                                   Recent = timer_oldest(Members, NT),
+                                   BT = bucket_timer_from(Now, BTimeout, Recent, NT, R),
+                                   timer_add(R, Now, BT, TM)
+                           end,
+                           BTimers,
+                           [{del, R} || R <- DelRanges] ++
+                           [{add, R} || R <- AddRanges]),
+                   {ok, State#state {
+                   	routing_table = T,
+                   	node_timers = NT,
+                   	buck_timers = UpdatedBucketTimers
+                  }}
+          end
+   end.
+
+%% routing_table_replace/3, Replaces an old node with a new one in the routing table
+routing_table_replace(Old, New, State) ->
+    Removed = rt_delete(Old, State),
+    rt_add(New, Removed).
+
+%% routing_table_delete/2 removes a node from the routing table, while maintaing timers
+rt_delete(Node, #state { routing_table = Tbl, node_timers = Timers } = State) ->
+    State#state {
+    	routing_table = dht_routing_table:delete(Node, Tbl),
+    	node_timers = timer_del(Node, Timers)
+    }.
+    
+
