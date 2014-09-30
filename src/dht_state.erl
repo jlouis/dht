@@ -635,7 +635,7 @@ timer_oldest(Items, TimerTree) ->
 %% ----------------------------------
 
 dump_state(Filename, RoutingTable) ->
-    file:write_file(Filename, dht_routing_table:to_binary(RoutingTable)).
+    ok = file:write_file(Filename, dht_routing_table:to_binary(RoutingTable)).
 
 load_state(Filename) ->
     case file:read_file(Filename) of

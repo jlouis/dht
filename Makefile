@@ -5,6 +5,7 @@ PROJECT = dht
 # Options.
 ERLC_OPTS = +debug_info +'{parse_transform, lager_transform}'
 PLT_APPS = crypto public_key ssl asn1
+DIALYZER_OPTS = --fullpath
 
 # Dependencies.
 DEPS = lager benc recon
