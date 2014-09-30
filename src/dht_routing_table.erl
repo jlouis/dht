@@ -1,4 +1,20 @@
+%% @author Magnus Klaar <magnus.klaar@sgsstudentbostader.se>
+%% @author Jesper Louis Andersen <jesper.louis.andersen@gmail.com>
+%% @doc module dht_routing_table maintains a Kademlia routing table
+%%
+%% This module implements a server maintaining the
+%% DHT routing table. The nodes in the routing table
+%% is distributed across a set of buckets. The bucket
+%% set is created incrementally based on the local node id.
+%%
+%% The set of buckets, id ranges, is used to limit
+%% the number of nodes in the routing table. The routing
+%% table must only contain ?K nodes that fall within the
+%% range of each bucket.
+%%
+%% @end
 -module(dht_routing_table).
+
 
 -export([new/1]).
 -export([
@@ -30,8 +46,9 @@
           table :: [{dht:node_id(), dht:node_id(), [dht:node_t()]}]
         }).
 -type t() :: #routing_table{}.
+-type range() :: {dht:node_id(), dht:node_id()}.
 
--export_type([t/0]).
+-export_type([t/0, range/0]).
 
 %%
 %% Create a new bucket list

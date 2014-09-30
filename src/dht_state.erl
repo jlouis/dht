@@ -1,23 +1,26 @@
 %% @author Magnus Klaar <magnus.klaar@sgsstudentbostader.se>
+%% @author Jesper Louis Andersen <jesper.louis.andersen@gmail.com>
 %% @doc A Server for maintaining the the routing table in DHT
 %%
 %% @todo Document all exported functions.
 %%
-%% This module implements a server maintaining the
-%% DHT routing table. The nodes in the routing table
-%% is distributed across a set of buckets. The bucket
-%% set is created incrementally based on the local node id.
+%% This module implements the higher-level logic of the DHT
+%% routing table. Three things are maintained in the routing table:
 %%
-%% The set of buckets, id ranges, is used to limit
-%% the number of nodes in the routing table. The routing
-%% table must only contain ?K nodes that fall within the
-%% range of each bucket.
+%%  * The routing table itself
+%%  * The set of timers for node refreshes
+%%  * The set of timers for routing table bucket refreshes
+%% 
+%% This modules main responsibility is to call out to helper modules
+%% and make sure to maintain consistency of the above three states
+%% we maintain.
 %%
 %% A node is considered disconnected if it does not respond to
 %% a ping query after 10 minutes of inactivity. Inactive nodes
 %% are kept in the routing table but are not propagated to
 %% neighbouring nodes through responses through find_node
 %% and get_peers responses.
+%%
 %% This allows the node to keep the routing table intact
 %% while operating in offline mode. It also allows the node
 %% to operate with a partial routing table without exposing
@@ -71,26 +74,22 @@
 -record(state, {
     node_id :: dht:node_id(),
     routing_table :: dht_routing_table:t(), % The actual routing table
-    node_timers=timer_empty(), % Node activity times and timeout references
-    bucket_timers=timer_empty(),% Bucker activity times and timeout references
-    node_timeout=10*60*1000,  % Default node keepalive timeout
-    bucket_timeout=5*60*1000,   % Default bucket refresh timeout
-    state_file="/tmp/dht_state"}). % Path to persistent state
+    node_timers = timer_empty() :: gb_trees:tree(dht:node_t(), {any(), any()}), % Node activity times and timeout references
+    bucket_timers = timer_empty() :: gb_trees:tree(dht_routing_table:range(), {any(), any()}), % Bucker activity times and timeout references
+    node_timeout :: pos_integer(),  % Default node keepalive timeout
+    bucket_timeout :: pos_integer(),   % Default bucket refresh timeout
+    state_file="/tmp/dht_state" :: string() }). % Path to persistent state
+
+-include_lib("kernel/include/inet.hrl").
+
 %
 % The bucket refresh timeout is the amount of time that the
 % server will tolerate a node to be disconnected before it
 % attempts to refresh the bucket.
 %
+bucket_timeout() -> 5 * 60 * 1000.
+node_timeout() -> 10 * 60 * 1000.
 
--include_lib("kernel/include/inet.hrl").
-
-%
-% The server has started to use integer IDs internally, before the
-% rest of the program does that, run these functions whenever an ID
-% enters or leaves this process.
-%
-int(ID) when is_integer(ID) -> ID.
-bin(ID) when is_binary(ID) -> ID.
 
 start_link(StateFile, BootstapNodes) ->
     gen_server:start_link({local, ?MODULE},
@@ -130,18 +129,14 @@ safe_insert_node(IP, Port) ->
 -spec safe_insert_node(dht_id:t(), inet:ip_address(), inet:port_number()) ->
     {'error', 'timeout'} | boolean().
 safe_insert_node(ID, IP, Port) ->
-    case is_interesting(ID, IP, Port) of
-	false -> false;
-	true ->
-	    % Since this clause will be reached every time this node
-	    % receives a query from a node that is interesting, use the
-	    % unsafe_ping function to avoid repeatedly issuing ping queries
-	    % to nodes that won't reply to them.
-	    case unsafe_ping(IP, Port) of
-		ID   -> unsafe_insert_node(ID, IP, Port);
-		pang -> {error, timeout};
-		_    -> {error, timeout}
-	end
+    safe_insert_node_(ID, IP, Port, is_interesting(ID, IP, Port)).
+    
+safe_insert_node_(_ID, _IP, _Port, false) -> false;
+safe_insert_node_(ID, IP, Port, true) ->
+    %% Since this is often hit, avoid sending out pings for nodes that won't reply back
+    case unsafe_ping(IP, Port) of
+        pang -> {error, timeout};
+        ID -> unsafe_insert_node(ID, IP, Port)
     end.
 
 -spec insert_nodes([dht:node_t()]) -> ok.
@@ -231,20 +226,19 @@ safe_ping(IP, Port) ->
 % Returns pang, if the node is unreachable.
 -spec unsafe_ping(inet:ip_address(), inet:port_number()) -> pang | dht_id:t().
 unsafe_ping(IP, Port) ->
-    case ets:member(?UNREACHABLE_TAB, {IP, Port}) of
-	true ->
-	    pang;
-	false ->
-	    case safe_ping(IP, Port) of
-		pang ->
-		    RandNode = random_node_tag(),
-		    DelSpec = [{{'_', RandNode}, [], [true]}],
-		    _ = ets:select_delete(?UNREACHABLE_TAB, DelSpec),
-		    ets:insert(?UNREACHABLE_TAB, {{IP, Port}, RandNode}),
-		    pang;
-		NodeID ->
-		    NodeID
-	    end
+    unsafe_ping_(IP, Port, ets:member(?UNREACHABLE_TAB, {IP, Port})).
+    
+unsafe_ping_(_IP, _Port, true) -> pang;
+unsafe_ping_(IP ,Port, false) ->
+    case safe_ping(IP, Port) of
+        pang ->
+            RandNode = random_node_tag(),
+            DelSpec = [{{'_', RandNode}, [], [true]}],
+            _ = ets:select_delete(?UNREACHABLE_TAB, DelSpec),
+            ets:insert(?UNREACHABLE_TAB, {{IP, Port}, RandNode}),
+            pang;
+        NodeID ->
+            NodeID
     end.
 
 %
@@ -288,17 +282,9 @@ do_refresh_inserts(Range, [{ID, IP, Port} | T]) ->
     safe_insert_node(ID, IP, Port),
     do_refresh_inserts(Range, T).
 
-spawn_refresh(Range, InputInactive, InputActive) ->
-    Inactive = [{bin(ID), IP, Port} || {ID, IP, Port} <- InputInactive],
-    Active   = [{bin(ID), IP, Port} || {ID, IP, Port} <- InputActive],
-    spawn(?MODULE, refresh, [Range, Inactive, Active]).
-
 random_node_tag() ->
     _ = random:seed(erlang:now()),
     random:uniform(?MAX_UNREACHABLE).
-
-bucket_timeout() -> 5 * 60 * 1000.
-node_timeout() -> 10 * 60 * 1000.
 
 
 %% @private
@@ -354,7 +340,7 @@ handle_call({is_interesting, {ID, IP, Port}}, _From,
             Inactive = inactive_nodes(Members, NTimeout, NTimers),
             case (Inactive /= []) orelse (length(Members) < ?K) of
                 true ->
-                    %% There are Inactive members or there are too few members, this is an interesting ID
+                    %% There are Inactive members or there are too few members: this is an interesting ID
                     {reply, true, State};
                 false ->
                     Try = dht_routing_table:insert({ID, IP, Port}, RoutingTbl),
@@ -419,7 +405,7 @@ handle_call({dump_state, StateFile}, _From, #state{ routing_table = Tbl } = Stat
         {reply, {error, {dump_state_failed, Class, Err}}, State}
     end;
 handle_call(node_id, _From, #state{node_id=Self} = State) ->
-    {reply, int(Self), State}.
+    {reply, Self, State}.
 
 %% @private
 handle_cast(_, State) ->
@@ -516,9 +502,10 @@ refresh_bucket(Range, Members,
 	    false ->
 	        false;
 	    true ->
-	        spawn_refresh(Range,
-	        		inactive_nodes(Members, NTimeout, NTimers),
-	        		active_nodes(Members, NTimeout, NTimers)),
+	        spawn(?MODULE, refresh,
+	          [Range,
+	           inactive_nodes(Members, NTimeout, NTimers),
+	           active_nodes(Members, NTimeout, NTimers)]),
 	        true
 	end.
 
