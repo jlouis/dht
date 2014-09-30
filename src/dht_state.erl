@@ -72,9 +72,9 @@
     node_id :: dht:node_id(),
     routing_table :: dht_routing_table:t(), % The actual routing table
     node_timers=timer_empty(), % Node activity times and timeout references
-    buck_timers=timer_empty(),% Bucker activity times and timeout references
+    bucket_timers=timer_empty(),% Bucker activity times and timeout references
     node_timeout=10*60*1000,  % Default node keepalive timeout
-    buck_timeout=5*60*1000,   % Default bucket refresh timeout
+    bucket_timeout=5*60*1000,   % Default bucket refresh timeout
     state_file="/tmp/dht_state"}). % Path to persistent state
 %
 % The bucket refresh timeout is the amount of time that the
@@ -330,10 +330,10 @@ init([StateFile, BootstrapNodes]) ->
     Now = os:timestamp(),
     {ok, #state {
 	node_id = NodeID,
-	buck_timers = initialize_timers(Now, RoutingTbl),
+	bucket_timers = initialize_timers(Now, RoutingTbl),
 	state_file = StateFile,
 	routing_table = RoutingTbl,
-	buck_timeout = bucket_timeout(),
+	bucket_timeout = bucket_timeout(),
 	node_timeout = node_timeout()
     }}.
 
@@ -458,9 +458,9 @@ handle_info({inactive_bucket, Range},
             #state{
 	           routing_table=Tbl,
 	           node_timers=NTimers,
-	           buck_timers=PrevBTimers,
+	           bucket_timers=PrevBTimers,
 	           node_timeout=NTimeout,
-	           buck_timeout=BTimeout} = State) ->
+	           bucket_timeout=BTimeout} = State) ->
 
     case dht_routing_table:has_bucket(Range, Tbl) of
         false ->
@@ -479,7 +479,7 @@ handle_info({inactive_bucket, Range},
 	         LRecent = timer_oldest(Members, NTimers),
 	         NewTimer = bucket_timer_from(Now, BTimeout, LRecent, NTimeout, Range),
 	         NewBTimers = timer_add(Range, Now, NewTimer, TmpBTimers),
-	         {noreply, State#state { buck_timers = NewBTimers }}
+	         {noreply, State#state { bucket_timers = NewBTimers }}
 	 end
     end.
 
@@ -510,8 +510,8 @@ refresh_bucket(Range, Members,
 		#state {
 		    node_timeout = NTimeout,
 		    node_timers = NTimers,
-		    buck_timeout = BTimeout,
-		    buck_timers = BTimers }) ->
+		    bucket_timeout = BTimeout,
+		    bucket_timers = BTimers }) ->
 	case has_timed_out(Range, BTimeout , BTimers) of
 	    false ->
 	        false;
@@ -551,10 +551,10 @@ cycle_node_timer(Node, Now, LActive, #state { node_timers = Timers, node_timeout
 cycle_bucket_timers(ID,
 	#state {
 	  routing_table = RoutingTbl,
-	  buck_timers = PrevBTimers,
+	  bucket_timers = PrevBTimers,
 	  node_timers = NTimers,
 	  node_timeout = NTimeout,
-	  buck_timeout = BTimeout  } = State) ->
+	  bucket_timeout = BTimeout  } = State) ->
     Range = dht_routing_table:range(ID, RoutingTbl),
     {BActive, _} = timer_get(Range, PrevBTimers),
     TmpBTimers = timer_del(Range, PrevBTimers),
@@ -562,7 +562,7 @@ cycle_bucket_timers(ID,
     LNRecent = timer_oldest(BMembers, NTimers),
     BTimer = bucket_timer_from( BActive, BTimeout, LNRecent, NTimeout, Range),
     NewBTimers = timer_add(Range, BActive, BTimer, TmpBTimers),
-    State#state { buck_timers = NewBTimers }.
+    State#state { bucket_timers = NewBTimers }.
 
 %% In the best case, the bucket should time out N seconds
 %% after the first node in the bucket timed out. If that node
@@ -651,14 +651,15 @@ load_state(Filename) ->
 %% When updating the routing table, one must also update the timer structures. These functions make sure both
 %% happens in order.
 
+rt_add_node(Node, Now, #state { node_timeout = NTimeout, node_timers = NTimers } = State) ->
+    NTimer = node_timer_from(Now, NTimeout, Node),
+    State#state {
+    	node_timers = timer_add(Node, Now, NTimer, NTimers)
+    }.
+
 %% rt_add/2 attempts to add a node to the routing table
 %% This function in particular makes sure it also gets node and bucket timers right and updated as well
-rt_add(Node, #state {
-		routing_table = Tbl,
-		node_timers = NTimers,
-		node_timeout = NTimeout,
-		buck_timers = BTimers,
-		buck_timeout = BTimeout } = State) ->
+rt_add(Node, #state { routing_table = Tbl } = State) ->
     Now = os:timestamp(),
     T = dht_routing_table:insert(Node, Tbl),
     case dht_routing_table:is_member(Node, T) of
@@ -666,48 +667,46 @@ rt_add(Node, #state {
            %% No change. This is the easy case
            {not_inserted, State#state { routing_table = T }};
         true ->
-            %% The entry is a new node. Update the node timer
-            NTimer = node_timer_from(Now, NTimeout, Node),
-            NT = timer_add(Node, Now, NTimer, NTimers),
-
             %% The next section here determines if there are changes to the bucket tree structure. And if there is,
             %% it reworks what timers should die, and what timers should be added by folding over the
             %% bucket structure.
-            PrevRanges = dht_routing_table:ranges(Tbl),
-            NewRanges = dht_routing_table:ranges(T),
-            case
-                dht_routing_table:ranges(Tbl) /= dht_routing_table:ranges(T)
-            of
-                false ->
-                    {ok, State#state {
-			routing_table = T,
-			node_timers = NT,
-			buck_timers = BTimers
-                   }};
-               true ->
-                   DelRanges = ordsets:subtract(PrevRanges, NewRanges),
-                   AddRanges = ordsets:subtract(NewRanges, PrevRanges),
-
-                   UpdatedBucketTimers =
-                       lists:foldl(
-                           fun
-                               ({del, R}, TM) -> timer_del(R, TM);
-                               ({add, R}, TM) ->
-                                   Members = dht_routing_table:members(R, T),
-                                   Recent = timer_oldest(Members, NT),
-                                   BT = bucket_timer_from(Now, BTimeout, Recent, NT, R),
-                                   timer_add(R, Now, BT, TM)
-                           end,
-                           BTimers,
-                           [{del, R} || R <- DelRanges] ++
-                           [{add, R} || R <- AddRanges]),
-                   {ok, State#state {
-                   	routing_table = T,
-                   	node_timers = NT,
-                   	buck_timers = UpdatedBucketTimers
-                  }}
-          end
+            StateN = rt_add_node(Node, Now, State#state { routing_table = T }),
+            {ok, rt_add_bucket(Tbl, Now, StateN)}
    end.
+
+rt_add_bucket_update(Ops, Now,
+	#state {
+		node_timers = NTimers,
+		bucket_timeout = BTimeout,
+		bucket_timers = BTimers,
+		routing_table = Tbl
+	} = State) ->
+    UpdatedBucketTimers = lists:foldl(
+        fun
+            ({del, R}, TM) -> timer_del(R, TM);
+            ({add, R}, TM) ->
+                Members = dht_routing_table:members(R, Tbl),
+                Recent = timer_oldest(Members, NTimers),
+                BT = bucket_timer_from(Now, BTimeout, Recent, NTimers, R),
+                timer_add(R, Now, BT, TM)
+        end,
+        BTimers,
+        Ops),
+    State#state { bucket_timers = UpdatedBucketTimers }.
+
+rt_add_bucket(OldTbl, Now, #state { routing_table = NewTbl } = State) ->
+    PrevRanges = dht_routing_table:ranges(OldTbl),
+    NewRanges = dht_routing_table:ranges(NewTbl),
+    case PrevRanges /= NewRanges of
+        false ->
+            State#state { routing_table = NewTbl };
+       true ->
+           rt_add_bucket_update(
+               [{del, R} || R <- ordsets:subtract(PrevRanges, NewRanges)] ++
+               [{add, R} || R <- ordsets:subtract(NewRanges, PrevRanges)],
+               Now,
+               State)
+    end.
 
 %% routing_table_replace/3, Replaces an old node with a new one in the routing table
 routing_table_replace(Old, New, State) ->
