@@ -60,14 +60,14 @@
 %% Manipulation
 -export([
 	insert_node/1, insert_node/2,
-	insert_nodes/1, insert_nodes/2
+	insert_nodes/1, insert_nodes/2,
+	notify/2
 ]).
 
 %% Query
 -export([
 	 closest_to/1, closest_to/2,
 	 keepalive/1,
-	 request_timeout/1, request_success/1, request_from/1,
 	 node_id/0,
 	 refresh/3
 ]).
@@ -186,23 +186,19 @@ closest_to(NodeID) ->
 closest_to(NodeID, NumNodes) ->
     gen_server:call(?MODULE, {closest_to, NodeID, NumNodes}).
 
-%% @doc request_timeout/1 notifies the routing table of a request timeout
+%% @doc notify/2 notifies the routing table of an event on a given node
+%% Possible events are one of `request_timeout', `request_timeout', or `request_success'.
 %% @end
--spec request_timeout(dht:node_t()) -> 'ok'.
-request_timeout(Node) ->
-    gen_server:call(?MODULE, {request_timeout, Node}).
-
-%% @doc request_success/1 notifies the routing table of a succesful request
-%% @end
--spec request_success(dht:node_t()) -> 'ok'.
-request_success(Node) ->
-    gen_server:call(?MODULE, {request_success, Node}).
-
-%% @doc request_from/1 notifies the routing table about a new request from another DHT peer
-%% @end
--spec request_from(dht:node_t()) -> 'ok'.
-request_from(Node) ->
-    gen_server:call(?MODULE, {request_from, Node}).
+-spec notify(Node, Event) -> ok
+    when
+      Node :: dht:node_t(),
+      Event :: request_success | request_from | request_timeout.
+notify(Node, Event)
+  when
+    Event == request_timeout;
+    Event == request_success;
+    Event == request_from ->
+	gen_server:call(?MODULE, {Event, Node}).
 
 %% @doc dump_state/0 dumps the routing table state to disk
 %% @end
@@ -217,9 +213,9 @@ dump_state(Filename) ->
 -spec keepalive(dht:node_t()) -> 'ok'.
 keepalive({ID, IP, Port} = Node) ->
     case ping(IP, Port) of
-	ID -> request_success(Node);
-	pang  -> request_timeout(Node);
-	{error, timeout} -> request_timeout(Node)
+	ID -> notify(Node, request_success);
+	pang -> notify(Node, request_timeout);
+	{error, timeout} -> notify(Node, request_timeout)
     end.
 
 %% @doc ping/2 pings an IP/Port pair in order to determine its NodeID

@@ -122,7 +122,7 @@ find_node(IP, Port, Target)  ->
             {error, timeout};
         Values  ->
             {ID, Nodes} = dht_bt_proto:decode_response(find_node, Values),
-            dht_state:request_success({ID, IP, Port}),
+            dht_state:notify({ID, IP, Port}, request_success),
             {ID, Nodes}
     end.
 
