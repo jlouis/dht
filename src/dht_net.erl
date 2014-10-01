@@ -122,7 +122,7 @@ find_node(IP, Port, Target)  ->
             {error, timeout};
         Values  ->
             {ID, Nodes} = dht_bt_proto:decode_response(find_node, Values),
-            dht_state:log_request_success(ID, IP, Port),
+            dht_state:request_success({ID, IP, Port}),
             {ID, Nodes}
     end.
 
@@ -242,7 +242,7 @@ handle_info({udp, _Socket, IP, Port, Packet}, #state{ sent = Sent, tokens = Toke
         	    {none, {Method, ID, Params}} ->
         	        %% Incoming request, handle it
         	        <<NodeID:160>> = benc:get_binary_value("id", Params),
-        	        spawn_link( fun() -> dht_state:safe_insert_node(NodeID, IP, Port) end),
+        	        spawn_link( fun() -> dht_state:insert_node({NodeID, IP, Port}) end),
         	        spawn_link( fun() -> ?MODULE:handle_query(Method, Params, {IP, Port}, ID, Self, Tokens) end),
         	    	{noreply, State};
         	    {{value, {Client, TRef}}, _} ->

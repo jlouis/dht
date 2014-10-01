@@ -15,14 +15,7 @@
 
 -type t() :: non_neg_integer().
 
--record(peer, {
-	id :: t(),
-	addr :: inet:ip_address(),
-	port :: inet:port_number()
-}).
-
--type peer() :: #peer{}.
--export_type([t/0, peer/0]).
+-export_type([t/0]).
 
 %% @doc mk_random_id/0 constructs a new random ID
 %% @end
@@ -39,14 +32,14 @@ d(ID1, ID2) -> ID1 bxor ID2.
 %% @doc neighborhood/3 finds known nodes close to an ID
 %% neighborhood(ID, Nodes, Limit) searches for Limit nodes in the neighborhood of ID. Nodes is the list of known nodes.
 %% @end
--spec neighborhood(ID, Nodes, Limit) -> [peer()]
+-spec neighborhood(ID, Nodes, Limit) -> [dht:node_t()]
   when
     ID :: t(),
-    Nodes :: [peer()],
+    Nodes :: [dht:node_t()],
     Limit :: non_neg_integer().
 
 neighborhood(ID, Nodes, Limit) ->
-	Distances = [{d(ID, NID), N} || #peer {id = NID} = N <- Nodes],
+	Distances = [{d(ID, NID), N} || {NID, _, _} = N <- Nodes],
 	Eligible = case lists:sort(Distances) of
 	    Sorted when length(Sorted) =< Limit -> Sorted;
 	    Sorted when length(Sorted) > Limit ->

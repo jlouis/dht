@@ -50,18 +50,26 @@
 -define(MAX_UNREACHABLE, 128).
 -define(UNREACHABLE_TAB, dht_state_unreachable).
 
+%% Lifetime
+-export([
+	start_link/2,
+	load_state/1,
+	dump_state/0, dump_state/1, dump_state/2
+]).
 
--export([start_link/2]).
+%% Manipulation
+-export([
+	insert_node/1, insert_node/2,
+	insert_nodes/1, insert_nodes/2
+]).
+
+%% Query
 -export([
 	 closest_to/1, closest_to/2,
-	 dump_state/0, dump_state/1, dump_state/2,
-	 keepalive/3,
-	 load_state/1,
-	 log_request_timeout/3, log_request_success/3, log_request_from/3,
+	 keepalive/1,
+	 request_timeout/1, request_success/1, request_from/1,
 	 node_id/0,
-	 refresh/3,
-	 safe_insert_node/2, safe_insert_node/3, insert_nodes/1,
-	 unsafe_insert_node/3, unsafe_insert_nodes/1
+	 refresh/3
 ]).
 
 -export([init/1,
@@ -103,162 +111,164 @@ start_link(StateFile, BootstapNodes) ->
 node_id() ->
     gen_server:call(?MODULE, node_id).
 
-%
-% Check if a node is available and lookup its node id by issuing
-% a ping query to it first. This function must be used when we
-% don't know the node id of a node.
-%
--spec safe_insert_node(inet:ip_address(), inet:port_number()) ->
-    {'error', 'timeout'} | boolean().
-safe_insert_node(IP, Port) ->
-    case unsafe_ping(IP, Port) of
-	pang -> {error, timeout};
-	ID   -> unsafe_insert_node(ID, IP, Port)
-    end.
+%%
+%% @equiv insert_node(Node, #{})
+%%
+insert_node(Node) ->
+	insert_node(Node, #{}).
+	
+%%
+%% @doc insert_node/2 inserts a new node according to the options given
+%%
+%% There are three variants of this function:
+%% * If inserting {IP, Port} a ping will first be made to make sure the node is alive and find its ID
+%% * If inserting {ID, IP, Port} no options, then a ping is first made to make sure the node exists
+%% * If inserting {ID, IP, Port} with options force := true, then the node is forced into the routing table.
+%%   This option is meant to be used when we already know the node is up and running, so we can
+%%   skip the additional ping.
+%% @end
+-spec insert_node(Node, Opts) -> true | false | {error, Reason}
+  when
+      Node :: dht:node_t() | {inet:ip_address(), inet:port_number()},
+      Opts :: #{ atom() => boolean() },
+      Reason :: atom().
+insert_node({IP, Port}, #{}) ->
+	case ping(IP, Port, #{ unreachable_check => true}) of
+	    pang -> {error, timeout};
+	    ID ->
+	    	gen_server:call(?MODULE, {insert_node, {ID, IP, Port}})
+	end;
+insert_node({ID, IP, Port}, #{ force := true }) ->
+	gen_server:call(?MODULE, {insert_node, {ID, IP, Port}});
+insert_node(Node, #{}) ->
+	insert_node_(Node, is_interesting(Node)).
 
-%
-% Check if a node is available and verify its node id by issuing
-% a ping query to it first. This function must be used when we
-% want to verify the identify and status of a node.
-%
-% This function will return {error, timeout} if the node is unreachable
-% or has changed identity, false if the node is not interesting or wasnt
-% inserted into the routing table, true if the node was interesting and was
-% inserted into the routing table.
-%
--spec safe_insert_node(dht_id:t(), inet:ip_address(), inet:port_number()) ->
-    {'error', 'timeout'} | boolean().
-safe_insert_node(ID, IP, Port) ->
-    safe_insert_node_(ID, IP, Port, is_interesting(ID, IP, Port)).
-    
-safe_insert_node_(_ID, _IP, _Port, false) -> false;
-safe_insert_node_(ID, IP, Port, true) ->
-    %% Since this is often hit, avoid sending out pings for nodes that won't reply back
-    case unsafe_ping(IP, Port) of
-        pang -> {error, timeout};
-        ID -> unsafe_insert_node(ID, IP, Port)
-    end.
+insert_node_({_, _, _}, false) -> false;
+insert_node_({ID, IP, Port}, true) ->
+	case ping(IP, Port, #{ unreachable_check => true}) of
+		pang -> {error, timeout};
+		ID ->
+			gen_server:call(?MODULE, {insert_node, {ID, IP, Port}});
+		_WrongID ->
+			{error, inconsistent_id}
+	end.
 
+%% @doc insert_nodes/1 inserts a list of nodes into the routing table asynchronously
+%% @end
 -spec insert_nodes([dht:node_t()]) -> ok.
 insert_nodes(NodeInfos) ->
-    [spawn_link(?MODULE, safe_insert_node, [ID, IP, Port])
-     || {ID, IP, Port} <- NodeInfos],
+	insert_nodes(NodeInfos, #{}).
+
+%% @doc insert_nodes/2 inserts nodes according to the given options.
+%% Can be used to force insertion of nodes.
+%% @end
+-spec insert_nodes([dht:node_t()], #{ atom() => boolean()}) -> ok.
+insert_nodes(NodeInfos, Opts) ->
+    [spawn_link(?MODULE, insert_node, [Node, Opts]) || Node <- NodeInfos],
     ok.
 
-%
-% Blindly insert a node into the routing table. Use this function when
-% inserting a node that was found and successfully queried in a find_node
-% or get_peers search.
-% This function returns a boolean value to indicate to the caller if the
-% node was actually inserted into the routing table or not.
-%
--spec unsafe_insert_node(dht_id:t(), inet:ip_address(), inet:port_number()) ->
-    boolean().
-unsafe_insert_node(ID, IP, Port) ->
-    gen_server:call(?MODULE, {insert_node, {ID, IP, Port}}).
+%% @doc is_interesting/1 returns true if a node can enter the routing table, false otherwise
+%% Check if node would fit into the routing table. This function is used by the insert_node
+%% function to avoid issuing ping-queries to every node sending this node a query
+%% @end
+-spec is_interesting(dht:node_t()) -> boolean().
+is_interesting({_, _, _} = Node) ->
+    gen_server:call(?MODULE, {is_interesting, Node}).
 
--spec unsafe_insert_nodes(list(dht:node_t())) -> 'ok'.
-unsafe_insert_nodes(NodeInfos) ->
-    [spawn_link(?MODULE, unsafe_insert_node, [ID, IP, Port])
-    || {ID, IP, Port} <- NodeInfos],
-    ok.
-
-%
-% Check if node would fit into the routing table. This
-% function is used by the safe_insert_node(s) function
-% to avoid issuing ping-queries to every node sending
-% this node a query.
-%
-
--spec is_interesting(dht_id:t(), inet:ip_address(), inet:port_number()) -> boolean().
-is_interesting(ID, IP, Port) when is_integer(ID) ->
-    gen_server:call(?MODULE, {is_interesting, {ID, IP, Port}}).
-
+%% @equiv closest_to(NodeID, 8)
 -spec closest_to(dht_id:t()) -> list(dht:node_t()).
 closest_to(NodeID) ->
     closest_to(NodeID, 8).
 
+%% @doc closest_to/2 returns the neighborhood around an ID known to the routing table
+%% @end
 -spec closest_to(dht_id:t(), pos_integer()) -> list(dht:node_t()).
 closest_to(NodeID, NumNodes) ->
     gen_server:call(?MODULE, {closest_to, NodeID, NumNodes}).
 
--spec log_request_timeout(dht_id:t(), inet:ip_address(), inet:port_number()) -> 'ok'.
-log_request_timeout(ID, IP, Port) ->
-    gen_server:call(?MODULE, {request_timeout, {ID, IP, Port}}).
+%% @doc request_timeout/1 notifies the routing table of a request timeout
+%% @end
+-spec request_timeout(dht:node_t()) -> 'ok'.
+request_timeout(Node) ->
+    gen_server:call(?MODULE, {request_timeout, Node}).
 
--spec log_request_success(dht_id:t(), inet:ip_address(), inet:port_number()) -> 'ok'.
-log_request_success(ID, IP, Port) ->
-    gen_server:call(?MODULE, {request_success, {ID, IP, Port}}).
+%% @doc request_success/1 notifies the routing table of a succesful request
+%% @end
+-spec request_success(dht:node_t()) -> 'ok'.
+request_success(Node) ->
+    gen_server:call(?MODULE, {request_success, Node}).
 
--spec log_request_from(dht_id:t(), inet:ip_address(), inet:port_number()) -> 'ok'.
-log_request_from(ID, IP, Port) ->
-    gen_server:call(?MODULE, {request_from, {ID, IP, Port}}).
+%% @doc request_from/1 notifies the routing table about a new request from another DHT peer
+%% @end
+-spec request_from(dht:node_t()) -> 'ok'.
+request_from(Node) ->
+    gen_server:call(?MODULE, {request_from, Node}).
 
+%% @doc dump_state/0 dumps the routing table state to disk
+%% @end
 dump_state() ->
     gen_server:call(?MODULE, dump_state).
 
+%% @doc dump_state/1 dumps the routing table state to disk into a given file
+%% @end
 dump_state(Filename) ->
     gen_server:call(?MODULE, {dump_state, Filename}).
 
--spec keepalive(dht_id:t(), inet:ip_address(), inet:port_number()) -> 'ok'.
-keepalive(ID, IP, Port) ->
-    case safe_ping(IP, Port) of
-	ID    -> log_request_success(ID, IP, Port);
-	pang  -> log_request_timeout(ID, IP, Port);
-	_     -> log_request_timeout(ID, IP, Port)
+-spec keepalive(dht:node_t()) -> 'ok'.
+keepalive({ID, IP, Port} = Node) ->
+    case ping(IP, Port) of
+	ID -> request_success(Node);
+	pang  -> request_timeout(Node);
+	{error, timeout} -> request_timeout(Node)
     end.
 
-%
-% Issue a ping query to a node, this function should always be used
-% when checking if a node that is already a member of the routing table
-% is online.
-%
--spec safe_ping(inet:ip_address(), inet:port_number()) -> pang | dht_id:t().
-safe_ping(IP, Port) ->
-    dht_net:ping(IP, Port).
+%% @doc ping/2 pings an IP/Port pair in order to determine its NodeID
+%% @end
+-spec ping(inet:ip_address(), inet:port_number()) -> pang | dht:node_id() | {error, Reason}
+  when Reason :: atom().
+ping(IP, Port) -> ping(IP, Port, #{}).
 
-%
-% unsafe_ping overrides the behaviour of dht_net:ping/2 by
-% avoiding to issue ping queries to nodes that are unlikely to
-% be reachable. If a node has not been queried before, a safe_ping
-% will always be performed.
-%
-% Returns pang, if the node is unreachable.
--spec unsafe_ping(inet:ip_address(), inet:port_number()) -> pang | dht_id:t().
-unsafe_ping(IP, Port) ->
-    unsafe_ping_(IP, Port, ets:member(?UNREACHABLE_TAB, {IP, Port})).
+%% @doc ping/3 pings an IP/Port pair with options for filtering excess pings
+%% If you set unreachable_check := true, then the table of unreachable pings is first consulted as a local
+%% cache. This speeds up pings and avoids pinging nodes which are often down.
+%% @end
+-spec ping(inet:ip_address(), inet:port_number(), #{ atom() => boolean() }) -> pang | dht:node_id() | {error, Reason}
+  when Reason :: atom().
+ping(IP, Port, #{ unreachable_check := true }) ->
+    ping_(IP, Port, ets:member(?UNREACHABLE_TAB, {IP, Port}));
+ping(IP, Port, #{}) ->
+    dht_net:ping(IP, Port).
     
-unsafe_ping_(_IP, _Port, true) -> pang;
-unsafe_ping_(IP ,Port, false) ->
-    case safe_ping(IP, Port) of
+%% internal helper for ping/3
+ping_(_IP, _Port, true) -> pang;
+ping_(IP, Port, false) ->
+    case dht_net:ping(IP, Port) of
         pang ->
             RandNode = random_node_tag(),
             DelSpec = [{{'_', RandNode}, [], [true]}],
-            _ = ets:select_delete(?UNREACHABLE_TAB, DelSpec),
+            ets:select_delete(?UNREACHABLE_TAB, DelSpec),
             ets:insert(?UNREACHABLE_TAB, {{IP, Port}, RandNode}),
             pang;
         NodeID ->
-            NodeID
+          NodeID
     end.
 
-%
-% Refresh the contents of a bucket by issuing find_node queries to each node
-% in the bucket until enough nodes that falls within the range of the bucket
-% has been returned to replace the inactive nodes in the bucket.
-%
+%% @doc refresh/3 refreshes a routing table bucket range
+%% Refresh the contents of a bucket by issuing find_node queries to each node
+%% in the bucket until enough nodes that falls within the range of the bucket
+%% has been returned to replace the inactive nodes in the bucket.
+%% @end
 -spec refresh(any(), list(dht:node_t()), list(dht:node_t())) -> 'ok'.
 refresh(Range, Inactive, Active) ->
-    % Try to refresh the routing table using the inactive nodes first,
-    % If they turn out to be reachable the problem's solved.
+    %% Try to refresh the routing table using the inactive nodes first,
+    %% If they turn out to be reachable the problem's solved.
     do_refresh(Range, Inactive ++ Active, []).
 
 do_refresh(_Range, [], _) -> ok;
 do_refresh(Range, [{ID, _IP, _Port} = Node | T], IDs) ->
   case do_refresh_find_node(Range, Node) of
-    continue ->
-      do_refresh(Range, T, [ID | IDs]);
-    stop ->
-      ok
+    continue -> do_refresh(Range, T, [ID | IDs]);
+    stop -> ok
   end.
 
 do_refresh_find_node(Range, {ID, IP, Port}) ->
@@ -270,21 +280,17 @@ do_refresh_find_node(Range, {ID, IP, Port}) ->
     end.
 
 do_refresh_inserts({_, _}, []) -> continue;
-do_refresh_inserts({Min, Max} = Range, [{ID, IP, Port}|T]) when ?in_range(ID, Min, Max) ->
-    case safe_insert_node(ID, IP, Port) of
+do_refresh_inserts({Min, Max} = Range, [{ID, _, _} = N|T]) when ?in_range(ID, Min, Max) ->
+    case insert_node(N) of
       {error, timeout} -> do_refresh_inserts(Range, T);
       true -> do_refresh_inserts(Range, T);
       false ->
           insert_nodes(T),
           stop
     end;
-do_refresh_inserts(Range, [{ID, IP, Port} | T]) ->
-    safe_insert_node(ID, IP, Port),
+do_refresh_inserts(Range, [N | T]) ->
+    insert_node(N),
     do_refresh_inserts(Range, T).
-
-random_node_tag() ->
-    _ = random:seed(erlang:now()),
-    random:uniform(?MAX_UNREACHABLE).
 
 
 %% @private
@@ -491,6 +497,10 @@ handle_insert_node_new({ID, _, _} = Node, #state{ node_timeout = NTimeout, node_
 %%
 %% INTERNAL FUNCTIONS
 %%
+
+random_node_tag() ->
+    _ = random:seed(erlang:now()),
+    random:uniform(?MAX_UNREACHABLE).
 
 refresh_bucket(Range, Members,
 		#state {
