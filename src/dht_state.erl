@@ -52,8 +52,8 @@
 
 %% Lifetime
 -export([
-	start_link/2,
-	load_state/1,
+	start_link/2, start_link/3,
+	load_state/2,
 	dump_state/0, dump_state/1, dump_state/2
 ]).
 
@@ -99,10 +99,13 @@ bucket_timeout() -> 5 * 60 * 1000.
 node_timeout() -> 10 * 60 * 1000.
 
 
-start_link(StateFile, BootstapNodes) ->
+start_link(StateFile, BootstrapNodes) ->
+	start_link(dht_metric:mk(), StateFile, BootstrapNodes).
+	
+start_link(RequestedID, StateFile, BootstrapNodes) ->
     gen_server:start_link({local, ?MODULE},
 			  ?MODULE,
-			  [StateFile, BootstapNodes], []).
+			  [RequestedID, StateFile, BootstrapNodes], []).
 
 
 %% @doc Return this node id as an integer.
@@ -290,7 +293,7 @@ do_refresh_inserts(Range, [N | T]) ->
 
 
 %% @private
-init([StateFile, BootstrapNodes]) ->
+init([RequestedNodeID, StateFile, BootstrapNodes]) ->
     %% For now, we trap exits which ensures the state table is dumped upon termination
     %% of the process.
     %% @todo lift this restriction. Periodically dump state, but don't do it if an
@@ -302,7 +305,7 @@ init([StateFile, BootstrapNodes]) ->
     % of this module so they should fail unless the server is not running.
     _ = ets:new(?UNREACHABLE_TAB, [named_table, public, bag]),
 
-    RoutingTbl = load_state(StateFile),
+    RoutingTbl = load_state(RequestedNodeID, StateFile),
     insert_nodes(BootstrapNodes),
 
     %% Insert any nodes loaded from the persistent state later
@@ -469,7 +472,10 @@ handle_info({inactive_bucket, Range},
 	         NewBTimers = timer_add(Range, Now, NewTimer, TmpBTimers),
 	         {noreply, State#state { bucket_timers = NewBTimers }}
 	 end
-    end.
+    end;
+handle_info({stop, Caller}, #state{} = State) ->
+	Caller ! stopped,
+	{stop, normal, State}.
 
 %% @private
 terminate(_, #state{ routing_table = Tbl, state_file=StateFile}) ->
@@ -627,15 +633,18 @@ timer_oldest(Items, TimerTree) ->
 %% DISK STATE
 %% ----------------------------------
 
+dump_state(no_state_file, _) -> ok;
 dump_state(Filename, RoutingTable) ->
     ok = file:write_file(Filename, dht_routing_table:to_binary(RoutingTable)).
 
-load_state(Filename) ->
+load_state(RequestedNodeID, no_state_file) ->
+	dht_routing_table:new(RequestedNodeID);
+load_state(RequestedNodeID, Filename) ->
     case file:read_file(Filename) of
         {ok, BinState} ->
             dht_routing_table:from_binary(BinState);
         {error, enoent} ->
-            dht_routing_table:new(dht_metric:mk())
+            dht_routing_table:new(RequestedNodeID)
     end.
 
 %%
