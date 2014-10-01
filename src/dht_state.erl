@@ -61,7 +61,8 @@
 -export([
 	insert_node/1, insert_node/2,
 	insert_nodes/1, insert_nodes/2,
-	notify/2
+	notify/2,
+	ping/2, ping/3
 ]).
 
 %% Query
@@ -314,7 +315,7 @@ init([RequestedNodeID, StateFile, BootstrapNodes]) ->
     %% internet connectivity.
     NodeList = dht_routing_table:node_list(RoutingTbl),
     NodeID = dht_routing_table:node_id(RoutingTbl),
-    [spawn(?MODULE, unsafe_insert_node, [ID, IP, Port]) || {ID, IP, Port} <- NodeList],
+    [spawn(?MODULE, insert_node, [N, #{ force => true}]) || N <- NodeList],
 
     %% Initialize the timers based on the state
 
@@ -409,7 +410,7 @@ handle_call({dump_state, StateFile}, _From, #state{ routing_table = Tbl } = Stat
       Class:Err ->
         {reply, {error, {dump_state_failed, Class, Err}}, State}
     end;
-handle_call(node_id, _From, #state{node_id=Self} = State) ->
+handle_call(node_id, _From, #state{ node_id = Self } = State) ->
     {reply, Self, State}.
 
 %% @private
