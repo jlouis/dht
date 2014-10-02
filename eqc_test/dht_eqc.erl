@@ -16,6 +16,19 @@ ip() ->
 port() ->
     choose(0, 65535).
 
+node_t() ->
+    ?LET({ID, IP, Port}, {id(), ip(), port()},
+        {ID, IP, Port}).
+
+msg_id() ->
+    ?LET(ID, choose(0, 16#FFFF),
+        <<ID:16>>).
+
+
+token() ->
+    ?LET([L, U], [choose(0, 16#FFFF), choose(0, 16#FFFF)],
+        <<L:16, U:16>>).
+
 %% Operation properties
 prop_op_refl() ->
     ?FORALL(X, id(),
