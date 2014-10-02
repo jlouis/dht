@@ -18,10 +18,10 @@ init([]) ->
     {ok, StateFile} = application:get_env(dht, state_file),
     {ok, BootstrapNodes} = application:get_env(dht, bootstrap_nodes),
 
-    {ok, {{one_for_all, 1, 60}, [
+    {ok, {{one_for_rest, 5, 900}, [
         {state,
             {dht_state, start_link, [StateFile, BootstrapNodes]},
-            permanent, 2000, worker, dynamic},
+            permanent, 3000, worker, dynamic},
         {network,
             {dht_net, start_link, [Port]},
             permanent, 1000, worker, dynamic}]}}.
