@@ -1,7 +1,7 @@
 -module(dht_bt_proto).
 
 -export([decode/1, decode_params/2]).
--export([encode_query/2, encode_response/2]).
+-export([encode_query/3, encode_response/2]).
 
 -export([handle_query/6]).
 
@@ -11,8 +11,9 @@ decode(Packet) ->
     case benc:get_value(<<"y">>, M) of
         <<"q">> ->
             Method = decode_method(benc:get_value(<<"q">>, M)),
-            <<PeerID:160>> = benc:get_value(<<"id">>, M),
-            Params = decode_params(Method, benc:get_value(<<"a">>, M)),
+            A = benc:get_value(<<"a">>, M),
+            Params = decode_params(Method, A),
+            <<PeerID:160>> = benc:get_value(<<"id">>, A),
             {'query', {ID, PeerID, Method, Params}};
         <<"r">> ->
             %% For responses, we delay the actual parameter decoding. The caller
@@ -28,6 +29,8 @@ decode(Packet) ->
     end.
 
 
+decode_params(ping, _Values) -> [];
+decode_params(announce, _Values) -> none;
 decode_params(find_node, Values) ->
     BinNodes = benc:get_value(<<"nodes">>, Values),
     compact_to_node_infos(BinNodes);
@@ -48,26 +51,26 @@ decode_params(get_peers, Values) ->
     {Token, Peers, Nodes}.
 
 
-encode_query(Req, MsgID) ->
+encode_query(Req, MsgID, OwnID) ->
     case Req of
-        {ping, []} -> encode_query(<<"ping">>, [], MsgID);
-        {find_node, [{Target, _, _}]} -> encode_query(<<"find_node">>, [{<<"target">>, <<Target:160>>}], MsgID);
-        {get_peers, [InfoHash]} -> encode_query(<<"get_peers">>, [{<<"info_hash">>, <<InfoHash:160>>}], MsgID);
+        {ping, []} -> encode_query(<<"ping">>, [], MsgID, OwnID);
+        {find_node, [{Target, _, _}]} -> encode_query(<<"find_node">>, [{<<"target">>, <<Target:160>>}], MsgID, OwnID);
+        {get_peers, [InfoHash]} -> encode_query(<<"get_peers">>, [{<<"info_hash">>, <<InfoHash:160>>}], MsgID, OwnID);
         {announce, [InfoHash, Token, BTPort]} ->
         	encode_query(
         		<<"announce_peer">>,
         		[{<<"info_hash">>, <<InfoHash:160>>},
         		 {<<"port">>, BTPort},
         		 {<<"token">>, Token}],
-        		MsgID)
+        		MsgID, OwnID)
     end.
 
-encode_query(Method, Params, MsgID) ->
+encode_query(Method, Params, MsgID, SelfID) ->
     benc:encode([
         {<<"y">>, <<"q">>},
         {<<"q">>, Method},
         {<<"t">>, MsgID},
-        {<<"a">>, Params ++ common_params()}
+        {<<"a">>, Params ++ common_params(SelfID)}
     ]).
 
 encode_response(MsgID, Values) ->
@@ -130,11 +133,6 @@ compact_to_peers(<<>>) -> [];
 compact_to_peers(<<A0, A1, A2, A3, Port:16, Rest/binary>>) ->
     Addr = {A0, A1, A2, A3},
     [{Addr, Port}|compact_to_peers(Rest)].
-
-%% Default args. Returns a proplist of default args
-common_params() ->
-    NodeID = dht_state:node_id(),
-    common_params(NodeID).
 
 common_params(NodeID) ->
     [{<<"id">>, <<NodeID:160>>}].
