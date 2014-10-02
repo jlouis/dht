@@ -9,11 +9,11 @@
 
 %% API for others to use
 -export([
-	ping/2,
+	ping/1,
 	store/3,
 	store_term/3,
-	find_node/3,
-	find_value/3
+	find_node/1,
+	find_value/1
 ]).
 
 -type node_id() :: non_neg_integer().
@@ -29,13 +29,14 @@ find_self() ->
 
 
 %% API Functions
--spec ping(IP, Port) -> pang | node_id()
+-spec ping({IP, Port}) -> pang | {ok, node_id()} | {error, Reason}
   when
     IP :: inet:ip_address(),
-    Port :: inet:port_number().
+    Port :: inet:port_number(),
+    Reason :: any().
 
-ping(IP, Port) ->
-	dht_net:ping(IP, Port).
+ping(Peer) ->
+	dht_net:ping(Peer).
 	
 store(IP, Port, Data) ->
 	dht_net:store(IP, Port, Data).
@@ -44,9 +45,9 @@ store_term(IP, Port, Data) ->
 	store(IP, Port, term_to_binary(Data, [compressed])).
 
 
-find_node(IP, Port, Target) ->
-	dht_net:find_node(IP, Port, Target).
+find_node(Node) ->
+	dht_net:find_node(Node).
 
-find_value(IP, Port, ID) ->
-	dht_net:find_value(IP, Port, ID).
+find_value(ID) ->
+	dht_net:find_value(ID).
 

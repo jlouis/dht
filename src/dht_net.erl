@@ -34,9 +34,9 @@
 %% DHT API
 -export([
          announce/4,
-         find_node/3,
-         get_peers/3,
-         ping/2,
+         find_node/1,
+         get_peers/2,
+         ping/1,
          return/3
 ]).
 
@@ -66,7 +66,7 @@
 
 -record(state, {
     socket :: inet:socket(),
-    sent   :: gb_trees:tree(),
+    outstanding   :: gb_trees:tree(),
     tokens :: queue:queue()
 }).
 
@@ -96,46 +96,55 @@ start_link(DHTPort) ->
 
 %% @doc node_port/0 returns the (UDP) port number to which the DHT system is bound.
 %% @end
--spec node_port() -> {inet:ip_adress(), inet:port_number()}.
+-spec node_port() -> {inet:ip_address(), inet:port_number()}.
 node_port() ->
     gen_server:call(?MODULE, node_port).
+
+%% @private
+request(Target, Method, Params) ->
+    gen_server:call(?MODULE, {request, Target, Method, Params}).
 
 %% @doc ping/2 sends a ping to a node
 %% Calling `ping(IP, Port)' will send a ping message to the IP/Port pair
 %% and wait for a result to come back. Used to check if the node in the
 %% other end is up and running.
 %% @end
--spec ping(inet:ip_address(), inet:port_number()) -> pang | dht:node_id().
-ping(IP, Port) ->
-    case gen_server:call(?MODULE, {request, ping, {IP, Port}}) of
-        timeout -> pang;
-        Values ->
-            dht_bt_proto:decode_response(ping, Values)
+-spec ping({inet:ip_address(), inet:port_number()}) -> pang | {ok, dht:node_id(), benc:t()} | {error, Reason}
+  when Reason :: term().
+ping({IP, Port}) ->
+    case request({IP, Port}, ping, []) of
+        {error, timeout} -> pang;
+        {ok, PeerID, _Params} ->
+            {ok, PeerID}
     end.
+
 
 %% @doc find_node/3 searches in the DHT for a given target NodeID
 %% Search at the target IP/Port pair for the NodeID given by `Target'. May time out.
 %% @end
--spec find_node(inet:ip_address(), inet:port_number(), dht:node_id()) ->
-    {'error', 'timeout'} | {dht:node_id(), list(dht:node_t())}.
-find_node(IP, Port, Target)  ->
-    case gen_server:call(?MODULE, {request, {find_node, Target}, {IP, Port}}) of
-        timeout ->
-            {error, timeout};
-        Values  ->
-            {ID, Nodes} = dht_bt_proto:decode_response(find_node, Values),
-            dht_state:notify({ID, IP, Port}, request_success),
-            {ID, Nodes}
+-spec find_node(dht:node_t()) -> {ID, Nodes} | {error, Reason}
+  when
+    ID :: dht:node_id(),
+    Nodes :: [dht:node_t()],
+    Reason :: any().
+
+find_node({N, IP, Port} = Node)  ->
+    case request({IP, Port}, find_node, [Node]) of
+        {error, E} -> {error, E};
+        {ok, N, Params} ->
+            Nodes = dht_bt_proto:decode_params(find_node, Params),
+            dht_state:notify({N, IP, Port}, request_success),
+            {N, Nodes}
     end.
 
--spec get_peers(inet:ip_address(), inet:port_number(), infohash()) ->
+-spec get_peers({inet:ip_address(), inet:port_number()}, infohash()) ->
     {dht:node_id(), token(), list(dht:peer_info()), list(dht:node_t())} | {error, any()}.
-get_peers(IP, Port, InfoHash)  ->
-    case gen_server:call(?MODULE, {request, {get_peers, InfoHash}, {IP, Port}}) of
-        timeout ->
-            {error, timeout};
-        Values ->
-            dht_bt_proto:decode_response(get_peers, Values)
+get_peers({IP, Port}, Infohash)  ->
+    case request({IP, Port}, get_peers, [Infohash]) of
+        {error, Reason} -> {error, Reason};
+        {ok, PeerID, Params} ->
+            {Token, Peers, Nodes} = dht_bt_proto:decode_params(get_peers, Params),
+            {PeerID, Token, Peers, Nodes}
     end.
     
 -spec announce(SockName, Hash, Token, Port) -> {error, timeout} | dht:node_id()
@@ -144,12 +153,12 @@ get_peers(IP, Port, InfoHash)  ->
     Hash :: infohash(),
     Token :: token(),
     Port :: inet:port_number().
-announce({IP, Port}, InfoHash, Token, BTPort) ->
-    Announce = {announce, {IP, Port}, InfoHash, Token, BTPort},
-    case gen_server:call(?MODULE, Announce) of
-        timeout -> {error, timeout};
-        Values ->
-            dht_bt_proto:decode_response(announce, Values)
+
+announce({IP, Port}, Infohash, Token, BTPort) ->
+    case request({IP, Port}, announce, [Infohash, Token, BTPort]) of
+        {error, R} -> {error, R};
+        {ok, PeerID, _Params} ->
+            PeerID
     end.
 
 -spec return({inet:ip_address(), inet:port_number()}, token(), list()) -> 'ok'.
@@ -197,11 +206,11 @@ init([DHTPort]) ->
     erlang:send_after(?TOKEN_LIFETIME, self(), renew_token),
     {ok, #state{
     	socket=Socket, 
-    	sent=gb_trees:empty(),
+    	outstanding=gb_trees:empty(),
     	tokens= queue:from_list([random_token() || _ <- lists:seq(1, 3)])}}.
 
-handle_call({request, Req, Peer}, From, State) ->
-    send_query(Req, Peer, From, State);
+handle_call({request, Peer, Method, Params}, From, State) ->
+    send_query(Peer, Method, Params, From, State);
 handle_call({return, {IP, Port}, ID, Response}, _From, #state { socket = Socket } = State) ->
     Encoded = dht_bt_proto:encode_response(ID, Response),
     case gen_udp:send(Socket, IP, Port, Encoded) of
@@ -221,12 +230,12 @@ handle_cast(_Msg, State) ->
 %% If a request times out, a timer will trigger.
 %% Clean up the query and respond back to the caller when this happens.
 %%
-handle_info({request_timeout, _, Key}, #state{sent = Active} = State) ->
+handle_info({request_timeout, _, Key}, #state{outstanding = Active} = State) ->
 	case gb_trees:lookup(Key, Active) of
 	    none -> {noreply, State};
 	    {value, {Client, _Timeout}} ->
 	        ok = gen_server:reply(Client, {error, timeout}),
-	        {noreply, State#state { sent = gb_trees:delete(Key, Active) }}
+	        {noreply, State#state { outstanding = gb_trees:delete(Key, Active) }}
 	 end;
 %%
 %% Token renewal is called whenever the tokens grows too old.
@@ -242,27 +251,26 @@ handle_info(renew_token, #state { tokens = Tokens } = State) ->
 handle_info({udp_passive, Socket}, #state { socket = Socket } = State) ->
 	ok = inet:setopts(Socket, [{active, ?UDP_MAILBOX_SZ}]),
 	{noreply, State};
-handle_info({udp, _Socket, IP, Port, Packet}, #state{ sent = Sent, tokens = Tokens} = State) ->
+handle_info({udp, _Socket, IP, Port, Packet}, #state{ outstanding = Outstanding, tokens = Tokens} = State) ->
     Self = dht_state:node_id(),  %% @todo cache this locally. It can't change.
     case view_packet_decode(Packet) of
         invalid_decode ->
         	{noreply, State};
         {valid_decode, ID, M} ->
         	Key = {{IP, Port}, ID},
-        	case {gb_trees:lookup(Key, Sent), M} of
-        	    {none, {response, _, _}} -> {noreply, State};
-        	    {none, {error, _, _, _}} -> {noreply, State};
-        	    {none, {Method, ID, Params}} ->
+        	case {gb_trees:lookup(Key, Outstanding), M} of
+        	    {none, {response, _}} -> {noreply, State};
+        	    {none, {error, _}} -> {noreply, State};
+        	    {none, {'query', {ID, PeerID, Method, Params}}} ->
         	        %% Incoming request, handle it
-        	        <<NodeID:160>> = benc:get_binary_value("id", Params),
-        	        spawn_link( fun() -> dht_state:insert_node({NodeID, IP, Port}) end),
-        	        spawn_link( fun() -> ?MODULE:handle_query(Method, Params, {IP, Port}, ID, Self, Tokens) end),
-        	    	{noreply, State};
+        	        spawn_link( fun() -> dht_state:insert_node({PeerID, IP, Port}) end),
+        	        spawn_link( fun() -> dht_bt_proto:handle_query(Method, Params, {IP, Port}, ID, Self, Tokens) end),
+        	        {noreply, State};
         	    {{value, {Client, TRef}}, _} ->
         	        %% The incoming message is a response for a request we sent out earlier
-        	        _ = erlang:cancel_timer(TRef),
+        	        erlang:cancel_timer(TRef),
         	        handle_response(Client, M),
-        	        {noreply, State#state { sent = gb_trees:delete(Key, Sent) }}
+        	        {noreply, State#state { outstanding = gb_trees:delete(Key, Outstanding) }}
         	end
     end;
 handle_info(_Msg, State) ->
@@ -278,33 +286,30 @@ code_change(_, State, _) ->
 %% ---------------------------------------------------
 
 %% handle_response/2 handles correlated responses for processes using the `dht_net' framework.
-handle_response(Client, {error, _ID, _Code, _ErrorMsg}) ->
-	gen_server:reply(Client, timeout); %% @todo Return the error message here rather than quell it
-handle_response(Client, {response, _ID, Values}) ->
-	gen_server:reply(Client, Values);
-handle_response(_Client, {_Method, _ID, _Values}) ->
-	%% This triggers if we get a request in for something which is *already* in our list of Active (correlated) messages
-	%% This can only happen if we send a message to ourselves, and we really shouldn't. Crash the system.
-	exit(message_to_ourselves).
+handle_response(Client, {error, _} = E) -> gen_server:reply(Client, E);
+handle_response(Client, {response, {_ID, PeerID, Params}}) -> gen_server:reply(Client, {ok, PeerID, Params});
+handle_response(_Client, M) -> exit({message_to_ourselves, M}). % Query matching something in our outstanding tracking table? Wrong!
 
 %% view_packet_decode/1 is a view on the validity of an incoming packet
 view_packet_decode(Packet) ->
-    try dht_bt_proto:decode_msg(Packet) of
-        {error, ID, _Code, _ErrorMsg} = E -> {valid_decode, ID, E};
-        {response, ID, _Values} = V -> {valid_decode, ID, V};
-        {_Method, ID, _Params} = M -> {valid_decode, ID, M}
+    try dht_bt_proto:decode(Packet) of
+        {error, {ID, _Code, _ErrorMsg}} = E -> {valid_decode, ID, E};
+        {response, {ID, _PeerID, _Values}} = V -> {valid_decode, ID, V};
+        {'query', {ID, _PeerID, _Method, _Params}} = V -> {valid_decode, ID, V}
     catch
-        _Class:_Error ->
-            invalid_decode
+        _Class:_Error -> invalid_decode
     end.
 
 gen_unique_message_id(Peer, Active) ->
+    gen_unique_message_id(Peer, Active, 16).
+	
+gen_unique_message_id(Peer, Active, K) when K > 0 ->
     IntID = random:uniform(16#FFFF),
     MsgID = <<IntID:16>>,
     case gb_trees:is_defined({Peer, MsgID}, Active) of
         true ->
             %% That MsgID is already in use, recurse and try again
-            gen_unique_message_id(Peer, Active);
+            gen_unique_message_id(Peer, Active, K-1);
         false -> MsgID
     end.
 
@@ -436,16 +441,16 @@ dht_iter_search(SearchType, Target, Width, Retry, Retries,
     dht_iter_search(SearchType, Target, Width, Retry, NewRetries,
                     NewNext2, NewQueried, NewAlive, NewWithPeers).
 
-send_query(QueryData, {IP, Port} = Peer, From, #state { sent = Active, socket = Socket } = State) ->
+send_query({IP, Port} = Peer, Method, Params, From, #state { outstanding = Active, socket = Socket } = State) ->
     MsgID = gen_unique_message_id(Peer, Active),
-    Query = dht_bt_proto:encode_query(QueryData, MsgID),
+    Packet = dht_bt_proto:encode_query({Method, Params}, MsgID),
     Key = {Peer, MsgID},
 
-    case gen_udp:send(Socket, IP, Port, Query) of
+    case gen_udp:send(Socket, IP, Port, Packet) of
         ok ->
             TRef = erlang:send_after(query_timeout(), self(), {request_timeout, self(), {Peer, MsgID}}),
             Value = {From, TRef},
-            {noreply, State#state { sent = gb_trees:insert(Key, Value, Active) }};
+            {noreply, State#state { outstanding = gb_trees:insert(Key, Value, Active) }};
         {error, Reason} ->
             {reply, {error, Reason}, State}
     end.

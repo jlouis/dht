@@ -111,7 +111,7 @@ start_link(RequestedID, StateFile, BootstrapNodes) ->
 
 %% @doc Return this node id as an integer.
 %% Node ids are generated in a random manner.
--spec node_id() -> dht_id:t().
+-spec node_id() -> dht:node_id().
 node_id() ->
     gen_server:call(?MODULE, node_id).
 
@@ -151,7 +151,7 @@ insert_node_({_, _, _}, false) -> false;
 insert_node_({ID, IP, Port}, true) ->
 	case ping(IP, Port, #{ unreachable_check => true}) of
 		pang -> {error, timeout};
-		ID ->
+		{ok, ID} ->
 			gen_server:call(?MODULE, {insert_node, {ID, IP, Port}});
 		_WrongID ->
 			{error, inconsistent_id}
@@ -180,13 +180,13 @@ is_interesting({_, _, _} = Node) ->
     gen_server:call(?MODULE, {is_interesting, Node}).
 
 %% @equiv closest_to(NodeID, 8)
--spec closest_to(dht_id:t()) -> list(dht:node_t()).
+-spec closest_to(dht:node_id()) -> list(dht:node_t()).
 closest_to(NodeID) ->
     closest_to(NodeID, 8).
 
 %% @doc closest_to/2 returns the neighborhood around an ID known to the routing table
 %% @end
--spec closest_to(dht_id:t(), pos_integer()) -> list(dht:node_t()).
+-spec closest_to(dht:node_id(), pos_integer()) -> list(dht:node_t()).
 closest_to(NodeID, NumNodes) ->
     gen_server:call(?MODULE, {closest_to, NodeID, NumNodes}).
 
@@ -218,8 +218,7 @@ dump_state(Filename) ->
 keepalive({ID, IP, Port} = Node) ->
     case ping(IP, Port) of
 	ID -> notify(Node, request_success);
-	pang -> notify(Node, request_timeout);
-	{error, timeout} -> notify(Node, request_timeout)
+	pang -> notify(Node, request_timeout)
     end.
 
 %% @doc ping/2 pings an IP/Port pair in order to determine its NodeID
@@ -237,12 +236,12 @@ ping(IP, Port) -> ping(IP, Port, #{}).
 ping(IP, Port, #{ unreachable_check := true }) ->
     ping_(IP, Port, ets:member(?UNREACHABLE_TAB, {IP, Port}));
 ping(IP, Port, #{}) ->
-    dht_net:ping(IP, Port).
+    dht_net:ping({IP, Port}).
     
 %% internal helper for ping/3
 ping_(_IP, _Port, true) -> pang;
 ping_(IP, Port, false) ->
-    case dht_net:ping(IP, Port) of
+    case dht_net:ping({IP, Port}) of
         pang ->
             RandNode = random_node_tag(),
             DelSpec = [{{'_', RandNode}, [], [true]}],
@@ -271,8 +270,8 @@ do_refresh(Range, [{ID, _IP, _Port} = Node | T], IDs) ->
     stop -> ok
   end.
 
-do_refresh_find_node(Range, {ID, IP, Port}) ->
-    case dht_net:find_node(IP, Port, ID) of
+do_refresh_find_node(Range, Node) ->
+    case dht_net:find_node(Node) of
         {error, timeout} ->
             continue;
         {_, NearNodes} ->
