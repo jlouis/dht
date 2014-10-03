@@ -25,6 +25,20 @@ g_query() ->
     ?LET({Cmd, OwnID, MsgID}, {oneof([ping(), find_node(), get_peers(), announce()]), dht_eqc:id(), dht_eqc:msg_id()},
         {query, OwnID, MsgID, Cmd}).
         
+r_ping() ->
+    ?LET({ID, MsgID}, {dht_eqc:id(), dht_eqc:msg_id()},
+        {ping, {response, ID, MsgID, ping}}).
+
+r_find_node() ->
+    ?LET({ID, MsgID, Ns}, {dht_eqc:id(), dht_eqc:msg_id(), list({dht_eqc:ip(), dht_eqc:port()})},
+        {find_node, {response, ID, MsgID, {find_node, Ns}}}).
+
+g_response() ->
+    oneof([
+        r_ping(),
+        r_find_node()
+    ]).
+
 g_error() ->
     ?LET({MsgID, Code, Msg}, {dht_eqc:msg_id(), int(), binary()},
         {na, {error, MsgID, Code, Msg}}).
@@ -38,7 +52,7 @@ prop_iso_query() ->
         end).
 
 prop_iso_responses() ->
-    ?FORALL({M, R}, frequency([{1, g_error()}]),
+    ?FORALL({M, R}, frequency([{1, g_error()}, {5, g_response()}]),
         begin
              E = iolist_to_binary(dht_bt_proto:encode(R)),
              equals(R, dht_bt_proto:decode_as_response(M, E))
