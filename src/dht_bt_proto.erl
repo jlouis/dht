@@ -30,13 +30,17 @@ decode_as_response(Method, Packet) ->
     {ok, M} = benc:decode(Packet),
     case benc:get_value(<<"y">>, M) of
         <<"r">> -> decode_response(Method, M);
-        <<"e">> -> decode_error(Method, M)
+        <<"e">> -> decode_error(M)
     end.
 
 decode_response(Method, M) -> todo.
-decode_error(Method, M) -> todo.
+decode_error(M) ->
+    MsgID = benc:get_value(<<"t">>, M),
+    [ErrCode, ErrMsg] = benc:get_value(<<"e">>, M),
+    {error, MsgID, ErrCode, ErrMsg}.
 
-encode({query, OwnID, MsgID, Request}) -> encode_query(OwnID, MsgID, Request).
+encode({query, OwnID, MsgID, Request}) -> encode_query(OwnID, MsgID, Request);
+encode({error, MsgID, ErrCode, ErrMsg}) -> encode_error(MsgID, ErrCode, ErrMsg).
 
 encode_query(OwnID, MsgID, ping) ->
 	encode_query(OwnID, MsgID, <<"ping">>, #{});
@@ -61,6 +65,13 @@ encode_response(MsgID, Values) ->
        {<<"y">>, <<"r">>},
        {<<"t">>, MsgID},
        {<<"r">>, Values}
+    ]).
+
+encode_error(MsgID, Code, Msg) when is_integer(Code), is_binary(Msg) ->
+    benc:encode([
+        {<<"y">>, <<"e">>},
+        {<<"t">>, MsgID},
+        {<<"e">>, [Code, Msg]}
     ]).
 
 handle_query(ping, _, Peer, MsgID, Self, _Tokens) ->
