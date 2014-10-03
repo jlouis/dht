@@ -92,7 +92,7 @@ encode_response(ID, MsgID, Req) ->
     case Req of
         ping -> encode_response(MsgID, Base);
         {find_node, Ns} -> encode_response(MsgID, [{<<"nodes">>, pack_nodes(Ns)} | Base]);
-        {get_peers, Token, [{_,_} | _] = Ns} -> encode_response(MsgID, [{<<"token">>, Token}, {<<"nodes">>, pack_nodes(Ns)} | Base]);
+        {get_peers, Token, [{_, _,_} | _] = Ns} -> encode_response(MsgID, [{<<"token">>, Token}, {<<"nodes">>, pack_nodes(Ns)} | Base]);
         {get_peers, Token, Vs} -> encode_response(MsgID, [{<<"token">>, Token}, {<<"values">>, Vs} | Base]);
         {announce_peer, Token, IH, implied} ->
         	encode_response(MsgID, [{<<"token">>, Token}, {<<"info_hash">>, <<IH:160>>}, {<<"implied_port">>, 1}, {<<"port">>, 0} | Base]);
@@ -150,15 +150,21 @@ handle_query('announce', Params, {IP, _} = Peer, MsgID, Self, Tokens) ->
 %% INTERNAL FUNCTIONS
 %% --------------------------------------------
 
-pack_nodes(<<>>) ->[];
-pack_nodes(<<ID:160, A0, A1, A2, A3,
+pack_nodes(X) -> pack_nodes(X, <<>>).
+
+pack_nodes([], Acc) -> Acc;
+pack_nodes([{ID, {A0, A1, A2, A3}, Port} | Rest], Acc) ->
+      pack_nodes(Rest, <<Acc/binary, ID:160, A0, A1, A2, A3, Port:16>>).
+
+unpack_nodes(<<>>) ->[];
+unpack_nodes(<<ID:160, A0, A1, A2, A3,
                         Port:16, Rest/binary>>) ->
     IP = {A0, A1, A2, A3},
     NodeInfo = {ID, IP, Port},
-    [NodeInfo|pack_nodes(Rest)].
+    [NodeInfo|unpack_nodes(Rest)].
     
-unpack_nodes(<<>>) -> [];
-unpack_nodes(<<A0, A1, A2, A3, Port:16, Rest/binary>>) ->
+unpack_peers(<<>>) -> [];
+unpack_peers(<<A0, A1, A2, A3, Port:16, Rest/binary>>) ->
     Addr = {A0, A1, A2, A3},
     [{Addr, Port}|unpack_nodes(Rest)].
 

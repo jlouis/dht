@@ -30,13 +30,25 @@ r_ping() ->
         {ping, {response, ID, MsgID, ping}}).
 
 r_find_node() ->
-    ?LET({ID, MsgID, Ns}, {dht_eqc:id(), dht_eqc:msg_id(), list({dht_eqc:ip(), dht_eqc:port()})},
+    ?LET({ID, MsgID, Ns}, {dht_eqc:id(), dht_eqc:msg_id(), list(dht_eqc:node_t())},
         {find_node, {response, ID, MsgID, {find_node, Ns}}}).
+
+r_get_peers() ->
+    ?LET({ID, MsgID, Token, NsVs},
+    	{dht_eqc:id(), dht_eqc:msg_id(), dht_eqc:token(), oneof([list(dht_eqc:node_t()), list(dht_eqc:id())])},
+        {get_peers, {response, ID, MsgID, {get_peers, Token, NsVs}}}).
+
+r_announce_peer() ->
+    ?LET({ID, MsgID, Token, IH, Port},
+    	{dht_eqc:id(), dht_eqc:msg_id(), dht_eqc:token(), dht_eqc:id(), frequency([{1, return(implied)}, {5, dht_eqc:port()}])},
+        {announce_peer, {response, ID, MsgID, {announce_peer, Token, IH, Port}}}).
 
 g_response() ->
     oneof([
         r_ping(),
-        r_find_node()
+        r_find_node(),
+        r_get_peers(),
+        r_announce_peer()
     ]).
 
 g_error() ->
