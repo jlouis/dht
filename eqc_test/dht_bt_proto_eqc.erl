@@ -17,12 +17,12 @@ get_peers() ->
     ?LET(ID, dht_eqc:id(),
         {get_peers, ID}).
         
-announce() ->
+announce_peer() ->
     ?LET([ID, Token, Port], [dht_eqc:id(), dht_eqc:token(), dht_eqc:port()],
-        {announce, ID, Token, Port}).
+        {announce_peer, ID, Token, Port}).
 
 g_query() ->
-    ?LET({Cmd, OwnID, MsgID}, {oneof([ping(), find_node(), get_peers(), announce()]), dht_eqc:id(), dht_eqc:msg_id()},
+    ?LET({Cmd, OwnID, MsgID}, {oneof([ping(), find_node(), get_peers(), announce_peer()]), dht_eqc:id(), dht_eqc:msg_id()},
         {query, OwnID, MsgID, Cmd}).
         
 r_ping() ->

@@ -20,7 +20,7 @@ decode_query(M) ->
    
 decode_method(ID, MsgID, <<"ping">>, #{}) -> {query, ID, MsgID, ping};
 decode_method(ID, MsgID, <<"announce_peer">>, #{ <<"info_hash">> := <<IH:160>>, <<"token">> := Token, <<"port">> := Port}) ->
-    {query, ID, MsgID, {announce, IH, Token, Port}};
+    {query, ID, MsgID, {announce_peer, IH, Token, Port}};
 decode_method(ID, MsgID, <<"find_node">>, #{ <<"target">> := <<IH:160>> }) ->
     {query, ID, MsgID, {find_node, IH}};
 decode_method(ID, MsgID, <<"get_peers">>, #{ <<"info_hash">> := <<IH:160>> }) ->
@@ -75,7 +75,7 @@ encode_query(OwnID, MsgID, {find_node, ID}) ->
 	encode_query(OwnID, MsgID, <<"find_node">>, #{ <<"target">> => <<ID:160>>});
 encode_query(OwnID, MsgID, {get_peers, ID}) ->
 	encode_query(OwnID, MsgID, <<"get_peers">>, #{ <<"info_hash">> => <<ID:160>> });
-encode_query(OwnID, MsgID, {announce, ID, Token, Port}) ->
+encode_query(OwnID, MsgID, {announce_peer, ID, Token, Port}) ->
 	encode_query(OwnID, MsgID, <<"announce_peer">>,
 		#{ <<"info_hash">> => <<ID:160>>, <<"token">> => Token, <<"port">> => Port}).
 		
@@ -134,7 +134,7 @@ handle_query('get_peers', Params, Peer, MsgID, Self, Tokens) ->
     RecentToken = queue:last(Tokens),
     Token = [{<<"token">>, token_value(Peer, RecentToken)}],
     dht_net:return(Peer, MsgID, common_params(Self) ++ Token ++ Values);
-handle_query('announce', Params, {IP, _} = Peer, MsgID, Self, Tokens) ->
+handle_query('announce_peer', Params, {IP, _} = Peer, MsgID, Self, Tokens) ->
     <<InfoHash:160>> = benc:get_value(<<"info_hash">>, Params),
     BTPort = benc:get_value(<<"port">>,   Params),
     Token = benc:get_binary_value(<<"token">>, Params),
