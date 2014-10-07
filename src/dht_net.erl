@@ -22,9 +22,9 @@
 %%     before the gen_server call times out, therefore this interval
 %%     should be shorter then the interval used by gen_server calls.
 %%
-%%     The find_node_search/1 and get_peers_search/1 functions
+%%     The find_node_search/1 and find_value_search/1 functions
 %%     are almost identical, they both recursively search for the
-%%     nodes closest to an id. The difference is that get_peers should
+%%     nodes closest to an id. The difference is that find_value should
 %%     return as soon as it finds a node that acts as a tracker for
 %%     the infohash.
 
@@ -33,9 +33,9 @@
 
 %% DHT API
 -export([
-         announce/4,
+         store/4,
          find_node/1,
-         get_peers/2,
+         find_value/2,
          ping/1
 ]).
 
@@ -46,15 +46,15 @@
 -export([
          find_node_search/1,
          find_node_search/2,
-         get_peers_search/1,
-         get_peers_search/2
+         find_value_search/1,
+         find_value_search/2
 ]).
 
 
 -type trackerinfo() :: {dht:node_id(), inet:ip_address(), inet:port_number(), token()}.
 -type infohash() :: integer().
 -type token() :: binary().
-%%  -type dht_qtype() :: ping | find_node | get_peers | announce. %% This has to change
+%%  -type dht_qtype() :: ping | find_node | find_value | store. %% This has to change
 
 % gen_server callbacks
 -export([init/1,
@@ -139,25 +139,25 @@ find_node({N, IP, Port} = Node)  ->
             {N, Nodes}
     end.
 
--spec get_peers({inet:ip_address(), inet:port_number()}, infohash()) ->
+-spec find_value({inet:ip_address(), inet:port_number()}, infohash()) ->
     {dht:node_id(), token(), list(dht:peer_info()), list(dht:node_t())} | {error, any()}.
-get_peers({IP, Port}, Infohash)  ->
-    case request({IP, Port}, get_peers, [Infohash]) of
+find_value({IP, Port}, Infohash)  ->
+    case request({IP, Port}, find_value, [Infohash]) of
         {error, Reason} -> {error, Reason};
         {ok, PeerID, Params} ->
-            {Token, Peers, Nodes} = dht_bt_proto:decode_params(get_peers, Params),
+            {Token, Peers, Nodes} = dht_bt_proto:decode_params(find_value, Params),
             {PeerID, Token, Peers, Nodes}
     end.
     
--spec announce(SockName, Hash, Token, Port) -> {error, timeout} | dht:node_id()
+-spec store(SockName, Hash, Token, Port) -> {error, timeout} | dht:node_id()
   when
     SockName :: {inet:ip_address(), inet:port_number()},
     Hash :: infohash(),
     Token :: token(),
     Port :: inet:port_number().
 
-announce({IP, Port}, Infohash, Token, BTPort) ->
-    case request({IP, Port}, announce, [Infohash, Token, BTPort]) of
+store({IP, Port}, Infohash, Token, BTPort) ->
+    case request({IP, Port}, store, [Infohash, Token, BTPort]) of
         {error, R} -> {error, R};
         {ok, PeerID, _Params} ->
             PeerID
@@ -169,22 +169,22 @@ handle_query(ping, Peer, Tag, OwnID, _Tokens) ->
 handle_query({find_node, ID}, Peer, Tag, OwnID, _Tokens) ->
      Nodes = filter_node(Peer, dht_state:closest_to(ID)),
      return(Peer, {response, OwnID, Tag, {find_node, Nodes}});
-handle_query({get_peers, ID}, Peer, Tag, OwnID, Tokens) ->
+handle_query({find_value, ID}, Peer, Tag, OwnID, Tokens) ->
     Vs =
         case dht_store:find(ID) of
             [] -> filter_node(Peer, dht_state:closest_to(ID));
             Peers -> Peers
         end,
     RecentToken = queue:last(Tokens),
-    return(Peer, {response, OwnID, Tag, {get_peers, RecentToken, Vs}});
-handle_query({announce_peer, ID, Token, Port}, {IP, _Port} = Peer, Tag, OwnID, Tokens) ->
+    return(Peer, {response, OwnID, Tag, {find_value, RecentToken, Vs}});
+handle_query({store, ID, Token, Port}, {IP, _Port} = Peer, Tag, OwnID, Tokens) ->
     case is_valid_token(Token, Peer, Tokens) of
         false ->
             ok = error_logger:info_msg("Invalid token from ~p: ~w", [Peer, Token]);
         true ->
             dht_store:store(ID, {IP, Port})
     end,
-    return(Peer, {response, OwnID, Tag, announce_peer}).
+    return(Peer, {response, OwnID, Tag, store}).
 
 -spec return({inet:ip_address(), inet:port_number()}, list()) -> 'ok'.
 return(Peer, Response) ->
@@ -208,19 +208,19 @@ find_node_search(NodeID, Nodes) ->
     Width = search_width(),
     dht_iter_search(find_node, NodeID, Width, search_retries(), Nodes).
 
--spec get_peers_search(infohash()) ->
+-spec find_value_search(infohash()) ->
     {list(trackerinfo()), list(dht:peer_info()), list(dht:node_t())}.
-get_peers_search(InfoHash) ->
+find_value_search(InfoHash) ->
     Width = search_width(),
     Nodes = dht_state:closest_to(InfoHash, Width), 
-    dht_iter_search(get_peers, InfoHash, Width, search_retries(), Nodes).
+    dht_iter_search(find_value, InfoHash, Width, search_retries(), Nodes).
 
--spec get_peers_search(infohash(), list(dht:node_t())) ->
+-spec find_value_search(infohash(), list(dht:node_t())) ->
     {list(trackerinfo()), list(dht:peer_info()), list(dht:node_t())}.
-get_peers_search(InfoHash, Nodes) ->
+find_value_search(InfoHash, Nodes) ->
     Width = search_width(),
     Retry = search_retries(),
-    dht_iter_search(get_peers, InfoHash, Width, Retry, Nodes).
+    dht_iter_search(find_value, InfoHash, Width, Retry, Nodes).
 
 
 %% CALLBACKS
@@ -343,8 +343,8 @@ gen_unique_message_id(Peer, Active, K) when K > 0 ->
     end.
 
 %
-% Generate a random token value. A token value is used to filter out bogus announce
-% requests, or at least announce requests from nodes that never sends get_peers requests.
+% Generate a random token value. A token value is used to filter out bogus store
+% requests, or at least store requests from nodes that never sends find_value requests.
 %
 random_token() ->
     ID0 = random:uniform(16#FFFF),
@@ -363,7 +363,7 @@ dht_iter_search(SearchType, _, _, Retry, Retry, _,
     case SearchType of
         find_node ->
             AliveList;
-        get_peers ->
+        find_value ->
             Trackers = [{ID, IP, Port, Token}
                       ||{ID, IP, Port, Token, _} <- WithPeers],
             Peers = [Peer || {_, _, _, _, Peers} <- WithPeers, Peer <- Peers],
@@ -383,9 +383,9 @@ dht_iter_search(SearchType, Target, Width, Retry, Retries,
             fun({_,_,IP,Port}) ->
                 rpc:async_call(ThisNode, ?MODULE, find_node, [IP, Port, Target])
                 end;
-        get_peers ->
+        find_value ->
             fun({_,_,IP,Port}) ->
-                rpc:async_call(ThisNode, ?MODULE, get_peers, [IP, Port, Target])
+                rpc:async_call(ThisNode, ?MODULE, find_value, [IP, Port, Target])
                 end
     end,
     % Query all nodes in the queue and generate a list of
@@ -407,7 +407,7 @@ dht_iter_search(SearchType, Target, Width, Retry, Retries,
             FailedCall;
         {repack, find_node, {NID, Nodes}} ->
             {{Dist, NID, IP, Port}, Nodes};
-        {repack, get_peers, {NID, Token, Peers, Nodes}} ->
+        {repack, find_value, {NID, Token, Peers, Nodes}} ->
             {{Dist, NID, IP, Port}, {Token, Peers, Nodes}}
     end || {{Dist, _ID, IP, Port}, RetVal} <- WithArgs],
     Successful = [E || E <- TmpSuccessful, E =/= FailedCall],
@@ -423,7 +423,7 @@ dht_iter_search(SearchType, Target, Width, Retry, Retries,
     NodeLists = [case {acc_nodes, {SearchType, Res}} of
         {acc_nodes, {find_node, Nodes}} ->
             Nodes;
-        {acc_nodes, {get_peers, {_, _, Nodes}}} ->
+        {acc_nodes, {find_value, {_, _, Nodes}}} ->
             Nodes
     end || {_, Res} <- Successful],
     AllNodes  = lists:flatten(NodeLists),
@@ -457,10 +457,10 @@ dht_iter_search(SearchType, Target, Width, Retry, Retries,
         (MinQueueDist >= MinAliveDist) -> Retries + 1
     end,
 
-    % Accumulate the trackers and peers found if this is a get_peers search.
+    % Accumulate the trackers and peers found if this is a find_value search.
     NewWithPeers = case SearchType of
         find_node -> []=WithPeers;
-        get_peers ->
+        find_value ->
             Tmp=[{ID, IP, Port, Token, Peers}
                 || {{_, ID, IP, Port}, {Token, Peers, _}} <- Successful, Peers > []],
             WithPeers ++ Tmp

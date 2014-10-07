@@ -13,16 +13,16 @@ find_node() ->
     ?LET(ID, dht_eqc:id(),
         {find_node, ID}).
 
-get_peers() ->
+find_value() ->
     ?LET(ID, dht_eqc:id(),
-        {get_peers, ID}).
+        {find_value, ID}).
         
-announce_peer() ->
+store() ->
     ?LET([ID, Token, Port], [dht_eqc:id(), dht_eqc:token(), dht_eqc:port()],
-        {announce_peer, ID, Token, Port}).
+        {store, ID, Token, Port}).
 
 g_query() ->
-    ?LET({Cmd, OwnID, MsgID}, {oneof([ping(), find_node(), get_peers(), announce_peer()]), dht_eqc:id(), dht_eqc:msg_id()},
+    ?LET({Cmd, OwnID, MsgID}, {oneof([ping(), find_node(), find_value(), store()]), dht_eqc:id(), dht_eqc:msg_id()},
         {query, OwnID, MsgID, Cmd}).
         
 r_ping() ->
@@ -33,22 +33,22 @@ r_find_node() ->
     ?LET({ID, MsgID, Ns}, {dht_eqc:id(), dht_eqc:msg_id(), list(dht_eqc:node_t())},
         {find_node, {response, ID, MsgID, {find_node, Ns}}}).
 
-r_get_peers() ->
+r_find_value() ->
     ?LET({ID, MsgID, Token, NsVs},
     	{dht_eqc:id(), dht_eqc:msg_id(), dht_eqc:token(), oneof([list(dht_eqc:node_t()), list(dht_eqc:id())])},
-        {get_peers, {response, ID, MsgID, {get_peers, Token, NsVs}}}).
+        {find_value, {response, ID, MsgID, {find_value, Token, NsVs}}}).
 
-r_announce_peer() ->
+r_store() ->
     ?LET({ID, MsgID, Token, IH, Port},
     	{dht_eqc:id(), dht_eqc:msg_id(), dht_eqc:token(), dht_eqc:id(), frequency([{1, return(implied)}, {5, dht_eqc:port()}])},
-        {announce_peer, {response, ID, MsgID, {announce_peer, Token, IH, Port}}}).
+        {store, {response, ID, MsgID, {store, Token, IH, Port}}}).
 
 g_response() ->
     oneof([
         r_ping(),
         r_find_node(),
-        r_get_peers(),
-        r_announce_peer()
+        r_find_value(),
+        r_store()
     ]).
 
 g_error() ->

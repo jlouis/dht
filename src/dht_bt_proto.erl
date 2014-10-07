@@ -17,12 +17,12 @@ decode_query(M) ->
     decode_method(ID, MsgID, Method, maps:from_list(Args)).
    
 decode_method(ID, MsgID, <<"ping">>, #{}) -> {query, ID, MsgID, ping};
-decode_method(ID, MsgID, <<"announce_peer">>, #{ <<"info_hash">> := <<IH:160>>, <<"token">> := Token, <<"port">> := Port}) ->
-    {query, ID, MsgID, {announce_peer, IH, Token, Port}};
+decode_method(ID, MsgID, <<"store">>, #{ <<"info_hash">> := <<IH:160>>, <<"token">> := Token, <<"port">> := Port}) ->
+    {query, ID, MsgID, {store, IH, Token, Port}};
 decode_method(ID, MsgID, <<"find_node">>, #{ <<"target">> := <<IH:160>> }) ->
     {query, ID, MsgID, {find_node, IH}};
-decode_method(ID, MsgID, <<"get_peers">>, #{ <<"info_hash">> := <<IH:160>> }) ->
-    {query, ID, MsgID, {get_peers, IH}}.
+decode_method(ID, MsgID, <<"find_value">>, #{ <<"info_hash">> := <<IH:160>> }) ->
+    {query, ID, MsgID, {find_value, IH}}.
 
 decode_as_response(Method, Packet) ->
     {ok, M} = benc:decode(Packet),
@@ -40,23 +40,23 @@ decode_response(MsgID, ping, #{ <<"id">> := <<ID:160>> }) ->
 	{response, ID, MsgID, ping};
 decode_response(MsgID, find_node, #{ <<"id">> := <<ID:160>>, <<"nodes">> := PackedNodes}) ->
 	{response, ID, MsgID, {find_node, unpack_nodes(PackedNodes)}};
-decode_response(MsgID, get_peers, #{ <<"id">> := <<ID:160>>, <<"token">> := Token, <<"nodes">> := PackedNodes}) ->
-	{response, ID, MsgID, {get_peers, Token, unpack_nodes(PackedNodes)}};
-decode_response(MsgID, get_peers, #{ <<"id">> := <<ID:160>>, <<"token">> := Token, <<"values">> := VList}) ->
-	{response, ID, MsgID, {get_peers, Token, VList}};
-decode_response(MsgID, announce_peer,#{
+decode_response(MsgID, find_value, #{ <<"id">> := <<ID:160>>, <<"token">> := Token, <<"nodes">> := PackedNodes}) ->
+	{response, ID, MsgID, {find_value, Token, unpack_nodes(PackedNodes)}};
+decode_response(MsgID, find_value, #{ <<"id">> := <<ID:160>>, <<"token">> := Token, <<"values">> := VList}) ->
+	{response, ID, MsgID, {find_value, Token, VList}};
+decode_response(MsgID, store,#{
 		<<"id">> := <<ID:160>>,
 		<<"implied_port">> := IPort,
 		<<"info_hash">> := <<IH:160>>,
 		<<"token">> := Token,
 		<<"port">> := Port }) ->
-	{response, ID, MsgID, {announce_peer, Token, IH, case IPort of 0 -> Port; 1 -> implied end}};
-decode_response(MsgID, announce_peer, #{
+	{response, ID, MsgID, {store, Token, IH, case IPort of 0 -> Port; 1 -> implied end}};
+decode_response(MsgID, store, #{
 		<<"id">> := <<ID:160>>,
 		<<"info_hash">> := <<IH:160>>,
 		<<"token">> := Token,
 		<<"port">> := Port }) ->
-	{response, ID, MsgID, {announce_peer, Token, IH, Port}}.
+	{response, ID, MsgID, {store, Token, IH, Port}}.
 
 decode_error(M) ->
     MsgID = benc:get_value(<<"t">>, M),
@@ -71,10 +71,10 @@ encode_query(OwnID, MsgID, ping) ->
 	encode_query(OwnID, MsgID, <<"ping">>, #{});
 encode_query(OwnID, MsgID, {find_node, ID}) ->
 	encode_query(OwnID, MsgID, <<"find_node">>, #{ <<"target">> => <<ID:160>>});
-encode_query(OwnID, MsgID, {get_peers, ID}) ->
-	encode_query(OwnID, MsgID, <<"get_peers">>, #{ <<"info_hash">> => <<ID:160>> });
-encode_query(OwnID, MsgID, {announce_peer, ID, Token, Port}) ->
-	encode_query(OwnID, MsgID, <<"announce_peer">>,
+encode_query(OwnID, MsgID, {find_value, ID}) ->
+	encode_query(OwnID, MsgID, <<"find_value">>, #{ <<"info_hash">> => <<ID:160>> });
+encode_query(OwnID, MsgID, {store, ID, Token, Port}) ->
+	encode_query(OwnID, MsgID, <<"store">>,
 		#{ <<"info_hash">> => <<ID:160>>, <<"token">> => Token, <<"port">> => Port}).
 		
 encode_query(OwnID, MsgID, Method, Args) ->
@@ -90,9 +90,9 @@ encode_response(ID, MsgID, Req) ->
     case Req of
         ping -> encode_response(MsgID, Base);
         {find_node, Ns} -> encode_response(MsgID, [{<<"nodes">>, pack_nodes(Ns)} | Base]);
-        {get_peers, Token, [{_, _,_} | _] = Ns} -> encode_response(MsgID, [{<<"token">>, Token}, {<<"nodes">>, pack_nodes(Ns)} | Base]);
-        {get_peers, Token, Vs} -> encode_response(MsgID, [{<<"token">>, Token}, {<<"values">>, Vs} | Base]);
-        announce_peer -> encode_response(MsgID, Base)
+        {find_value, Token, [{_, _,_} | _] = Ns} -> encode_response(MsgID, [{<<"token">>, Token}, {<<"nodes">>, pack_nodes(Ns)} | Base]);
+        {find_value, Token, Vs} -> encode_response(MsgID, [{<<"token">>, Token}, {<<"values">>, Vs} | Base]);
+        store -> encode_response(MsgID, Base)
     end.
        
 encode_response(MsgID, Values) ->
