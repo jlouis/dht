@@ -5,3 +5,6 @@ ebin/*.app
 src/dialyzer.out
 .dht.plt
 src/dialyze.out
+dht.state.bin
+eqc_test/.eqc-info
+eqc_test/current_counterexample.eqc
