@@ -3,8 +3,6 @@
 -export([decode_as_query/1, decode_as_response/2]).
 -export([encode/1, encode_response/2]).
 
--export([handle_query/6]).
-
 decode_as_query(Packet) ->
     {ok, M} = benc:decode(Packet),
     case benc:get_value(<<"y">>, M) of
@@ -94,10 +92,7 @@ encode_response(ID, MsgID, Req) ->
         {find_node, Ns} -> encode_response(MsgID, [{<<"nodes">>, pack_nodes(Ns)} | Base]);
         {get_peers, Token, [{_, _,_} | _] = Ns} -> encode_response(MsgID, [{<<"token">>, Token}, {<<"nodes">>, pack_nodes(Ns)} | Base]);
         {get_peers, Token, Vs} -> encode_response(MsgID, [{<<"token">>, Token}, {<<"values">>, Vs} | Base]);
-        {announce_peer, Token, IH, implied} ->
-        	encode_response(MsgID, [{<<"token">>, Token}, {<<"info_hash">>, <<IH:160>>}, {<<"implied_port">>, 1}, {<<"port">>, 0} | Base]);
-        {announce_peer, Token, IH, Port} ->
-        	encode_response(MsgID, [{<<"token">>, Token}, {<<"info_hash">>, <<IH:160>>}, {<<"port">>, Port} | Base])
+        announce_peer -> encode_response(MsgID, Base)
     end.
        
 encode_response(MsgID, Values) ->
@@ -113,39 +108,6 @@ encode_error(MsgID, Code, Msg) when is_integer(Code), is_binary(Msg) ->
         {<<"t">>, MsgID},
         {<<"e">>, [Code, Msg]}
     ]).
-
-handle_query(ping, _, Peer, MsgID, Self, _Tokens) ->
-    dht_net:return(Peer, MsgID, common_params(Self));
-handle_query('find_node', Params, Peer, MsgID, Self, _Tokens) ->
-    <<Target:160>> = benc:get_value(<<"target">>, Params),
-    CloseNodes = filter_node(Peer, dht_state:closest_to(Target)),
-    BinCompact = node_infos_to_compact(CloseNodes),
-    Values = [{<<"nodes">>, BinCompact}],
-    dht_net:return(Peer, MsgID, common_params(Self) ++ Values);
-handle_query('get_peers', Params, Peer, MsgID, Self, Tokens) ->
-    <<InfoHash:160>> = benc:get_value(<<"info_hash">>, Params),
-    %% TODO: handle non-local requests.
-    Values = case dht_tracker:get_peers(InfoHash) of
-        [] ->
-            Nodes = filter_node(Peer, dht_state:closest_to(InfoHash)),
-            BinCompact = node_infos_to_compact(Nodes),
-            [{<<"nodes">>, BinCompact}]
-    end,
-    RecentToken = queue:last(Tokens),
-    Token = [{<<"token">>, token_value(Peer, RecentToken)}],
-    dht_net:return(Peer, MsgID, common_params(Self) ++ Token ++ Values);
-handle_query('announce_peer', Params, {IP, _} = Peer, MsgID, Self, Tokens) ->
-    <<InfoHash:160>> = benc:get_value(<<"info_hash">>, Params),
-    BTPort = benc:get_value(<<"port">>,   Params),
-    Token = benc:get_binary_value(<<"token">>, Params),
-    case is_valid_token(Token, Peer, Tokens) of
-        true ->
-            %% TODO: handle non-local requests.
-            dht_tracker:announce(InfoHash, IP, BTPort);
-        false ->
-            ok = error_logger:info_msg("Invalid token from ~p: ~w", [Peer, Token])
-    end,
-    dht_net:return(Peer, MsgID, common_params(Self)).
 
 %% INTERNAL FUNCTIONS
 %% --------------------------------------------
@@ -171,10 +133,6 @@ unpack_peers(<<A0, A1, A2, A3, Port:16, Rest/binary>>) ->
 common_params(NodeID) ->
     [{<<"id">>, <<NodeID:160>>}].
 
-%% @doc Delete node with `IP' and `Port' from the list.
-filter_node({IP, Port}, Nodes) ->
-    [X || {_NID, NIP, NPort}=X <- Nodes, NIP =/= IP orelse NPort =/= Port].
-
 node_infos_to_compact(NodeList) ->
     node_infos_to_compact(NodeList, <<>>).
 node_infos_to_compact([], Acc) ->
@@ -182,11 +140,3 @@ node_infos_to_compact([], Acc) ->
 node_infos_to_compact([{ID, {A0, A1, A2, A3}, Port}|T], Acc) ->
     CNode = <<ID:160, A0, A1, A2, A3, Port:16>>,
     node_infos_to_compact(T, <<Acc/binary, CNode/binary>>).
-    
-token_value({IP, Port}, Token) ->
-    Hash = erlang:phash2({IP, Port, Token}),
-    <<Hash:32>>.
-    
-is_valid_token(TokenValue, Peer, Tokens) ->
-    ValidValues = [token_value(Peer, Token) || Token <- queue:to_list(Tokens)],
-    lists:member(TokenValue, ValidValues).
