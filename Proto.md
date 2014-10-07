@@ -17,7 +17,7 @@ Messages are exchanged as packets. The UDP packets has this general framing form
 
 	Packet ::= <<"EDHT-KDM-", Version:8/integer, Tag:16/integer, Msg/binary>>
 	
-The "EDHT-KDM-" header makes it possible to remove spurious messages that accidentally hit the port. The Version allows us 256 versions so we can extend the protocol later. I propose a binary protocol which is not easily extensible indefinitely, altough certain simple extensions are possible. It is not our intent that this protocol is to be used by other parties, except for the Erlang DHT cloud. Hence, we keep the format simple in version 0. If we hit extension hell, we can always propose a later version of the protocol, parsing data differently. In that situation, we probably extend the protocol with a self-describing data set like in ASN.1.
+The "EDHT-KDM-" header makes it possible to remove spurious messages that accidentally hit the port. The Version allows us 256 versions so we can extend the protocol later. I propose a binary protocol which is not easily extensible indefinitely, although certain simple extensions are possible. It is not our intent that this protocol is to be used by other parties, except for the Erlang DHT cloud. Hence, we keep the format simple in version 0. If we hit extension hell, we can always propose a later version of the protocol, parsing data differently. In that situation, we probably extend the protocol with a self-describing data set like in ASN.1.
 
 The `Tag` value encodes a 16 bit value which is selected by the querying entity. And it is reflected in the message from the responding entity. This means you can match up the values and have multiple outstanding requests to the same node in question. It also makes it easy to track outstanding requests, and correlate them to waiting processes locally.
 
@@ -42,15 +42,15 @@ That is, either a query results in a reply or an error but never both. We begin 
 	ErrMsg ::= <<ErrCode:16, ErrString/binary>>		length(ErrString) =< 1024 bytes
 	ErrString <<X/utf8, …>>
 
-We limit the error message to 1024 *bytes*. We don't want excessive parses of large messages here, so we keep it short. The `ErrCode` entries are taken from an Error Code table, given below, together with its error message. The list is forwards extensible.
+We limit the error message to 1024 *bytes*. We don't want excessive parses of large messages here, so we keep it short. The `ErrCode` entries are taken from an Error Code table, given below, together with its error message. The list is forward extensible.
 
 # Security considerations:
 
-A DHT like Kademlia uses random Identities chosen for nodes. And chooses a cryptographic hash function to represent the identity of content. Given bytes `Bin`, the ID of the binary `Bin` is simple the value `crypto:hash(sha256, Bin)`. Hence, the strenght of the integrity guarantee we provide is given by the strength of the hash function we pick.
+A DHT like Kademlia uses random Identities chosen for nodes. And chooses a cryptographic hash function to represent the identity of content. Given bytes `Bin`, the ID of the binary `Bin` is simple the value `crypto:hash(sha256, Bin)`. Hence, the strength of the integrity guarantee we provide is given by the strength of the hash function we pick.
 
 * Confidentiality: No confidentiality is provided. Everyone can snoop at what you are requesting at any point in time. 
 
-* Integrity: Node-ID and Key-ID identity is chosen to be SHA-256. This is a change from SHA-1 used in Kademlia back in 2001. SHA-1 has collision problems in numerous ways at the moment so in order to preserve 2nd preimage resistance, and obtain proper integrity, we need at least SHA-256. SHA-3 or SHA-512 are also possible for extending the security margin further, but we can do so in a later version of the protocol. I've opted *not* to make the hash-function negotiateable. If an error crops up in SHA-256, we bump the protocol number and rule out any earlier request as being invalid. This also builds in a nice self-destruction mechanism, so safe clients don't accidentally talk to insecure clients.
+* Integrity: Node-ID and Key-ID identity is chosen to be SHA-256. This is a change from SHA-1 used in Kademlia back in 2001. SHA-1 has collision problems in numerous ways at the moment so in order to preserve 2nd preimage resistance, and obtain proper integrity, we need at least SHA-256. SHA-3 or SHA-512 are also possible for extending the security margin further, but we can do so in a later version of the protocol. I've opted *not* to make the hash-function negotiable. If an error crops up in SHA-256, we bump the protocol number and rule out any earlier request as being invalid. This also builds in a nice self-destruction mechanism, so safe clients don't accidentally talk to insecure clients.
 
 * Availability: The protocol is susceptible to several attacks on its availability. The protection against it is a "enough nodes" defense, much like the one posed in BitCoin, but it is somewhat shady. If nodes lie about routing information or if a node is flooded with requests it will cease to operate correctly. Hopefully the sought-after value is at multiple nodes, so this doesn't pose a problem. But in itself, there is no protection against availability.
 
@@ -110,7 +110,7 @@ Let `S` be a secret shared by all peers. Then
 
 	MacPacket ::= <<"EDHT-KDM-M-", Version:8/integer, Tag:16/integer, Msg/binary, MAC:256>>
 	
-is a normal packet, except that it has another header and contains a 256 bit MAC (Message Authenticaton Code). Clients handle this packet by checking the MAC against `S`. If it fails to pass the check, the packet is thrown away on the grounds of a MAC error. This allows people to create "local" DHT clouds which has no other participants than the designated. There is no accidental situation which can make this DHT merge with other DHTs or the world at large.
+is a normal packet, except that it has another header and contains a 256 bit MAC (Message Authentication Code). Clients handle this packet by checking the MAC against `S`. If it fails to pass the check, the packet is thrown away on the grounds of a MAC error. This allows people to create "local" DHT clouds which has no other participants than the designated. There is no accidental situation which can make this DHT merge with other DHTs or the world at large.
 
 ## NACL encrypted messages
 
