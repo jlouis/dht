@@ -19,6 +19,9 @@ init([]) ->
     {ok, BootstrapNodes} = application:get_env(dht, bootstrap_nodes),
 
     {ok, {{one_for_rest, 5, 900}, [
+        {store,
+            {dht_store, start_link, []},
+            permanent, 2000, worker, [dht_store]},
         {state,
             {dht_state, start_link, [StateFile, BootstrapNodes]},
             permanent, 3000, worker, dynamic},
