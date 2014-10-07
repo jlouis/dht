@@ -13,6 +13,14 @@ We avoid using the Erlang Term binary format for this reason. It is a format whi
 * Great care has been placed on limiting the size of various fields such that it is not possible to mis-parse data by reading strings incorrectly.
 * The parser has been made so it is suited for Erlang binary pattern matching parsing.
 
+# Deviations from Kademlia
+
+We deviate from the Kademlia paper in one very important aspect. In Kademlia, you store pairs of Key/Value. In our distributed network, you store identifications of a Key to the IP/Port pairs that have the key. It is implicitly expected that the identification is enough to satisfy what kind of protocol we are speaking. That is, if we are given `10.18.19.20` at port `80`, for key ID `0xc0ffecafe`, we can build things on the assumption that requesting `http://10.18.19.20/v/c0ffecafe` will obtain the value for that key. So this protocol doesn't store values themselves, but only a mapping from the world of Key material into an IP world where we can retrieve the given values.
+
+This design choice is made to keep the DHT as simple as possible. For most systems, this is enough and the only facility that the DHT should provide is a way to identify who has what in a decentralized and distributed fashion. The actual storage of data is left to another system in a typical layered model.
+ 
+# Syntax
+
 Messages are exchanged as packets. The UDP packets has this general framing form:
 
 	Packet ::= <<"EDHT-KDM-", Version:8/integer, Tag:16/integer, Msg/binary>>
@@ -33,9 +41,9 @@ Messages are not length-coded directly. The remainder of the UDP packet is the m
 For each kind of query, there is a corresponding reply. So if the query type is `K` then `qK` has a reply `rK`. The formats of the request and the reply are different however. Errors also follow this convention, but it is strictly not needed since all error responses follow the same form. The rules are for queries, Q, replies R and errors E there are two valid transitions:
 
 	either
-		Q → R
+		Q → R		(reply)
 	or
-		Q → E
+		Q → E		(error)
 
 That is, either a query results in a reply or an error but never both. We begin by handling Errors because they are the simplest:
 
@@ -61,10 +69,16 @@ The key take-away from the DHT method is that it provides integrity, but not con
 The format uses a set of common data types which are described here:
 
 	SHA_ID ::= <<ID:256>>
+	IP4 ::= <<B1, B2, B3, B4, Port:16>>		Parse as {{B1, B2, B3, B4}, Port} for an IPv4 socket
+	IP6 ::= <<B1, B2, B3, B4, B5, B6, B7, B8, Port:16>>	Parse as {{B1, B2, B3, B4, B5, B6, B7, B8}, Port} for an IPv6 socket
+
+The SHA_ID refers to a 256 bit SHA-256 bit sequence. It is used to uniquely identify nodes and keys in the DHT space. The values IP4 and IP6 refers to Peers given by an IP address and a Port number on which to contact a peer. The two values correspond to IPv4 and IPv6 addressing respectively.
 
 # Commands
 
-Each command is a Query/Reply pair. The format of the query and its reply are usually not the same, but they are connected since each query result in a reply. It is always an exchange between Alice and Bob, where Alice sends a Query-message to Bob which then replies back with a Reply-message. But of course, in a real peer-to-peer network, the roles can easily be the reversed order in practice. We just pick names here for the purpose of meaningful explanation.
+Each command is a Query/Reply pair. The format of the query and its reply are usually not the same, but they are connected since each query result in a reply. This means that there is a rule that a query for command K must result in a reply of type K. Otherwise things are wrong. This is easily handled in a parser. Furthermore, it means we can parse replies without having to tell the parser what command to expect before we try to parse the reply. It neatly decouples the syntax of the protocol from its semantics in the protocol.
+
+In the following, it is always an exchange between Alice and Bob, where Alice sends a Query-message to Bob which then replies back with a Reply-message. But of course, in a real peer-to-peer network, the roles can easily be the reversed order in practice. We just pick names here for the purpose of meaningful explanation.
 
 All commands are 1-byte values. We deliberately pick the values such that the commands have mnemonics. In principle it just encodes a one-byte enumeration of the different kinds of message types.
 
@@ -89,12 +103,11 @@ TODO
 
 ## `s`—Store a Key/Value pair in the DHT cloud
 
-*NOTE:* This is not right at the moment, and needs more work. In particular, there are currently no Tokens here.
-
-The `s` command stores Key/Value pairs in the cloud. They have the following form:
+The `s` command stores the availability of a Key in the cloud:
 
 	QueryMsg ::= …
-		| <<$s, KEY, Val/binary>>		length(Val) =< 1024
+		| <<$s, $4, KEY, Token:64, IP4/binary>>
+		| <<$s, $6, KEY, Token:64, IP6/binary>>
 	ReplyMsg ::= …
 		| <<$s>>
 
@@ -104,15 +117,21 @@ Store a mapping `KEY → Val` under this node. Each known Node-ID is allowed onc
 
 #  Extensions
 
-## MAC'ed messages
+We give extensions as DEPs (Distributed-hash-table Extension Proposals)
+
+## DEP001: MAC'ed messages
 
 Let `S` be a secret shared by all peers. Then 
 
 	MacPacket ::= <<"EDHT-KDM-M-", Version:8/integer, Tag:16/integer, Msg/binary, MAC:256>>
 	
-is a normal packet, except that it has another header and contains a 256 bit MAC (Message Authentication Code). Clients handle this packet by checking the MAC against `S`. If it fails to pass the check, the packet is thrown away on the grounds of a MAC error. This allows people to create "local" DHT clouds which has no other participants than the designated. There is no accidental situation which can make this DHT merge with other DHTs or the world at large.
+is a MAC-encoded packet, which is encoded as a normal packet, except that it has another header and contains a 256 bit MAC (Message Authentication Code). Clients handle this packet by checking the MAC against `S`. If it fails to pass the check, the packet is thrown away on the grounds of a MAC error. This allows people to create "local" DHT clouds which has no other participants than the designated. There is no accidental situation which can make this DHT merge with other DHTs or the world at large.
 
-## NACL encrypted messages
+Strict rule: You *MUST* verify the MAC before you attempt to decode the packet in an implementation. This guards against malicious users trying to inject messages/packets into the cloud you have built and trusted.
+
+In a large setting, this partially addresses the availability of the DHT. An adversary in the middle, Mallory, can't inject packets into our DHT which it then tries to handle. Also, unless you have `S`, you can't communicate with the DHT. Note that this doesn't provide confidentiality of packet messages.
+
+## DEP002: NACL encrypted messages
 
 TODO—NACL encrypted exchanges with shared secrets.
 
