@@ -10,8 +10,7 @@
 %% API for others to use
 -export([
 	ping/1,
-	store/3,
-	store_term/3,
+	store/2,
 	find_node/1,
 	find_value/1
 ]).
@@ -38,12 +37,8 @@ find_self() ->
 ping(Peer) ->
 	dht_net:ping(Peer).
 	
-store(IP, Port, Data) ->
-	dht_net:store(IP, Port, Data).
-
-store_term(IP, Port, Data) ->
-	store(IP, Port, term_to_binary(Data, [compressed])).
-
+store({IP, Port}, Data) ->
+	dht_net:store({IP, Port}, Data).
 
 find_node(Node) ->
 	dht_net:find_node(Node).

@@ -26,7 +26,7 @@ find(ID) ->
 
 %% Callbacks
 init([]) ->
-    Tbl = ets:new(?TBL, [named_table, protected, {type, bag}]),
+    Tbl = ets:new(?TBL, [named_table, protected, bag]),
     {ok, #state { tbl = Tbl }}.
 	
 handle_call({store, ID, Peer}, _From, State) ->

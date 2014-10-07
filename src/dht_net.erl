@@ -186,7 +186,7 @@ handle_query({store, ID, Token, Port}, {IP, _Port} = Peer, Tag, OwnID, Tokens) -
     end,
     return(Peer, {response, OwnID, Tag, store}).
 
--spec return({inet:ip_address(), inet:port_number()}, list()) -> 'ok'.
+-spec return({inet:ip_address(), inet:port_number()}, any()) -> 'ok'.
 return(Peer, Response) ->
     ok = gen_server:call(?MODULE, {return, Peer, Response}).
 
