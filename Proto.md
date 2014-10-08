@@ -11,7 +11,8 @@ We avoid using the Erlang Term binary format for this reason. It is a format whi
 * The format can be parsed from the head through a simple EBNF-like grammar structure.
 * Length fields are kept to a minimum and it is made such that the grammar is easy to parse as an LL(1) parser by recursive descent.
 * Great care has been placed on limiting the size of various fields such that it is not possible to mis-parse data by reading strings incorrectly.
-* The parser has been made so it is suited for Erlang binary pattern matching parsing.
+* The grammar has been written so it is suited for Erlang binary pattern matching parsing.
+
 
 # Deviations from Kademlia
 
@@ -62,17 +63,16 @@ A DHT like Kademlia uses random Identities chosen for nodes. And chooses a crypt
 
 * Availability: The protocol is susceptible to several attacks on its availability. The protection against it is a "enough nodes" defense, much like the one posed in BitCoin, but it is somewhat shady. If nodes lie about routing information or if a node is flooded with requests it will cease to operate correctly. Hopefully the sought-after value is at multiple nodes, so this doesn't pose a problem. But in itself, there is no protection against availability.
 
-The key take-away from the DHT method is that it provides integrity, but not confidentiality nor availability. If you receive a key K, the content addressing of the value V associated with K is what protects you against forged data. Under the assumption the cryptographic hash function is safe that is.
+The key take-away from the DHT method is that it provides integrity, but not confidentiality nor availability. If you receive a key `K`, you must construct a design where you can *derive* the key `K` from a value `V`. The standard way is to take the cryptographic hash of the value, ie, `K = crypto:hash(sha256, V)`.
 
 # Common entities
 
 The format uses a set of common data types which are described here:
 
 	SHA_ID ::= <<ID:256>>
-	IP4 ::= <<B1, B2, B3, B4, Port:16>>		Parse as {{B1, B2, B3, B4}, Port} for an IPv4 socket
-	IP6 ::= <<B1, B2, B3, B4, B5, B6, B7, B8, Port:16>>	Parse as {{B1, B2, B3, B4, B5, B6, B7, B8}, Port} for an IPv6 socket
+	IP4 ::= <<ID:256, B1, B2, B3, B4, Port:16>>		Parse as {ID, {B1, B2, B3, B4}, Port} for an IPv4 socket
 
-The SHA_ID refers to a 256 bit SHA-256 bit sequence. It is used to uniquely identify nodes and keys in the DHT space. The values IP4 and IP6 refers to Peers given by an IP address and a Port number on which to contact a peer. The two values correspond to IPv4 and IPv6 addressing respectively.
+The SHA_ID refers to a 256 bit SHA-256 bit sequence. It is used to uniquely identify nodes and keys in the DHT space. The values IP4 refers to peers given by an IP address and a Port number on which to contact a peer. The two values correspond to IPv4 and IPv6 addressing respectively.
 
 # Commands
 
@@ -88,38 +88,53 @@ A peer is free to return an error back if it wants. But clients should be prepar
 
 A `p` command is used to check for availability of a peer:
 
-	QueryMsg ::= <<$p, SHA_ID>>
+	QueryMsg ::= <<$p>>
 	ReplyMsg ::= <<$p, SHA_ID>>
 
 Alice sends her Node-ID SHA to Bob and Bob replies back with his Node-ID. This is used to learn that another node is up and running, or is not responding to pings right now.
 
-## `n`—Search for a node with a given ID
+## `f`—Find (search) for a node with a given ID
 
-TODO
+In the DHT protocol you can find either nodes or values. A node search is always going to return nodes which are close to a given key, whereas the value search may return addresses which hosts the searched value in question.
 
-## `v`—Get a list of peers which are closer to a given Key-ID value
+	QueryMsg ::= …
+		| <<$f, $n, SHA_ID>>
+		| <<$f, $v, SHA_ID>>
+	ReplyMsg ::= …
+		| <<$f, $n, L:8, Nodes>>
+		| <<$f, $v, Token:64, L:8, Values>>
+		
+	Nodes = <<IP4, …>>
+	Values = <<IP4, …>>
+	
+Replies to find_node commands are always going to be a node-reply (`$f, $n`) with `L` nodes. A parser MUST check that it is given `L` nodes. Likewise, a find_value command (`$f, $v`) can return nodes, but it can also return values, also with a length encoded as `L` which MUST be checked by the parser.
 
-TODO
+The given Token is used as a protection against random Storage requests. A store request to a node `X` must supply a `Token` value that was recently received as a reply to a find_value query. It makes sure that before I can store a new ID into the DHT swarm, I need to get close to the area in the swarm where the data will be stored.
 
 ## `s`—Store a Key/Value pair in the DHT cloud
 
 The `s` command stores the availability of a Key in the cloud:
 
 	QueryMsg ::= …
-		| <<$s, $4, KEY, Token:64, IP4/binary>>
-		| <<$s, $6, KEY, Token:64, IP6/binary>>
+		| <<$s, Token:64, KEY, Port:16>>
 	ReplyMsg ::= …
 		| <<$s>>
 
 	Key ::= SHA_ID
 	
-Store a mapping `KEY → Val` under this node. Each known Node-ID is allowed once such entry in the table. A node is allowed to limit the amount of values it stores for other nodes here.
+Store a mapping `KEY → {IP, Port}` under this node. The IP is implicit and is obtained from the IP address of the UDP socket. Each `KEY` is allowed to be stored multiple times, under different locations. A query can reply with multiple locations.
 
 #  Extensions
 
 We give extensions as DEPs (Distributed-hash-table Extension Proposals)
 
-## DEP001: MAC'ed messages
+## DEP001: IPv6 Support
+
+In the modern Internet, IPv6 support is a necessity. We have already run out of IPv4 addresses in all major and minor regions, and we can do nothing but watch IP addresses being NAT'ed and sold in auctions to the highest bidder. Hence, we need the protocol to naturally extend to the successor, IPv6. The approach we take is to store two lists of nodes, one for IPv4 and one for IPv6 in a specific order. Over time, the list of IPv4 addresses will fall out of the protocol.
+
+Implementation: TODO.
+
+## DEP002: MAC'ed messages
 
 Let `S` be a secret shared by all peers. Then 
 
@@ -131,9 +146,9 @@ Strict rule: You *MUST* verify the MAC before you attempt to decode the packet i
 
 In a large setting, this partially addresses the availability of the DHT. An adversary in the middle, Mallory, can't inject packets into our DHT which it then tries to handle. Also, unless you have `S`, you can't communicate with the DHT. Note that this doesn't provide confidentiality of packet messages.
 
-## DEP002: NACL encrypted messages
+## DEP003: NACL encrypted messages
 
-TODO—NACL encrypted exchanges with shared secrets.
+TODO—NaCl encrypted exchanges with shared secrets.
 
 # Error Codes and their messages
 
