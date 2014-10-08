@@ -47,21 +47,14 @@ r() ->
         {response, Tag, Reply}).
 
 e() ->
-    ?LET({Tag, Code, Msg}, {dht_eqc:msg_id(), int(), binary()},
+    ?LET({Tag, Code, Msg}, {dht_eqc:msg_id(), nat(), binary()},
         {error, Tag, Code, Msg}).
 
 packet() ->
 	oneof([q(), r(), e()]).
 
 %% Properties
-prop_can_encode() ->
-	?FORALL(P, packet(),
-		begin
-		  dht_proto:encode(P),
-		  true
-		end).
-
-xprop_iso_packet() ->
+prop_iso_packet() ->
     ?FORALL(P, packet(),
         begin
           E = iolist_to_binary(dht_proto:encode(P)),
