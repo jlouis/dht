@@ -35,18 +35,26 @@ The tag is not meant to be a security feature. A random attacker can easily forg
 Messages are not length-coded directly. The remainder of the UDP packet is the message. Note that implementations are free to limit the message lengths to 1024 bytes if they want. This is to protect against excessively overloading a node. There are three types of messages:
 
 	Msg ::=
-		| <<$q, QueryMsg/binary>>
+		| <<$q, SHA_ID, QueryMsg/binary>>
 		| <<$r, ReplyMsg/binary>>
 		| <<$e, ErrMsg/binary>>
 
-For each kind of query, there is a corresponding reply. So if the query type is `K` then `qK` has a reply `rK`. The formats of the request and the reply are different however. Errors also follow this convention, but it is strictly not needed since all error responses follow the same form. The rules are for queries, Q, replies R and errors E there are two valid transitions:
+For each kind of query, there is a corresponding reply. So if the query type is `K` then `qK` has a reply `rK`. Do note that each query contains a so-called `SHA_ID` described below. This encodes the ID of the originator of the query. It is used by peers to track and learn about new nodes in the swarm over time. Replies do not reflect this and omit the ID of the replyer by default. But the `ReplyMsg` may contain the ID at some specific calls. Finally there are also Error messages.
+
+It is important to stress there is no bijection between a query and reply. Often, the query and its corresponding reply are vastly different packets with vastly different kinds of data.
+
+The rules are for queries, Q, replies R and errors E there are two valid transitions:
 
 	either
 		Q → R		(reply)
 	or
 		Q → E		(error)
 
-That is, either a query results in a reply or an error but never both. We begin by handling Errors because they are the simplest:
+That is, either a query results in a reply or an error but never both. We would have liked exactly once semantics, but since this is impossible, there is a `Tag` in each message to (near) idempotent handling of messages.
+
+# Error handling
+
+We begin by handling Errors because they are the simplest:
 
 	ErrMsg ::= <<ErrCode:16, ErrString/binary>>		length(ErrString) =< 1024 bytes
 	ErrString <<X/utf8, …>>

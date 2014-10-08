@@ -82,11 +82,6 @@ query_timeout() -> 2000.
 search_width() -> 32.
 search_retries() -> 4.
 
-socket_options() ->
-    {ok, Base} = application:get_env(dht, listen_opts),
-    [list, inet, {active, ?UDP_MAILBOX_SZ} | Base].
-
-
 %
 % Public interface
 %
@@ -103,23 +98,22 @@ node_port() ->
     gen_server:call(?MODULE, node_port).
 
 %% @private
-request(Target, Method, Params) ->
-    gen_server:call(?MODULE, {request, Target, Method, Params}).
+request(Target, Q) ->
+    gen_server:call(?MODULE, {request, Target, Q}).
 
 %% @doc ping/2 sends a ping to a node
 %% Calling `ping(IP, Port)' will send a ping message to the IP/Port pair
 %% and wait for a result to come back. Used to check if the node in the
 %% other end is up and running.
 %% @end
--spec ping({inet:ip_address(), inet:port_number()}) -> pang | {ok, dht:node_id(), benc:t()} | {error, Reason}
+-spec ping({inet:ip_address(), inet:port_number()}) ->
+      pang | {ok, dht:node_id(), benc:t()} | {error, Reason}
   when Reason :: term().
-ping({IP, Port}) ->
-    case request({IP, Port}, ping, []) of
+ping(Peer) ->
+    case request(Peer, ping) of
         {error, timeout} -> pang;
-        {ok, PeerID, _Params} ->
-            {ok, PeerID}
+        {response, _, {ping, ID}} -> {ok, ID}
     end.
-
 
 %% @doc find_node/3 searches in the DHT for a given target NodeID
 %% Search at the target IP/Port pair for the NodeID given by `Target'. May time out.
@@ -131,60 +125,61 @@ ping({IP, Port}) ->
     Reason :: any().
 
 find_node({N, IP, Port} = Node)  ->
-    case request({IP, Port}, find_node, [Node]) of
+    case request({IP, Port}, {find, node, N}) of
         {error, E} -> {error, E};
-        {ok, N, Params} ->
-            Nodes = dht_bt_proto:decode_params(find_node, Params),
-            dht_state:notify({N, IP, Port}, request_success),
+        {response, _, {find, node, Nodes}} ->
+            dht_state:notify(Node, request_success),
             {N, Nodes}
     end.
 
 -spec find_value({inet:ip_address(), inet:port_number()}, infohash()) ->
     {dht:node_id(), token(), list(dht:peer_info()), list(dht:node_t())} | {error, any()}.
-find_value({IP, Port}, Infohash)  ->
-    case request({IP, Port}, find_value, [Infohash]) of
+find_value(Peer, IDKey)  ->
+    case request(Peer, {find, value, IDKey}) of
         {error, Reason} -> {error, Reason};
-        {ok, PeerID, Params} ->
-            {Token, Peers, Nodes} = dht_bt_proto:decode_params(find_value, Params),
-            {PeerID, Token, Peers, Nodes}
+        %% @todo Consider if we should read off PeerID's here. It will take protocol changes to do so.
+        {response, _, {find, node, Nodes}} ->
+            {nodes, Nodes};
+        {response, _, {find, value, Token, Values}} ->
+            {values, Token, Values}
     end.
-    
--spec store(SockName, Hash, Token, Port) -> {error, timeout} | dht:node_id()
+
+-spec store(SockName, Token, ID, Port) -> {error, timeout} | dht:node_id()
   when
     SockName :: {inet:ip_address(), inet:port_number()},
-    Hash :: infohash(),
+    ID :: infohash(),
     Token :: token(),
     Port :: inet:port_number().
 
-store({IP, Port}, Infohash, Token, BTPort) ->
-    case request({IP, Port}, store, [Infohash, Token, BTPort]) of
+store(Peer, Token, IDKey, Port) ->
+    case request(Peer, {store, Token, IDKey, Port}) of
         {error, R} -> {error, R};
-        {ok, PeerID, _Params} ->
-            PeerID
+        {response, _, _} ->
+            ok %% @todo Consider returning the PeerID here as well. It will take more protocol changes.
     end.
 
 %% @private
 handle_query(ping, Peer, Tag, OwnID, _Tokens) ->
-    return(Peer, {response, OwnID, Tag, ping});
-handle_query({find_node, ID}, Peer, Tag, OwnID, _Tokens) ->
+    return(Peer, {response, Tag, {ping, OwnID}});
+handle_query({find_node, ID}, Peer, Tag, _OwnID, _Tokens) ->
      Nodes = filter_node(Peer, dht_state:closest_to(ID)),
-     return(Peer, {response, OwnID, Tag, {find_node, Nodes}});
-handle_query({find_value, ID}, Peer, Tag, OwnID, Tokens) ->
+     return(Peer, {response, Tag, {find_node, Nodes}});
+handle_query({find_value, ID}, Peer, Tag, _OwnID, Tokens) ->
     Vs =
         case dht_store:find(ID) of
             [] -> filter_node(Peer, dht_state:closest_to(ID));
             Peers -> Peers
         end,
     RecentToken = queue:last(Tokens),
-    return(Peer, {response, OwnID, Tag, {find_value, RecentToken, Vs}});
-handle_query({store, ID, Token, Port}, {IP, _Port} = Peer, Tag, OwnID, Tokens) ->
+    return(Peer, {response, Tag, {find_value, RecentToken, Vs}});
+handle_query({store, ID, Token, Port}, {IP, _Port} = Peer, Tag, _OwnID, Tokens) ->
     case is_valid_token(Token, Peer, Tokens) of
         false ->
             ok = error_logger:info_msg("Invalid token from ~p: ~w", [Peer, Token]);
         true ->
             dht_store:store(ID, {IP, Port})
     end,
-    return(Peer, {response, OwnID, Tag, store}).
+    return(Peer, {response, Tag, store}).
 
 -spec return({inet:ip_address(), inet:port_number()}, any()) -> 'ok'.
 return(Peer, Response) ->
@@ -228,18 +223,19 @@ find_value_search(InfoHash, Nodes) ->
 
 %% @private
 init([DHTPort]) ->
-    {ok, Socket} = gen_udp:open(DHTPort, socket_options()),
+    {ok, Base} = application:get_env(dht, listen_opts),
+    {ok, Socket} = gen_udp:open(DHTPort, [binary, inet, {active, ?UDP_MAILBOX_SZ} | Base]),
     erlang:send_after(?TOKEN_LIFETIME, self(), renew_token),
     {ok, #state{
-    	socket=Socket, 
-    	outstanding=gb_trees:empty(),
-    	tokens= queue:from_list([random_token() || _ <- lists:seq(1, 3)])}}.
+    	socket = Socket, 
+    	outstanding = gb_trees:empty(),
+    	tokens = queue:from_list([random_token() || _ <- lists:seq(1, 3)])}}.
 
 %% @private
-handle_call({request, Peer, Method, Params}, From, State) ->
-    send_query(Peer, Method, Params, From, State);
+handle_call({request, Peer, Request}, From, State) ->
+    send_query(Peer, Request, From, State);
 handle_call({return, {IP, Port}, Response}, _From, #state { socket = Socket } = State) ->
-    Packet = dht_bt_proto:encode(Response),
+    Packet = dht_proto:encode(Response),
     case gen_udp:send(Socket, IP, Port, Packet) of
         ok -> {reply, ok, State};
         {error, _Reason} = E -> {reply, E, State}
@@ -252,54 +248,18 @@ handle_call(node_port, _From, #state { socket = Socket } = State) ->
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-%%
-%% If a request times out, a timer will trigger.
-%% Clean up the query and respond back to the caller when this happens.
-%%
 %% @private
-handle_info({request_timeout, _, Key}, #state{outstanding = Active} = State) ->
-	case gb_trees:lookup(Key, Active) of
-	    none -> {noreply, State};
-	    {value, {Client, _Timeout}} ->
-	        ok = gen_server:reply(Client, {error, timeout}),
-	        {noreply, State#state { outstanding = gb_trees:delete(Key, Active) }}
-	 end;
-%%
-%% Token renewal is called whenever the tokens grows too old.
-%% Cycle the tokens to make sure they wither and die over time.
-%%
-handle_info(renew_token, #state { tokens = Tokens } = State) ->
-    Cycled = queue:in(random_token(), queue:drop(Tokens)),
+handle_info({request_timeout, _, Key}, State) ->
+    HandledState = handle_request_timeout(Key, State),
+    {noreply, HandledState};
+handle_info(renew_token, State) ->
     erlang:send_after(?TOKEN_LIFETIME, self(), renew_token),
-    {noreply, State#state { tokens = Cycled }};
-%%
-%% Handle an incoming UDP message on the socket
-%%
+    {noreply, handle_recycle_token(State)};
 handle_info({udp_passive, Socket}, #state { socket = Socket } = State) ->
 	ok = inet:setopts(Socket, [{active, ?UDP_MAILBOX_SZ}]),
 	{noreply, State};
-handle_info({udp, _Socket, IP, Port, Packet}, #state{ outstanding = Outstanding, tokens = Tokens} = State) ->
-    Self = dht_state:node_id(),  %% @todo cache this locally. It can't change.
-    case view_packet_decode(Packet) of
-        invalid_decode ->
-        	{noreply, State};
-        {valid_decode, Tag, M} ->
-        	Key = {{IP, Port}, Tag},
-        	case {gb_trees:lookup(Key, Outstanding), M} of
-        	    {none, {response, _}} -> {noreply, State};
-        	    {none, {error, _}} -> {noreply, State};
-        	    {none, {query, PeerID, Tag, Request}} ->
-        	        %% Incoming request
-        	        spawn_link( fun() -> dht_state:insert_node({PeerID, IP, Port}) end),
-        	        spawn_link( fun() -> ?MODULE:handle_query(Request, {IP, Port}, Tag, Self, Tokens) end),
-        	        {noreply, State};
-        	    {{value, {Client, TRef}}, _} ->
-        	        %% The incoming message is a response for a request we sent out earlier
-        	        erlang:cancel_timer(TRef),
-        	        handle_response(Client, M),
-        	        {noreply, State#state { outstanding = gb_trees:delete(Key, Outstanding) }}
-        	end
-    end;
+handle_info({udp, _Socket, IP, Port, Packet}, State) ->
+    {noreply, handle_packet({IP, Port}, Packet, State)};
 handle_info(_Msg, State) ->
     {noreply, State}.
 
@@ -314,31 +274,75 @@ code_change(_, State, _) ->
 %% INTERNAL FUNCTIONS
 %% ---------------------------------------------------
 
-%% handle_response/2 handles correlated responses for processes using the `dht_net' framework.
-handle_response(Client, {error, _} = E) -> gen_server:reply(Client, E);
-handle_response(Client, {response, {_ID, PeerID, Params}}) -> gen_server:reply(Client, {ok, PeerID, Params});
-handle_response(_Client, M) -> exit({message_to_ourselves, M}). % Query matching something in our outstanding tracking table? Wrong!
+%% Handle a request timeout by unblocking the calling process with `{error, timeout}'
+handle_request_timeout(Key, #state { outstanding = Outstanding } = State) ->
+	case gb_trees:lookup(Key, Outstanding) of
+	    none -> State;
+	    {value, {Client, _Timeout}} ->
+	        ok = gen_server:reply(Client, {error, timeout}),
+	        State#state { outstanding = gb_trees:delete(Key, Outstanding) }
+	 end.
+
+%%
+%% Token renewal is called whenever the tokens grows too old.
+%% Cycle the tokens to make sure they wither and die over time.
+%%
+handle_recycle_token(#state { tokens = Tokens } = State) ->
+    Cycled = queue:in(random_token(), queue:drop(Tokens)),
+    State#state { tokens = Cycled }.
+
+%%
+%% Handle an incoming UDP message on the socket
+%%
+handle_packet({IP, Port} = Peer, Packet,
+              #state { outstanding = Outstanding, tokens = Tokens } = State) ->
+    Self = dht_state:node_id(), %% @todo cache this locally. It can't change.
+    case view_packet_decode(Packet) of
+        invalid_decode ->
+            {noreply, State};
+        {valid_decode, Tag, M} ->
+            Key = {Peer, Tag},
+            case {gb_trees:lookup(Key, Outstanding), M} of
+                {none, {response, _, _}} -> State; %% No recipient
+                {none, {error, _, _, _}} -> State; %% No Recipient
+                {none, {query, Tag, ForeignID, Query}} ->
+                  %% Incoming request
+                  spawn_link(fun() -> dht_state:insert_node({ForeignID, IP, Port}) end),
+                  spawn_link(fun() -> ?MODULE:handle_query(Query, Peer, Tag, Self, Tokens) end),
+                  State;
+                {{value, {Client, TRef}}, _} ->
+                  %% Handle blocked client process
+                  erlang:cancel_timer(TRef),
+                  respond(Client, M),
+                  State#state { outstanding = gb_trees:delete(Key, Outstanding) }
+            end
+    end.
+
+
+%% respond/2 handles correlated responses for processes using the `dht_net' framework.
+respond(_Client, {query, _, _, _} = M) -> exit({message_to_ourselves, M});
+respond(Client, M) -> gen_server:reply(Client, M).
 
 %% view_packet_decode/1 is a view on the validity of an incoming packet
 view_packet_decode(Packet) ->
-    try dht_bt_proto:decode(Packet) of
-        {error, {ID, _Code, _ErrorMsg}} = E -> {valid_decode, ID, E};
-        {response, {ID, _PeerID, _Values}} = V -> {valid_decode, ID, V};
-        {'query', {ID, _PeerID, _Method, _Params}} = V -> {valid_decode, ID, V}
+    try dht_proto:decode(Packet) of
+        {error, Tag, _Code, _Msg} = E -> {valid_decode, Tag, E};
+        {response, Tag, _Reply} = R -> {valid_decode, Tag, R};
+        {query, Tag, _ID, _Query} = Q -> {valid_decode, Tag, Q}
     catch
         _Class:_Error -> invalid_decode
     end.
 
-gen_unique_message_id(Peer, Active) ->
-    gen_unique_message_id(Peer, Active, 16).
+unique_message_id(Peer, Active) ->
+    unique_message_id(Peer, Active, 16).
 	
-gen_unique_message_id(Peer, Active, K) when K > 0 ->
+unique_message_id(Peer, Active, K) when K > 0 ->
     IntID = random:uniform(16#FFFF),
     MsgID = <<IntID:16>>,
     case gb_trees:is_defined({Peer, MsgID}, Active) of
         true ->
             %% That MsgID is already in use, recurse and try again
-            gen_unique_message_id(Peer, Active, K-1);
+            unique_message_id(Peer, Active, K-1);
         false -> MsgID
     end.
 
@@ -470,14 +474,17 @@ dht_iter_search(SearchType, Target, Width, Retry, Retries,
     dht_iter_search(SearchType, Target, Width, Retry, NewRetries,
                     NewNext2, NewQueried, NewAlive, NewWithPeers).
 
-send_query({IP, Port} = Peer, Method, Params, From, #state { outstanding = Active, socket = Socket } = State) ->
-    MsgID = gen_unique_message_id(Peer, Active),
-    Packet = dht_bt_proto:encode_query({Method, Params}, MsgID),
-    Key = {Peer, MsgID},
+send_query({IP, Port} = Peer, Query, From, #state { outstanding = Active, socket = Socket } = State) ->
+    Self = dht_state:node_id(), %% @todo cache this locally. It can't change.
+    MsgID = unique_message_id(Peer, Active),
+    Packet = dht_proto:encode({query, MsgID, Self, Query}),
 
     case gen_udp:send(Socket, IP, Port, Packet) of
         ok ->
-            TRef = erlang:send_after(query_timeout(), self(), {request_timeout, self(), {Peer, MsgID}}),
+            TRef = erlang:send_after(query_timeout(), self(),
+                                     {request_timeout, self(), {Peer, MsgID}}),
+
+            Key = {Peer, MsgID},
             Value = {From, TRef},
             {noreply, State#state { outstanding = gb_trees:insert(Key, Value, Active) }};
         {error, Reason} ->

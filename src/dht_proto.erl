@@ -11,7 +11,7 @@
 %% ------------------------
 header(Tag) -> <<"EDHT-KDM-", ?VERSION:8, Tag/binary>>.
 
-encode({query, Tag, Q}) -> [header(Tag), $q, encode_query(Q)];
+encode({query, Tag, ID, Q}) -> [header(Tag), <<$q, ID:256>>, encode_query(Q)];
 encode({response, Tag, R}) -> [header(Tag), $r, encode_response(R)];
 encode({error, Tag, ErrCode, ErrStr}) -> [header(Tag), $e, <<ErrCode:16, ErrStr/binary>>].
 
@@ -35,8 +35,8 @@ encode_nodes(Ns) -> << <<ID:256, B1, B2, B3, B4, Port:16>> || {ID, {B1, B2, B3, 
 %% Decoding from the wire
 %% -----------------------
 
-decode(<<"EDHT-KDM-", ?VERSION:8, Tag:2/binary, $q, Query/binary>>) ->
-    {query, Tag, decode_query(Query)};
+decode(<<"EDHT-KDM-", ?VERSION:8, Tag:2/binary, $q, ID:256, Query/binary>>) ->
+    {query, Tag, ID, decode_query(Query)};
 decode(<<"EDHT-KDM-", ?VERSION:8, Tag:2/binary, $r, Response/binary>>) ->
     {response, Tag, decode_response(Response)};
 decode(<<"EDHT-KDM-", ?VERSION:8, Tag:2/binary, $e, ErrCode:16, ErrorString/binary>>) ->

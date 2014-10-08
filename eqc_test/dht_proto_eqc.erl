@@ -17,10 +17,11 @@ q_store() ->
         {store, Token, ID, Port}).
 
 q() ->
-    ?LET({Query, Tag},
-         {oneof([q_ping(), q_find(), q_store()]),
-          dht_eqc:msg_id()},
-      {query, Tag, Query}).
+    ?LET({Tag, ID, Query},
+         {dht_eqc:msg_id(),
+          dht_eqc:id(),
+          oneof([q_ping(), q_find(), q_store()])},
+      {query, Tag, ID, Query}).
         
 r_ping() ->
     ?LET(ID, dht_eqc:id(),
