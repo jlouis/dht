@@ -18,14 +18,12 @@ q_store() ->
 
 q() ->
     ?LET({Tag, ID, Query},
-         {dht_eqc:msg_id(),
+         {dht_eqc:tag(),
           dht_eqc:id(),
           oneof([q_ping(), q_find(), q_store()])},
       {query, Tag, ID, Query}).
         
-r_ping() ->
-    ?LET(ID, dht_eqc:id(),
-        {ping, ID}).
+r_ping() -> return(ping).
         
 r_find_node() ->
     ?LET(Rs, list(dht_eqc:node_t()),
@@ -38,18 +36,18 @@ r_find_value() ->
 r_find() ->
     oneof([r_find_node(), r_find_value()]).
 
-r_store() -> store.
+r_store() -> return(store).
 
 r_reply() ->
     oneof([r_ping(), r_find(), r_store()]).
 
 r() ->
-    ?LET({Reply, Tag}, {r_reply(), dht_eqc:msg_id()},
-        {response, Tag, Reply}).
+    ?LET({Tag, ID, Reply}, {dht_eqc:tag(), dht_eqc:id(), r_reply()},
+        {response, Tag, ID, Reply}).
 
 e() ->
-    ?LET({Tag, Code, Msg}, {dht_eqc:msg_id(), nat(), binary()},
-        {error, Tag, Code, Msg}).
+    ?LET({Tag, ID, Code, Msg}, {dht_eqc:tag(), dht_eqc:id(), nat(), binary()},
+        {error, Tag, ID, Code, Msg}).
 
 packet() ->
 	oneof([q(), r(), e()]).

@@ -20,7 +20,7 @@ node_t() ->
     ?LET({ID, IP, Port}, {id(), ip(), port()},
         {ID, IP, Port}).
 
-msg_id() ->
+tag() ->
     ?LET(ID, choose(0, 16#FFFF),
         <<ID:16>>).
 

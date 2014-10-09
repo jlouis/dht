@@ -24,7 +24,7 @@ This design choice is made to keep the DHT as simple as possible. For most syste
 
 Messages are exchanged as packets. The UDP packets has this general framing form:
 
-	Packet ::= <<"EDHT-KDM-", Version:8/integer, Tag:16/integer, Msg/binary>>
+	Packet ::= <<"EDHT-KDM-", Version:8/integer, Tag:16/integer, ID:256, Msg/binary>>
 	
 The "EDHT-KDM-" header makes it possible to remove spurious messages that accidentally hit the port. The Version allows us 256 versions so we can extend the protocol later. I propose a binary protocol which is not easily extensible indefinitely, although certain simple extensions are possible. It is not our intent that this protocol is to be used by other parties, except for the Erlang DHT cloud. Hence, we keep the format simple in version 0. If we hit extension hell, we can always propose a later version of the protocol, parsing data differently. In that situation, we probably extend the protocol with a self-describing data set like in ASN.1.
 
@@ -32,14 +32,16 @@ The `Tag` value encodes a 16 bit value which is selected by the querying entity.
 
 The tag is not meant to be a security feature. A random attacker can easily forge reply-packets given the tag size. On the other hand, it would not provide much added security if we extended the tag to a 128 bit random value, say. In this case, eavesdropping eve can just sniff the query packet and come up with a fake reply to that query. As such, it is possible to steer the replies.
 
+Finally, each message contains an `ID` field. The ID field encodes the NodeID of the node from which the message originated. It was easier to add this to each and every message rather than trying to handle it on a per-message type basis. It is more often the case that a message will contain an ID than it will be the case that it will not.
+
 Messages are not length-coded directly. The remainder of the UDP packet is the message. Note that implementations are free to limit the message lengths to 1024 bytes if they want. This is to protect against excessively overloading a node. There are three types of messages:
 
 	Msg ::=
-		| <<$q, SHA_ID, QueryMsg/binary>>
+		| <<$q, QueryMsg/binary>>
 		| <<$r, ReplyMsg/binary>>
 		| <<$e, ErrMsg/binary>>
 
-For each kind of query, there is a corresponding reply. So if the query type is `K` then `qK` has a reply `rK`. Do note that each query contains a so-called `SHA_ID` described below. This encodes the ID of the originator of the query. It is used by peers to track and learn about new nodes in the swarm over time. Replies do not reflect this and omit the ID of the replyer by default. But the `ReplyMsg` may contain the ID at some specific calls. Finally there are also Error messages.
+For each kind of query, there is a corresponding reply. So if the query type is `K` then `qK` has a reply `rK`.
 
 It is important to stress there is no bijection between a query and reply. Often, the query and its corresponding reply are vastly different packets with vastly different kinds of data.
 
@@ -97,9 +99,9 @@ A peer is free to return an error back if it wants. But clients should be prepar
 A `p` command is used to check for availability of a peer:
 
 	QueryMsg ::= <<$p>>
-	ReplyMsg ::= <<$p, SHA_ID>>
+	ReplyMsg ::= <<$p>>
 
-Alice sends her Node-ID SHA to Bob and Bob replies back with his Node-ID. This is used to learn that another node is up and running, or is not responding to pings right now.
+Alice sends her Node-ID SHA to Bob and Bob replies back with his Node-ID. This is used to learn that another node is up and running, or is not responding to pings right now. Note that the `QueryMsg` and `ReplyMsg` contains the ID already, so there is no reason to repeat it here.
 
 ## `f`—Find (search) for a node with a given ID
 

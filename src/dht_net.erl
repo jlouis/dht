@@ -112,7 +112,7 @@ request(Target, Q) ->
 ping(Peer) ->
     case request(Peer, ping) of
         {error, timeout} -> pang;
-        {response, _, {ping, ID}} -> {ok, ID}
+        {response, _, ID, ping} -> {ok, ID}
     end.
 
 %% @doc find_node/3 searches in the DHT for a given target NodeID
@@ -127,7 +127,7 @@ ping(Peer) ->
 find_node({N, IP, Port} = Node)  ->
     case request({IP, Port}, {find, node, N}) of
         {error, E} -> {error, E};
-        {response, _, {find, node, Nodes}} ->
+        {response, _, _, {find, node, Nodes}} ->
             dht_state:notify(Node, request_success),
             {N, Nodes}
     end.
@@ -138,10 +138,10 @@ find_value(Peer, IDKey)  ->
     case request(Peer, {find, value, IDKey}) of
         {error, Reason} -> {error, Reason};
         %% @todo Consider if we should read off PeerID's here. It will take protocol changes to do so.
-        {response, _, {find, node, Nodes}} ->
-            {nodes, Nodes};
-        {response, _, {find, value, Token, Values}} ->
-            {values, Token, Values}
+        {response, _, ID, {find, node, Nodes}} ->
+            {nodes, ID, Nodes};
+        {response, _, ID, {find, value, Token, Values}} ->
+            {values, ID, Token, Values}
     end.
 
 -spec store(SockName, Token, ID, Port) -> {error, timeout} | dht:node_id()
@@ -154,32 +154,32 @@ find_value(Peer, IDKey)  ->
 store(Peer, Token, IDKey, Port) ->
     case request(Peer, {store, Token, IDKey, Port}) of
         {error, R} -> {error, R};
-        {response, _, _} ->
-            ok %% @todo Consider returning the PeerID here as well. It will take more protocol changes.
+        {response, _, ID, _} ->
+            {ok, ID}
     end.
 
 %% @private
 handle_query(ping, Peer, Tag, OwnID, _Tokens) ->
-    return(Peer, {response, Tag, {ping, OwnID}});
-handle_query({find_node, ID}, Peer, Tag, _OwnID, _Tokens) ->
+    return(Peer, {response, Tag, OwnID, ping});
+handle_query({find_node, ID}, Peer, Tag, OwnID, _Tokens) ->
      Nodes = filter_node(Peer, dht_state:closest_to(ID)),
-     return(Peer, {response, Tag, {find_node, Nodes}});
-handle_query({find_value, ID}, Peer, Tag, _OwnID, Tokens) ->
+     return(Peer, {response, Tag, OwnID, {find_node, Nodes}});
+handle_query({find_value, ID}, Peer, Tag, OwnID, Tokens) ->
     Vs =
         case dht_store:find(ID) of
             [] -> filter_node(Peer, dht_state:closest_to(ID));
             Peers -> Peers
         end,
     RecentToken = queue:last(Tokens),
-    return(Peer, {response, Tag, {find_value, RecentToken, Vs}});
-handle_query({store, ID, Token, Port}, {IP, _Port} = Peer, Tag, _OwnID, Tokens) ->
+    return(Peer, {response, Tag, OwnID, {find_value, RecentToken, Vs}});
+handle_query({store, ID, Token, Port}, {IP, _Port} = Peer, Tag, OwnID, Tokens) ->
     case is_valid_token(Token, Peer, Tokens) of
         false ->
             ok = error_logger:info_msg("Invalid token from ~p: ~w", [Peer, Token]);
         true ->
             dht_store:store(ID, {IP, Port})
     end,
-    return(Peer, {response, Tag, store}).
+    return(Peer, {response, Tag, OwnID, store}).
 
 -spec return({inet:ip_address(), inet:port_number()}, any()) -> 'ok'.
 return(Peer, Response) ->
@@ -303,11 +303,11 @@ handle_packet({IP, Port} = Peer, Packet,
         {valid_decode, Tag, M} ->
             Key = {Peer, Tag},
             case {gb_trees:lookup(Key, Outstanding), M} of
-                {none, {response, _, _}} -> State; %% No recipient
-                {none, {error, _, _, _}} -> State; %% No Recipient
-                {none, {query, Tag, ForeignID, Query}} ->
+                {none, {response, _, _, _}} -> State; %% No recipient
+                {none, {error, _, _, _, _}} -> State; %% No Recipient
+                {none, {query, Tag, PeerID, Query}} ->
                   %% Incoming request
-                  spawn_link(fun() -> dht_state:insert_node({ForeignID, IP, Port}) end),
+                  spawn_link(fun() -> dht_state:insert_node({PeerID, IP, Port}) end),
                   spawn_link(fun() -> ?MODULE:handle_query(Query, Peer, Tag, Self, Tokens) end),
                   State;
                 {{value, {Client, TRef}}, _} ->
@@ -326,8 +326,8 @@ respond(Client, M) -> gen_server:reply(Client, M).
 %% view_packet_decode/1 is a view on the validity of an incoming packet
 view_packet_decode(Packet) ->
     try dht_proto:decode(Packet) of
-        {error, Tag, _Code, _Msg} = E -> {valid_decode, Tag, E};
-        {response, Tag, _Reply} = R -> {valid_decode, Tag, R};
+        {error, Tag, _ID, _Code, _Msg} = E -> {valid_decode, Tag, E};
+        {response, Tag, _ID, _Reply} = R -> {valid_decode, Tag, R};
         {query, Tag, _ID, _Query} = Q -> {valid_decode, Tag, Q}
     catch
         _Class:_Error -> invalid_decode

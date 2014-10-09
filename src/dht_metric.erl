@@ -13,20 +13,16 @@
 -export([mk/0, d/2]).
 -export([neighborhood/3]).
 
--type t() :: non_neg_integer().
-
--export_type([t/0]).
-
 %% @doc mk_random_id/0 constructs a new random ID
 %% @end
--spec mk() ->  t().
+-spec mk() ->  dht:id().
 mk() ->
 	<<ID:160>> = crypto:rand_bytes(20),
 	ID.
 
 %% @doc dist/2 calculates the distance between two random IDs
 %% @end
--spec d(t(), t()) ->  t().
+-spec d(dht:id(), dht:id()) ->  dht:id().
 d(ID1, ID2) -> ID1 bxor ID2.
 
 %% @doc neighborhood/3 finds known nodes close to an ID
@@ -34,7 +30,7 @@ d(ID1, ID2) -> ID1 bxor ID2.
 %% @end
 -spec neighborhood(ID, Nodes, Limit) -> [dht:node_t()]
   when
-    ID :: t(),
+    ID :: dht:id(),
     Nodes :: [dht:node_t()],
     Limit :: non_neg_integer().
 
