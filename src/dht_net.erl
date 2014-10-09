@@ -22,12 +22,6 @@
 %%     before the gen_server call times out, therefore this interval
 %%     should be shorter then the interval used by gen_server calls.
 %%
-%%     The find_node_search/1 and find_value_search/1 functions
-%%     are almost identical, they both recursively search for the
-%%     nodes closest to an id. The difference is that find_value should
-%%     return as soon as it finds a node that acts as a tracker for
-%%     the infohash.
-
 %% Lifetime interface. Mostly has to do with setup and configuration
 -export([start_link/1, node_port/0]).
 
@@ -44,17 +38,8 @@
 
 %% API for iterative search functions
 -export([
-         find_node_search/1,
-         find_node_search/2,
-         find_value_search/1,
-         find_value_search/2
+    search/2
 ]).
-
-
--type trackerinfo() :: {dht:node_id(), inet:ip_address(), inet:port_number(), token()}.
--type infohash() :: integer().
--type token() :: binary().
-%%  -type dht_qtype() :: ping | find_node | find_value | store. %% This has to change
 
 % gen_server callbacks
 -export([init/1,
@@ -72,15 +57,14 @@
     tokens :: queue:queue()
 }).
 
--define(TOKEN_LIFETIME, 5 * 60 * 1000).
--define(UDP_MAILBOX_SZ, 16).
-
 %
 % Constants and settings
 %
-query_timeout() -> 2000.
-search_width() -> 32.
-search_retries() -> 4.
+-define(TOKEN_LIFETIME, 5 * 60 * 1000).
+-define(UDP_MAILBOX_SZ, 16).
+-define(SEARCH_WIDTH, 32).
+-define(SEARCH_RETRIES, 4).
+-define(QUERY_TIMEOUT, 2000).
 
 %
 % Public interface
@@ -132,12 +116,21 @@ find_node({N, IP, Port} = Node)  ->
             {N, Nodes}
     end.
 
--spec find_value({inet:ip_address(), inet:port_number()}, infohash()) ->
-    {dht:node_id(), token(), list(dht:peer_info()), list(dht:node_t())} | {error, any()}.
+-spec find_value(Peer, ID) ->
+			  {nodes, ID, [Node]}
+		    | {values, ID, Token, [Value]}
+		    | {error, Reason}
+	when
+	  Peer :: {inet:ip_address(), inet:port_number()},
+	  ID :: dht:id(),
+	  Node :: dht:node_t(),
+	  Token :: dht:token(),
+	  Value :: dht:node_t(),
+	  Reason :: any().
+	    
 find_value(Peer, IDKey)  ->
     case request(Peer, {find, value, IDKey}) of
         {error, Reason} -> {error, Reason};
-        %% @todo Consider if we should read off PeerID's here. It will take protocol changes to do so.
         {response, _, ID, {find, node, Nodes}} ->
             {nodes, ID, Nodes};
         {response, _, ID, {find, value, Token, Values}} ->
@@ -147,8 +140,8 @@ find_value(Peer, IDKey)  ->
 -spec store(SockName, Token, ID, Port) -> {error, timeout} | dht:node_id()
   when
     SockName :: {inet:ip_address(), inet:port_number()},
-    ID :: infohash(),
-    Token :: token(),
+    ID :: dht:id(),
+    Token :: dht:token(),
     Port :: inet:port_number().
 
 store(Peer, Token, IDKey, Port) ->
@@ -188,35 +181,10 @@ return(Peer, Response) ->
 %% SEARCH API
 %% ---------------------------------------------------
 
--spec find_node_search(dht:node_id()) -> list(dht:node_t()).
-find_node_search(NodeID) ->
-    Width = search_width(),
-    dht_iter_search(
-    	find_node,
-    	NodeID,
-    	Width,
-    	search_retries(),
-    	dht_state:closest_to(NodeID, Width)).
-
--spec find_node_search(dht:node_id(), list(dht:node_t())) -> list(dht:node_t()).
-find_node_search(NodeID, Nodes) ->
-    Width = search_width(),
-    dht_iter_search(find_node, NodeID, Width, search_retries(), Nodes).
-
--spec find_value_search(infohash()) ->
-    {list(trackerinfo()), list(dht:peer_info()), list(dht:node_t())}.
-find_value_search(InfoHash) ->
-    Width = search_width(),
-    Nodes = dht_state:closest_to(InfoHash, Width), 
-    dht_iter_search(find_value, InfoHash, Width, search_retries(), Nodes).
-
--spec find_value_search(infohash(), list(dht:node_t())) ->
-    {list(trackerinfo()), list(dht:peer_info()), list(dht:node_t())}.
-find_value_search(InfoHash, Nodes) ->
-    Width = search_width(),
-    Retry = search_retries(),
-    dht_iter_search(find_value, InfoHash, Width, Retry, Nodes).
-
+-spec search(node | value, dht:node_id()) -> list(dht:node_t()).
+search(Type, ID) ->
+    search_iterate(Type, ID, ?SEARCH_WIDTH, ?SEARCH_RETRIES,
+                   dht_state:closest_to(ID, ?SEARCH_WIDTH)).
 
 %% CALLBACKS
 %% ---------------------------------------------------
@@ -355,7 +323,7 @@ random_token() ->
     ID1 = random:uniform(16#FFFF),
     <<ID0:16, ID1:16>>.
 
-dht_iter_search(SearchType, Target, Width, Retry, Nodes)  ->
+search_iterate(SearchType, Target, Width, Retry, Nodes)  ->
     WithDist = [{dht_metric:d(ID, Target), ID, IP, Port} || {ID, IP, Port} <- Nodes],
     dht_iter_search(SearchType, Target, Width, Retry, 0, WithDist,
                     gb_sets:empty(), gb_sets:empty(), []).
@@ -481,7 +449,7 @@ send_query({IP, Port} = Peer, Query, From, #state { outstanding = Active, socket
 
     case gen_udp:send(Socket, IP, Port, Packet) of
         ok ->
-            TRef = erlang:send_after(query_timeout(), self(),
+            TRef = erlang:send_after(?QUERY_TIMEOUT, self(),
                                      {request_timeout, self(), {Peer, MsgID}}),
 
             Key = {Peer, MsgID},
