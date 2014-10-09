@@ -30,7 +30,6 @@ find_self() ->
     Self = dht_state:node_id(),
     dht_net:find_node_search(Self).
 
-
 %% API Functions
 -spec ping({IP, Port}) -> pang | {ok, node_id()} | {error, Reason}
   when
@@ -41,12 +40,18 @@ find_self() ->
 ping(Peer) ->
 	dht_net:ping(Peer).
 	
-store({IP, Port}, Data) ->
-	dht_net:store({IP, Port}, Data).
+%% @todo This is currently miserably wrong since there is something murky in the protocol.
+store(ID, OPort) ->
+    case dht_net:search(value, ID) of
+        [ {PID, PIP, PPort} = Peer | _] ->
+          {values, PID, Token, _} = dht_net:find_value(Peer, ID),
+          {ok, _} = dht_net:store({IP, Port}, Token, ID, OPort),
+          ok.
 
 find_node(Node) ->
 	dht_net:find_node(Node).
 
 find_value(ID) ->
-	dht_net:find_value(ID).
-
+    case dht_net:search(value, ID) of
+        AliveList -> AliveList
+    end.
