@@ -45,8 +45,9 @@ store(ID, OPort) ->
     case dht_net:search(value, ID) of
         [ {PID, PIP, PPort} = Peer | _] ->
           {values, PID, Token, _} = dht_net:find_value(Peer, ID),
-          {ok, _} = dht_net:store({IP, Port}, Token, ID, OPort),
-          ok.
+          {ok, _} = dht_net:store({PIP, PPort}, Token, ID, OPort),
+          ok
+    end.
 
 find_node(Node) ->
 	dht_net:find_node(Node).

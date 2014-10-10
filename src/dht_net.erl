@@ -183,8 +183,7 @@ return(Peer, Response) ->
 
 -spec search(node | value, dht:node_id()) -> list(dht:node_t()).
 search(Type, ID) ->
-    search_iterate(Type, ID, ?SEARCH_WIDTH, ?SEARCH_RETRIES,
-                   dht_state:closest_to(ID, ?SEARCH_WIDTH)).
+    search_iterate(Type, ID, ?SEARCH_WIDTH, dht_state:closest_to(ID, ?SEARCH_WIDTH)).
 
 %% CALLBACKS
 %% ---------------------------------------------------
@@ -323,124 +322,76 @@ random_token() ->
     ID1 = random:uniform(16#FFFF),
     <<ID0:16, ID1:16>>.
 
-search_iterate(SearchType, Target, Width, Retry, Nodes)  ->
-    WithDist = [{dht_metric:d(ID, Target), ID, IP, Port} || {ID, IP, Port} <- Nodes],
-    dht_iter_search(SearchType, Target, Width, Retry, 0, WithDist,
+search_iterate(SearchType, Target, Width, Nodes)  ->
+	NodeID = dht_state:node_id(),
+    dht_iter_search(NodeID, SearchType, Target, Width, ?SEARCH_RETRIES, Nodes,
                     gb_sets:empty(), gb_sets:empty(), []).
 
-dht_iter_search(SearchType, _, _, Retry, Retry, _,
-                _, Alive, WithPeers) ->
-    TmpAlive  = gb_sets:to_list(Alive),
-    AliveList = [{ID, IP, Port} || {_, ID, IP, Port} <- TmpAlive],
+dht_iter_search(_NodeID, SearchType, _Target, _Width, 0, _Todo, _Done, Alive, Acc) ->
+    AliveList = gb_sets:to_list(Alive),
     case SearchType of
         find_node ->
             AliveList;
         find_value ->
             Trackers = [{ID, IP, Port, Token}
-                      ||{ID, IP, Port, Token, _} <- WithPeers],
-            Peers = [Peer || {_, _, _, _, Peers} <- WithPeers, Peer <- Peers],
+                      ||{ID, IP, Port, Token, _} <- Acc],
+            Peers = [Peer || {_, _, _, _, Peers} <- Acc, Peer <- Peers],
             {Trackers, Peers, AliveList}
     end;
-dht_iter_search(SearchType, Target, Width, Retry, Retries,
-                Next, Queried, Alive, WithPeers) ->
+dht_iter_search(NodeID, QType, Target, Width, Retries, Todo, Done, Alive, Acc) ->
 
-    % Mark all nodes in the queue as queried
-    AddQueried = [{ID, IP, Port} || {_, ID, IP, Port} <- Next],
-    NewQueried = gb_sets:union(Queried, gb_sets:from_list(AddQueried)),
-
-    ThisNode = node(),
-    Callback =
-    case SearchType of
-        find_node ->
-            fun({_,_,IP,Port}) ->
-                rpc:async_call(ThisNode, ?MODULE, find_node, [IP, Port, Target])
-                end;
-        find_value ->
-            fun({_,_,IP,Port}) ->
-                rpc:async_call(ThisNode, ?MODULE, find_value, [IP, Port, Target])
-                end
-    end,
-    % Query all nodes in the queue and generate a list of
-    % {Dist, ID, IP, Port, Nodes} elements
-    Promises = lists:map(Callback, Next),
-    ReturnValues = lists:map(fun rpc:yield/1, Promises),
-    WithArgs = lists:zip(Next, ReturnValues),
-
-    FailedCall = make_ref(),
-    TmpSuccessful = [case {repack, SearchType, RetVal} of
-        {repack, _, {badrpc, Reason}} ->
-            ok = error_logger:error_msg("A RPC process crashed while sending a request ~p "
-                        "to ~p:~p with reason ~p.",
-                        [SearchType, IP, Port, Reason]),
-            FailedCall;
-        {repack, _, {error, timeout}} ->
-            FailedCall;
-        {repack, _, {error, response}} ->
-            FailedCall;
-        {repack, find_node, {NID, Nodes}} ->
-            {{Dist, NID, IP, Port}, Nodes};
-        {repack, find_value, {NID, Token, Peers, Nodes}} ->
-            {{Dist, NID, IP, Port}, {Token, Peers, Nodes}}
-    end || {{Dist, _ID, IP, Port}, RetVal} <- WithArgs],
-    Successful = [E || E <- TmpSuccessful, E =/= FailedCall],
+    %% Call the DHT in parallel to speed up the search
+    Call = fun({_, IP, Port} = N) -> {ok, {N, apply(?MODULE, QType, [IP, Port, Target])}} end,
+    Results = dht_par:pmap(Call, Todo),
+    Successful = [R || {ok, R} <- Results],
 
     % Mark all nodes that responded as alive
-    AddAlive = [N ||{{_, _, _, _}=N, _} <- Successful],
-    NewAlive = gb_sets:union(Alive, gb_sets:from_list(AddAlive)),
+    NewAlive = gb_sets:union(
+    			Alive,
+    			gb_sets:from_list(alive_nodes(Successful))),
 
     % Accumulate all nodes from the successful responses.
     % Calculate the relative distance to all of these nodes
     % and keep the closest nodes which has not already been
     % queried in a previous iteration
-    NodeLists = [case {acc_nodes, {SearchType, Res}} of
-        {acc_nodes, {find_node, Nodes}} ->
-            Nodes;
-        {acc_nodes, {find_value, {_, _, Nodes}}} ->
-            Nodes
-    end || {_, Res} <- Successful],
-    AllNodes  = lists:flatten(NodeLists),
-    NewNodes  = [Node || Node <- AllNodes, not gb_sets:is_member(Node, NewQueried)],
-    NewNext   = [{dht_metric:d(ID, Target), ID, IP, Port}
-                || {ID, IP, Port} <- dht_metric:neighborhood(Target, NewNodes, Width)],
 
-    % Check if the closest node in the work queue is closer
-    % to the target than the closest responsive node that was
-    % found in this iteration.
-    MinAliveDist = case gb_sets:size(NewAlive) of
-        0 ->
-            infinity;
-        _ ->
-            {IMinAliveDist, _, _, _} = gb_sets:smallest(NewAlive),
-            IMinAliveDist
-    end,
+    Queried = gb_sets:union(Done, gb_sets:from_list(Todo)),
+    New = [N || N <- all_nodes(Successful),
+                not gb_sets:is_member(N, Queried)],
+    WorkQueue = lists:usort(dht_metric:neighborhood(Target, New, Width)),
 
-    MinQueueDist = case NewNext of
-        [] ->
-            infinity;
-        Other ->
-            {MinDist, _, _, _} = lists:min(Other),
-            MinDist
-    end,
+    %% Calculations for the next round
+    Retry =
+      case view_closest_node(NodeID, NewAlive, WorkQueue) of
+        work_queue -> ?SEARCH_RETRIES;
+        alive_set -> Retries - 1
+      end,
+    Found = accum_peers(QType, Acc, Successful),
 
-    % Check if the closest node in the work queue is closer
-    % to the infohash than the closest responsive node.
-    NewRetries = if
-        (MinQueueDist <  MinAliveDist) -> 0;
-        (MinQueueDist >= MinAliveDist) -> Retries + 1
-    end,
+    dht_iter_search(NodeID, QType, Target, Width, Retry,
+                    WorkQueue, Queried, NewAlive, Found).
 
-    % Accumulate the trackers and peers found if this is a find_value search.
-    NewWithPeers = case SearchType of
-        find_node -> []=WithPeers;
-        find_value ->
-            Tmp=[{ID, IP, Port, Token, Peers}
-                || {{_, ID, IP, Port}, {Token, Peers, _}} <- Successful, Peers > []],
-            WithPeers ++ Tmp
-    end,
+all_nodes(_S) -> todo.
+alive_nodes(_S) -> todo.
 
-    NewNext2 = lists:usort(NewNext),
-    dht_iter_search(SearchType, Target, Width, Retry, NewRetries,
-                    NewNext2, NewQueried, NewAlive, NewWithPeers).
+%% Accumulate new peers into the queue of peers
+accum_peers(find_node, [], _Succesful) -> [];
+accum_peers(find_value, Acc, Successful) ->
+    New = [{ID, IP, Port, Token, Peers}
+            || {{ID, IP, Port}, {Token, Peers, _}} <- Successful, Peers /= []],
+    Acc ++ New.
+
+%% Check if the closest node in the work queue is closer
+%% to the target than the closest responsive node that was
+%% found in this iteration.
+view_closest_node(ID, AliveNodes, WorkQueue) ->
+    D = fun({{NID, _, _}, M}) -> min(M, dht_metric:d(ID, NID)) end,
+    MinA = gb_sets:fold(D, infinity, AliveNodes),
+    MinQ = lists:foldl(D, infinity, WorkQueue),
+    case MinQ < MinA of
+        true -> work_queue;
+        false -> alive_set
+    end.
 
 send_query({IP, Port} = Peer, Query, From, #state { outstanding = Active, socket = Socket } = State) ->
     Self = dht_state:node_id(), %% @todo cache this locally. It can't change.
