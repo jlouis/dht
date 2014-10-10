@@ -327,49 +327,36 @@ search_iterate(SearchType, Target, Width, Nodes)  ->
     dht_iter_search(NodeID, SearchType, Target, Width, ?SEARCH_RETRIES, Nodes,
                     gb_sets:empty(), gb_sets:empty(), []).
 
-dht_iter_search(_NodeID, SearchType, _Target, _Width, 0, _Todo, _Done, Alive, Acc) ->
-    AliveList = gb_sets:to_list(Alive),
-    case SearchType of
-        find_node ->
-            AliveList;
-        find_value ->
-            Trackers = [{ID, IP, Port, Token}
-                      ||{ID, IP, Port, Token, _} <- Acc],
-            Peers = [Peer || {_, _, _, _, Peers} <- Acc, Peer <- Peers],
-            {Trackers, Peers, AliveList}
-    end;
+dht_iter_search(_NodeID, find_node, _Target, _Width, 0, _Todo, _Done, Alive, _Acc) ->
+    gb_sets:to_list(Alive);
+dht_iter_search(_NodeID, find_value, _Target, _Width, 0, _Todo, _Done, Alive, Acc) ->
+    Trackers = [{ID, IP, Port, Token}
+                || {ID, IP, Port, Token, _} <- Acc],
+    Peers = [Peer || {_, _, _, _, Peers} <- Acc, Peer <- Peers],
+    {Trackers, Peers, gb_sets:to_list(Alive)};
 dht_iter_search(NodeID, QType, Target, Width, Retries, Todo, Done, Alive, Acc) ->
 
-    %% Call the DHT in parallel to speed up the search
-    Call = fun({_, IP, Port} = N) -> {ok, {N, apply(?MODULE, QType, [IP, Port, Target])}} end,
+    %% Call the DHT in parallel to speed up the search:
+    Call = fun({_, IP, Port} = N) -> {N, apply(?MODULE, QType, [IP, Port, Target])} end,
     Results = dht_par:pmap(Call, Todo),
     Successful = [R || {ok, R} <- Results],
 
-    % Mark all nodes that responded as alive
-    NewAlive = gb_sets:union(
-    			Alive,
-    			gb_sets:from_list(alive_nodes(Successful))),
+    %% Maintain invriants for the next round by updating the necessary data structures:
 
-    % Accumulate all nodes from the successful responses.
-    % Calculate the relative distance to all of these nodes
-    % and keep the closest nodes which has not already been
-    % queried in a previous iteration
-
+    %% Mark all nodes that responded as alive
+    Living = gb_sets:union(Alive, gb_sets:from_list(alive_nodes(Successful))),
     Queried = gb_sets:union(Done, gb_sets:from_list(Todo)),
     New = [N || N <- all_nodes(Successful),
                 not gb_sets:is_member(N, Queried)],
     WorkQueue = lists:usort(dht_metric:neighborhood(Target, New, Width)),
-
-    %% Calculations for the next round
     Retry =
-      case view_closest_node(NodeID, NewAlive, WorkQueue) of
+      case view_closest_node(NodeID, Living, WorkQueue) of
         work_queue -> ?SEARCH_RETRIES;
         alive_set -> Retries - 1
       end,
     Found = accum_peers(QType, Acc, Successful),
 
-    dht_iter_search(NodeID, QType, Target, Width, Retry,
-                    WorkQueue, Queried, NewAlive, Found).
+    dht_iter_search(NodeID, QType, Target, Width, Retry, WorkQueue, Queried, Living, Found).
 
 all_nodes(_S) -> todo.
 alive_nodes(_S) -> todo.
