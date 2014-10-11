@@ -356,22 +356,24 @@ dht_iter_search(NodeID, QType, Target, Width, Retries, Todo, Done, Alive, Acc) -
 
     dht_iter_search(NodeID, QType, Target, Width, Retry, WorkQueue, Queried, Living, Found).
 
+%% all_nodes/1 gathers nodes from a set of parallel queries
 all_nodes(Resp) ->
     Nodes = fun ({nodes, _, Ns}) -> Ns;
                 (_) -> []
             end,
     lists:concat([Nodes(R) || {_N, R} <- Resp]).
     
-ok_call({error, _}) -> false;
-ok_call({error, _Id, _Code, _Msg}) -> false;
-ok_call(_) -> true.
-
+%% alive_nodes/1 returns the nodes returned positive results
 alive_nodes(Resp) ->
-    [N || {N, R} <- Resp, ok_call(R)].
+    OK = fun ({error, _}) -> false;
+             ({error, _ID, _Code, _Msg}) -> false;
+             (_) -> true
+         end,
+    [N || {N, R} <- Resp, OK(R)].
 
 
-%% Accumulate new peers into the queue of peers
-accum_peers(find_node, [], _Results) -> [];
+%% accum_peers/2 accumulates new targets with the value present
+accum_peers(find_node, [], _Results) -> []; % find_node never has results to accumulate
 accum_peers(find_value, Acc, Results) ->
     New = [{Node, Token, Vs} || {Node, {values, _, Token, Vs}} <- Results,
                                    Vs /= [] ],
