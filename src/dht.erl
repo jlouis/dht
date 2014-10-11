@@ -28,7 +28,8 @@
 
 find_self() ->
     Self = dht_state:node_id(),
-    dht_net:find_node_search(Self).
+    dht_net:search(find_node, Self).
+
 
 %% API Functions
 -spec ping({IP, Port}) -> pang | {ok, node_id()} | {error, Reason}
@@ -53,6 +54,6 @@ find_node(Node) ->
 	dht_net:find_node(Node).
 
 find_value(ID) ->
-    case dht_net:search(value, ID) of
+    case dht_net:search(find_value, ID) of
         AliveList -> AliveList
     end.

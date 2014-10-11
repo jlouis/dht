@@ -17,7 +17,7 @@
 	  {state_file, "dht.state.bin"},
 	  
 	  %% The "bootstrap nodes to start off the DHT from"
-	  {bootstrap_nodes, ["router.utorrent.com:6881"]},
+	  {bootstrap_nodes, []},
 	  
 	  %% The options to give the listen socket. This is useful to only bind to a specific port
 	  {listen_opts, []}

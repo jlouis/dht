@@ -4,4 +4,4 @@
 -export([pmap/2]).
 
 pmap(_F, []) -> [];
-pmap(F, [E | Es]) -> [{ok, F(E)} || pmap(F, Es)].
+pmap(F, [E | Es]) -> [{F(E)} || pmap(F, Es)].

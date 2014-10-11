@@ -181,7 +181,7 @@ return(Peer, Response) ->
 %% SEARCH API
 %% ---------------------------------------------------
 
--spec search(node | value, dht:node_id()) -> list(dht:node_t()).
+-spec search(find_node | find_value, dht:node_id()) -> list(dht:node_t()).
 search(Type, ID) ->
     search_iterate(Type, ID, ?SEARCH_WIDTH, dht_state:closest_to(ID, ?SEARCH_WIDTH)).
 
@@ -322,9 +322,9 @@ random_token() ->
     ID1 = random:uniform(16#FFFF),
     <<ID0:16, ID1:16>>.
 
-search_iterate(SearchType, Target, Width, Nodes)  ->
+search_iterate(QType, Target, Width, Nodes)  ->
 	NodeID = dht_state:node_id(),
-    dht_iter_search(NodeID, SearchType, Target, Width, ?SEARCH_RETRIES, Nodes,
+    dht_iter_search(NodeID, QType, Target, Width, ?SEARCH_RETRIES, Nodes,
                     gb_sets:empty(), gb_sets:empty(), []).
 
 dht_iter_search(_NodeID, find_node, _Target, _Width, 0, _Todo, _Done, Alive, _Acc) ->
