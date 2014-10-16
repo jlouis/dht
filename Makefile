@@ -21,7 +21,7 @@ analyze:
 # EQC
 eqc-ci: ERLC_OPTS+= +'{parse_transform, eqc_cover}'
 eqc-ci: all
-	erlc -o ebin eqc_test/*.erl
+	erlc +debug_info +'{parse_transform, eqc_cover}' -o ebin eqc_test/*.erl
 
 include erlang.mk
 
