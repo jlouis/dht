@@ -19,9 +19,10 @@ analyze:
 	@dialyzer ebin --no_native $(DIALYZER_OPTS)
 
 # EQC
-eqc-ci: ERLC_OPTS+= +'{parse_transform, eqc_cover}'
-eqc-ci: all
-	erlc +debug_info +'{parse_transform, eqc_cover}' -o ebin eqc_test/*.erl
+eqc-ci:
+	cp eqc_test/*.erl src
+	mkdir -p ebin
+	erl -make
 
 include erlang.mk
 

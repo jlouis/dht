@@ -1,2 +1,0 @@
-{"../src/*", [{parse_transform, eqc_cover}]}.
-{"../eqc_test/*", [{parse_transform, eqc_cover}]}.
