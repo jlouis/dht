@@ -17,12 +17,12 @@ q_store() ->
         {store, Token, ID, Port}).
 
 q() ->
-    ?LET({Tag, ID, Query},
-         {dht_eqc:tag(),
-          dht_eqc:id(),
-          oneof([q_ping(), q_find(), q_store()])},
-      {query, Tag, ID, Query}).
+    q(oneof([q_ping(), q_find(), q_store()])).
         
+q(G) ->
+    ?LET({Tag, ID, Query}, {dht_eqc:tag(), dht_eqc:id(), G},
+      {query, Tag, ID, Query}).
+
 r_ping() -> return(ping).
         
 r_find_node() ->

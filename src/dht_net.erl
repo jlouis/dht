@@ -45,6 +45,7 @@
          code_change/3]).
 
 % internal exports
+-export([sync/0]).
 
 -record(state, {
     socket :: inet:socket(),
@@ -77,6 +78,10 @@ node_port() ->
 %% @private
 request(Target, Q) ->
     gen_server:call(?MODULE, {request, Target, Q}).
+
+%% @private
+sync() ->
+    gen_server:call(?MODULE, sync).
 
 %% @doc ping/2 sends a ping to a node
 %% Calling `ping(IP, Port)' will send a ping message to the IP/Port pair
@@ -193,6 +198,8 @@ handle_call({return, {IP, Port}, Response}, _From, #state { socket = Socket } = 
         ok -> {reply, ok, State};
         {error, _Reason} = E -> {reply, E, State}
     end;
+handle_call(sync, _From, #state{} = State) ->
+    {reply, ok, State};
 handle_call(node_port, _From, #state { socket = Socket } = State) ->
     {ok, SockName} = dht_socket:sockname(Socket),
     {reply, SockName, State}.
