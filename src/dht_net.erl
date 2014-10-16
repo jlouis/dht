@@ -177,7 +177,7 @@ return(Peer, Response) ->
 %% @private
 init([DHTPort]) ->
     {ok, Base} = application:get_env(dht, listen_opts),
-    {ok, Socket} = gen_udp:open(DHTPort, [binary, inet, {active, ?UDP_MAILBOX_SZ} | Base]),
+    {ok, Socket} = dht_socket:open(DHTPort, [binary, inet, {active, ?UDP_MAILBOX_SZ} | Base]),
     erlang:send_after(?TOKEN_LIFETIME, self(), renew_token),
     {ok, #state{
     	socket = Socket, 
@@ -189,12 +189,12 @@ handle_call({request, Peer, Request}, From, State) ->
     send_query(Peer, Request, From, State);
 handle_call({return, {IP, Port}, Response}, _From, #state { socket = Socket } = State) ->
     Packet = dht_proto:encode(Response),
-    case gen_udp:send(Socket, IP, Port, Packet) of
+    case dht_socket:send(Socket, IP, Port, Packet) of
         ok -> {reply, ok, State};
         {error, _Reason} = E -> {reply, E, State}
     end;
 handle_call(node_port, _From, #state { socket = Socket } = State) ->
-    {ok, SockName} = inet:sockname(Socket),
+    {ok, SockName} = dht_socket:sockname(Socket),
     {reply, SockName, State}.
 
 %% @private
@@ -213,6 +213,9 @@ handle_info({udp_passive, Socket}, #state { socket = Socket } = State) ->
 	{noreply, State};
 handle_info({udp, _Socket, IP, Port, Packet}, State) ->
     {noreply, handle_packet({IP, Port}, Packet, State)};
+handle_info({stop, Caller}, #state{} = State) ->
+    Caller ! stopped,
+    {stop, normal, State};
 handle_info(_Msg, State) ->
     {noreply, State}.
 
@@ -313,7 +316,7 @@ send_query({IP, Port} = Peer, Query, From, #state { outstanding = Active, socket
     MsgID = unique_message_id(Peer, Active),
     Packet = dht_proto:encode({query, MsgID, Self, Query}),
 
-    case gen_udp:send(Socket, IP, Port, Packet) of
+    case dht_socket:send(Socket, IP, Port, Packet) of
         ok ->
             TRef = erlang:send_after(?QUERY_TIMEOUT, self(),
                                      {request_timeout, self(), {Peer, MsgID}}),

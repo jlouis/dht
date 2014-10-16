@@ -16,6 +16,9 @@ ip() ->
 port() ->
     choose(0, 65535).
 
+socket() ->
+    {ip(), port()}.
+
 node_t() ->
     ?LET({ID, IP, Port}, {id(), ip(), port()},
         {ID, IP, Port}).
