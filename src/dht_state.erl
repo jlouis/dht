@@ -70,6 +70,7 @@
 	 closest_to/1, closest_to/2,
 	 keepalive/1,
 	 node_id/0,
+	 node_list/0,
 	 refresh/3
 ]).
 
@@ -114,6 +115,12 @@ start_link(RequestedID, StateFile, BootstrapNodes) ->
 -spec node_id() -> dht:node_id().
 node_id() ->
     gen_server:call(?MODULE, node_id).
+
+%% @doc node_list/0 returns the list of nodes in the current routing table
+%% @end
+-spec node_list() -> [dht:node_t()].
+node_list() ->
+    gen_server:call(?MODULE, node_list).
 
 %%
 %% @equiv insert_node(Node, #{})
@@ -409,6 +416,8 @@ handle_call({dump_state, StateFile}, _From, #state{ routing_table = Tbl } = Stat
       Class:Err ->
         {reply, {error, {dump_state_failed, Class, Err}}, State}
     end;
+handle_call(node_list, _From, #state { routing_table = Tbl } = State) ->
+    {reply, dht_routing_table:node_list(Tbl), State};
 handle_call(node_id, _From, #state{ node_id = Self } = State) ->
     {reply, Self, State}.
 

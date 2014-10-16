@@ -3,9 +3,6 @@
 %% Starts two workers: {@link etorrent_dht_state} and {@link etorrent_dht_net}.
 %% @end
 -module(dht).
--export([
-	find_self/0
-]).
 
 %% API for others to use
 -export([
@@ -26,10 +23,6 @@
 -export_type([id/0, tag/0, token/0]).
 -export_type([node_id/0, node_t/0, peer_info/0]).
 
-find_self() ->
-    Self = dht_state:node_id(),
-    dht_net:search(find_node, Self).
-
 %% API Functions
 -spec ping({IP, Port}) -> pang | {ok, node_id()} | {error, Reason}
   when
@@ -42,7 +35,7 @@ ping(Peer) ->
 	
 %% @todo This is currently miserably wrong since there is something murky in the protocol.
 store(ID, OPort) ->
-    case dht_net:search(find_value, ID) of
+    case dht_search:find(find_value, ID) of
         {Store, _, _} ->
             [store_id(Peer, ID, OPort) || Peer <- Store],
             ok
@@ -56,6 +49,6 @@ find_node(Node) ->
 	dht_net:find_node(Node).
 
 find_value(ID) ->
-    case dht_net:search(find_value, ID) of
+    case dht_search:find(find_value, ID) of
         {_Store, Found, _} -> Found
     end.
