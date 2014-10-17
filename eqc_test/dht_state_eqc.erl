@@ -175,7 +175,7 @@ cleanup() ->
 %% PROPERTY
 %% -----------------------
 
-prop_component_correct() ->
+prop_state_correct() ->
     ?SETUP(fun() ->
         eqc_mocking:start_mocking(api_spec()),
         fun() -> ok end

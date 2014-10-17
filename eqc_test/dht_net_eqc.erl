@@ -106,7 +106,7 @@ cleanup() ->
 
 %% PROPERTY
 
-prop_component_correct() ->
+prop_net_correct() ->
    ?SETUP(fun() ->
        application:load(dht),
        eqc_mocking:start_mocking(api_spec()),
