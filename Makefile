@@ -19,7 +19,8 @@ analyze:
 	@dialyzer ebin --no_native $(DIALYZER_OPTS)
 
 # EQC
-eqc-ci:
+eqc-ci: all
+	rm ebin/*.beam
 	cp eqc_test/*.erl src
 	mkdir -p ebin
 	erl -make
