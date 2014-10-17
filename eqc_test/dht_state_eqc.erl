@@ -34,7 +34,7 @@ api_spec() ->
 		  	#api_module {
 		  		name = dht_net,
 		  		functions = [
-		  			#api_fun { name = ping, arity = 2 }
+		  			#api_fun { name = ping, arity = 1 }
 		  		]
 		  	}
 		  ]
@@ -111,11 +111,11 @@ ping(IP, Port) ->
 	dht_state:ping(IP, Port).
 
 ping_args(_S) ->
-	[ip_address(), port_number()].
-	
+    [ip_address(), port_number()].
+
 ping_callouts(_S, [IP, Port]) ->
     ?SEQ([
-    	?BIND(R, ?CALLOUT(dht_net, ping, [IP, Port], pang),
+    	?BIND(R, ?CALLOUT(dht_net, ping, [{IP, Port}], pang),
     		?RET(R))
     ]).
 

@@ -191,7 +191,10 @@ init([DHTPort]) ->
 
 %% @private
 handle_call({request, Peer, Request}, From, State) ->
-    send_query(Peer, Request, From, State);
+    case send_query(Peer, Request, From, State) of
+        {ok, S} -> {noreply, S};
+        {error, Reason} -> {reply, {error, Reason}, State}
+    end;
 handle_call({return, {IP, Port}, Response}, _From, #state { socket = Socket } = State) ->
     Packet = dht_proto:encode(Response),
     case dht_socket:send(Socket, IP, Port, Packet) of
@@ -262,7 +265,7 @@ handle_packet({IP, Port} = Peer, Packet,
     Self = dht_state:node_id(), %% @todo cache this locally. It can't change.
     case view_packet_decode(Packet) of
         invalid_decode ->
-            {noreply, State};
+            State;
         {valid_decode, Tag, M} ->
             Key = {Peer, Tag},
             case {gb_trees:lookup(Key, Outstanding), M} of
@@ -330,9 +333,9 @@ send_query({IP, Port} = Peer, Query, From, #state { outstanding = Active, socket
 
             Key = {Peer, MsgID},
             Value = {From, TRef},
-            {noreply, State#state { outstanding = gb_trees:insert(Key, Value, Active) }};
+            {ok, State#state { outstanding = gb_trees:insert(Key, Value, Active) }};
         {error, Reason} ->
-            {reply, {error, Reason}, State}
+            {error, Reason}
     end.
 
 %% @doc Delete node with `IP' and `Port' from the list.
