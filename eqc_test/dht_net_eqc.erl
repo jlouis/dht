@@ -78,6 +78,36 @@ q_ping_callouts(#state {}, [_Sock, _IP, _Port, _Packet]) ->
         ?CALLOUT(dht_state, node_id, [], dht_eqc:id())
     ]).
 
+%% QUERY of a FIND message
+q_find_pre(#state { init = I }) -> I.
+
+q_find(Socket, IP, Port, Packet) ->
+	dht_net ! {udp, Socket, IP, Port, Packet},
+	dht_net:sync().
+	
+q_find_args(_S) ->
+    [sock_ref, dht_eqc:ip(), dht_eqc:port(), dht_proto_eqc:q(dht_proto_eqc:q_find())].
+    
+q_find_callouts(#state {}, [_Sock, _IP, _Port, _Packet]) ->
+    ?SEQ([
+      ?CALLOUT(dht_state, node_id, [], dht_eqc:id())
+    ]).
+
+%% QUERY of a STORE message
+q_store_pre(#state { init = I }) -> I.
+
+q_store(Socket, IP, Port, Packet) ->
+	dht_net ! {udp, Socket, IP, Port, Packet},
+	dht_net:sync().
+	
+q_store_args(_S) ->
+    [sock_ref, dht_eqc:ip(), dht_eqc:port(), dht_proto_eqc:q(dht_proto_eqc:q_store())].
+
+q_store_callouts(#state {}, [_Sock, _IP, _Port, _Packet]) ->
+    ?SEQ([
+      ?CALLOUT(dht_state, node_id, [], dht_eqc:id())
+    ]).
+
 %% PING - Not finished yet, this requires blocking calls >:-)
 ping_pre(#state { init = I }) -> I.
 
