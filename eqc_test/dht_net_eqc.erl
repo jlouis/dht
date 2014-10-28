@@ -16,7 +16,14 @@ api_spec() ->
           #api_module {
             name = dht_state,
             functions = [
-                #api_fun { name = node_id, arity = 0 } ] },
+                #api_fun { name = node_id, arity = 0 },
+                #api_fun { name = closest_to, arity = 1 },
+                #api_fun { name = insert_node, arity = 1 } ] },
+          #api_module {
+            name = dht_store,
+            functions = [
+                #api_fun { name = find, arity = 1 }
+            ] },
           #api_module {
             name = dht_socket,
             functions = [
@@ -66,46 +73,54 @@ node_port_callouts(#state { }, []) ->
 q_ping_pre(#state { init = I }) -> I.
 
 q_ping(Socket, IP, Port, Packet) ->
-	dht_net ! {udp, Socket, IP, Port, Packet},
-	dht_net:sync().
+	inject(Socket, IP, Port, Packet).
 
 q_ping_args(_S) ->
       ?LET({IP, Port, Packet}, {dht_eqc:ip(), dht_eqc:port(), dht_proto_eqc:q(dht_proto_eqc:q_ping())},
           [sock_ref, IP, Port, Packet]).
 
-q_ping_callouts(#state {}, [_Sock, _IP, _Port, _Packet]) ->
+q_ping_callouts(#state {}, [_Sock, IP, Port, _Packet]) ->
     ?SEQ([
-        ?CALLOUT(dht_state, node_id, [], dht_eqc:id())
+        ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
+        ?PAR(
+           [?CALLOUT(dht_state, insert_node, [{?WILDCARD, IP, Port}], elements([true, false])),
+            ?CALLOUT(dht_socket, send, [sock_ref, IP, Port, ?WILDCARD], return(ok))
+           ])
     ]).
 
 %% QUERY of a FIND message
 q_find_pre(#state { init = I }) -> I.
 
 q_find(Socket, IP, Port, Packet) ->
-	dht_net ! {udp, Socket, IP, Port, Packet},
-	dht_net:sync().
+	inject(Socket, IP, Port, Packet).
 	
-q_find_args(_S) ->
-    [sock_ref, dht_eqc:ip(), dht_eqc:port(), dht_proto_eqc:q(dht_proto_eqc:q_find())].
+%% q_find_args(_S) ->
+%%     [sock_ref, dht_eqc:ip(), dht_eqc:port(), dht_proto_eqc:q(dht_proto_eqc:q_find())].
     
-q_find_callouts(#state {}, [_Sock, _IP, _Port, _Packet]) ->
+q_find_callouts(#state {}, [_Sock, IP, Port, _Packet]) ->
     ?SEQ([
-      ?CALLOUT(dht_state, node_id, [], dht_eqc:id())
+      ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
+      ?PAR(
+        [?CALLOUT(dht_state, insert_node, [{?WILDCARD, IP, Port}], elements([{error, timeout}, true, false])),
+          ?SEQ([
+            ?CALLOUT(dht_state, closest_to, [?WILDCARD], return([])),
+            ?CALLOUT(dht_socket, send, [sock_ref, IP, Port, ?WILDCARD], ok)])])
     ]).
 
 %% QUERY of a STORE message
 q_store_pre(#state { init = I }) -> I.
 
 q_store(Socket, IP, Port, Packet) ->
-	dht_net ! {udp, Socket, IP, Port, Packet},
-	dht_net:sync().
+	inject(Socket, IP, Port, Packet).
 	
 q_store_args(_S) ->
     [sock_ref, dht_eqc:ip(), dht_eqc:port(), dht_proto_eqc:q(dht_proto_eqc:q_store())].
 
-q_store_callouts(#state {}, [_Sock, _IP, _Port, _Packet]) ->
+q_store_callouts(#state {}, [_Sock, IP, Port, _Packet]) ->
     ?SEQ([
-      ?CALLOUT(dht_state, node_id, [], dht_eqc:id())
+      ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
+      ?CALLOUT(dht_state, insert_node, [{?WILDCARD, IP, Port}], elements([{error, timeout}, true, false])),
+      ?CALLOUT(dht_socket, send, [sock_ref, IP, Port, ?WILDCARD], ok)
     ]).
 
 %% PING - Not finished yet, this requires blocking calls >:-)
@@ -119,6 +134,16 @@ ping(Peer) ->
 	
 ping_callouts(#state{}, [{IP, Port}]) ->
     ?CALLOUT(dht_socket, send, [sock_ref, IP, Port, ?WILDCARD], r_socket_send()).
+
+%% Packet Injection
+%% ------------------
+
+inject(Socket, IP, Port, Packet) ->
+    Enc = iolist_to_binary(dht_proto:encode(Packet)),
+    dht_net ! {udp, Socket, IP, Port, Enc},
+    timer:sleep(2),
+    dht_net:sync().
+
 
 cleanup() ->
     process_flag(trap_exit, true),

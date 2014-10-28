@@ -152,17 +152,17 @@ store(Peer, Token, IDKey, Port) ->
 %% @private
 handle_query(ping, Peer, Tag, OwnID, _Tokens) ->
     return(Peer, {response, Tag, OwnID, ping});
-handle_query({find_node, ID}, Peer, Tag, OwnID, _Tokens) ->
+handle_query({find, node, ID}, Peer, Tag, OwnID, _Tokens) ->
      Nodes = filter_node(Peer, dht_state:closest_to(ID)),
-     return(Peer, {response, Tag, OwnID, {find_node, Nodes}});
-handle_query({find_value, ID}, Peer, Tag, OwnID, Tokens) ->
+     return(Peer, {response, Tag, OwnID, {find, node, Nodes}});
+handle_query({find, value, ID}, Peer, Tag, OwnID, Tokens) ->
     Vs =
         case dht_store:find(ID) of
             [] -> filter_node(Peer, dht_state:closest_to(ID));
             Peers -> Peers
         end,
     RecentToken = queue:last(Tokens),
-    return(Peer, {response, Tag, OwnID, {find_value, RecentToken, Vs}});
+    return(Peer, {response, Tag, OwnID, {find, value, RecentToken, Vs}});
 handle_query({store, ID, Token, Port}, {IP, _Port} = Peer, Tag, OwnID, Tokens) ->
     case is_valid_token(Token, Peer, Tokens) of
         false ->
@@ -221,12 +221,13 @@ handle_info(renew_token, State) ->
 handle_info({udp_passive, Socket}, #state { socket = Socket } = State) ->
 	ok = inet:setopts(Socket, [{active, ?UDP_MAILBOX_SZ}]),
 	{noreply, State};
-handle_info({udp, _Socket, IP, Port, Packet}, State) ->
+handle_info({udp, _Socket, IP, Port, Packet}, State) when is_binary(Packet) ->
     {noreply, handle_packet({IP, Port}, Packet, State)};
 handle_info({stop, Caller}, #state{} = State) ->
     Caller ! stopped,
     {stop, normal, State};
-handle_info(_Msg, State) ->
+handle_info(Msg, State) ->
+    error_logger:error_msg("Unkown message in handle info: ~p", [Msg]),
     {noreply, State}.
 
 %% @private
@@ -291,12 +292,10 @@ respond(Client, M) -> gen_server:reply(Client, M).
 
 %% view_packet_decode/1 is a view on the validity of an incoming packet
 view_packet_decode(Packet) ->
-    try dht_proto:decode(Packet) of
+    case dht_proto:decode(Packet) of
         {error, Tag, _ID, _Code, _Msg} = E -> {valid_decode, Tag, E};
         {response, Tag, _ID, _Reply} = R -> {valid_decode, Tag, R};
         {query, Tag, _ID, _Query} = Q -> {valid_decode, Tag, Q}
-    catch
-        _Class:_Error -> invalid_decode
     end.
 
 unique_message_id(Peer, Active) ->
