@@ -23,7 +23,7 @@
 %%     should be shorter then the interval used by gen_server calls.
 %%
 %% Lifetime interface. Mostly has to do with setup and configuration
--export([start_link/1, node_port/0]).
+-export([start_link/1, start_link/2, node_port/0]).
 
 %% DHT API
 -export([
@@ -67,7 +67,11 @@
 %% @doc Start up the DHT networking subsystem
 %% @end
 start_link(DHTPort) ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [DHTPort], []).
+    start_link(DHTPort, #{}).
+    
+%% @private
+start_link(Port, Opts) ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [Port, Opts], []).
 
 %% @doc node_port/0 returns the (UDP) port number to which the DHT system is bound.
 %% @end
@@ -162,13 +166,11 @@ handle_query({find, value, ID}, Peer, Tag, OwnID, Tokens) ->
             Peers -> Peers
         end,
     RecentToken = queue:last(Tokens),
-    return(Peer, {response, Tag, OwnID, {find, value, RecentToken, Vs}});
-handle_query({store, ID, Token, Port}, {IP, _Port} = Peer, Tag, OwnID, Tokens) ->
+    return(Peer, {response, Tag, OwnID, {find, value, token_value(Peer, RecentToken), Vs}});
+handle_query({store, Token, ID, Port}, {IP, _Port} = Peer, Tag, OwnID, Tokens) ->
     case is_valid_token(Token, Peer, Tokens) of
-        false ->
-            ok = error_logger:info_msg("Invalid token from ~p: ~w", [Peer, Token]);
-        true ->
-            dht_store:store(ID, {IP, Port})
+        false -> ok;
+        true -> dht_store:store(ID, {IP, Port})
     end,
     return(Peer, {response, Tag, OwnID, store}).
 
@@ -180,14 +182,17 @@ return(Peer, Response) ->
 %% ---------------------------------------------------
 
 %% @private
-init([DHTPort]) ->
+init([DHTPort, Opts]) ->
     {ok, Base} = application:get_env(dht, listen_opts),
     {ok, Socket} = dht_socket:open(DHTPort, [binary, inet, {active, ?UDP_MAILBOX_SZ} | Base]),
     erlang:send_after(?TOKEN_LIFETIME, self(), renew_token),
     {ok, #state{
     	socket = Socket, 
     	outstanding = gb_trees:empty(),
-    	tokens = queue:from_list([random_token() || _ <- lists:seq(1, 3)])}}.
+    	tokens = init_tokens(Opts)}}.
+
+init_tokens(#{ tokens := Toks}) -> queue:from_list(Toks);
+init_tokens(#{}) -> queue:from_list([random_token() || _ <- lists:seq(1, 3)]).
 
 %% @private
 handle_call({request, Peer, Request}, From, State) ->

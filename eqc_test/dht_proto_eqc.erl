@@ -12,9 +12,13 @@ q_find() ->
     ?LET({Mode, ID}, {elements([node, value]), dht_eqc:id()},
       {find, Mode, ID}).
         
-q_store() ->
-    ?LET([Token, ID, Port], [dht_eqc:token(), dht_eqc:id(), dht_eqc:port()],
+q_store(Token) ->
+    ?LET([ID, Port], [dht_eqc:id(), dht_eqc:port()],
         {store, Token, ID, Port}).
+        
+q_store() ->
+    ?LET(Token, dht_eqc:token(),
+        q_store(Token)).
 
 q() ->
     q(oneof([q_ping(), q_find(), q_store()])).

@@ -6,7 +6,8 @@
 
 -record(state, {
 	init = false,
-	port = 1729
+	port = 1729,
+	token = undefined
 }).
 
 api_spec() ->
@@ -22,7 +23,8 @@ api_spec() ->
           #api_module {
             name = dht_store,
             functions = [
-                #api_fun { name = find, arity = 1 }
+                #api_fun { name = find, arity = 1 },
+                #api_fun { name = store, arity = 2 }
             ] },
           #api_module {
             name = dht_socket,
@@ -41,16 +43,17 @@ r_socket_send() ->
 init_pre(#state { init = false }) -> true;
 init_pre(#state {}) -> false.
 
-init(Port) ->
-    {ok, _Pid} = dht_net:start_link(Port),
+init(Port, Tokens) ->
+    {ok, _Pid} = dht_net:start_link(Port, #{ tokens => Tokens }),
     ok.
 
-init_args(#state { port = P }) -> [P].
+init_args(#state { }) ->
+    [dht_eqc:port(), [dht_eqc:token()]].
 
-init_next(State, _, _) ->
-    State#state { init = true }.
+init_next(State, _V, [Port, [Token]]) ->
+    State#state { init = true, token = Token, port = Port }.
 
-init_callouts(#state { port = P }, [P]) ->
+init_callouts(#state { }, [P, _T]) ->
     ?SEQ([
       ?CALLOUT(dht_socket, open, [P, ?WILDCARD], {ok, sock_ref})
     ]).
@@ -83,7 +86,7 @@ q_ping_callouts(#state {}, [_Sock, IP, Port, _Packet]) ->
     ?SEQ([
         ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
         ?PAR(
-           [?CALLOUT(dht_state, insert_node, [{?WILDCARD, IP, Port}], elements([true, false])),
+           [?CALLOUT(dht_state, insert_node, [{?WILDCARD, IP, Port}], elements([{error, timeout}, true, false])),
             ?CALLOUT(dht_socket, send, [sock_ref, IP, Port, ?WILDCARD], return(ok))
            ])
     ]).
@@ -113,15 +116,47 @@ q_store_pre(#state { init = I }) -> I.
 q_store(Socket, IP, Port, Packet) ->
 	inject(Socket, IP, Port, Packet).
 	
-q_store_args(_S) ->
-    [sock_ref, dht_eqc:ip(), dht_eqc:port(), dht_proto_eqc:q(dht_proto_eqc:q_store())].
+q_store_args(#state { token = BaseToken }) ->
+    ?LET([IP, Port], [dht_eqc:ip(), dht_eqc:port()],
+        begin
+          Token = erlang:phash2({IP, Port, BaseToken}),
+          [sock_ref, IP, Port, dht_proto_eqc:q(dht_proto_eqc:q_store(<<Token:32>>))]
+        end).
 
 q_store_callouts(#state {}, [_Sock, IP, Port, _Packet]) ->
     ?SEQ([
       ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
-      ?CALLOUT(dht_state, insert_node, [{?WILDCARD, IP, Port}], elements([{error, timeout}, true, false])),
-      ?CALLOUT(dht_socket, send, [sock_ref, IP, Port, ?WILDCARD], ok)
+      ?PAR([
+          ?CALLOUT(dht_state, insert_node, [{?WILDCARD, IP, Port}], elements([{error, timeout}, true, false])),
+          ?SEQ([
+              ?CALLOUT(dht_store, store, [?WILDCARD, {IP, ?WILDCARD}], ok),
+              ?CALLOUT(dht_socket, send, [sock_ref, IP, Port, ?WILDCARD], return(ok))])])
     ]).
+
+%% QUERY of a STORE message with an invalid token
+q_store_invalid_pre(#state { init = I }) -> I.
+
+q_store_invalid(Socket, IP, Port, Packet) ->
+	inject(Socket, IP, Port, Packet).
+	
+invalid_token(Token) ->
+    ?SUCHTHAT(T, dht_eqc:token(),
+        T /= Token).
+
+q_store_invalid_args(#state { token = BaseToken }) ->
+    ?LET([IP, Port, Token], [dht_eqc:ip(), dht_eqc:port(), invalid_token(BaseToken)],
+        begin
+            [sock_ref, IP, Port, dht_proto_eqc:q(dht_proto_eqc:q_store(Token))]
+        end).
+
+q_store_invalid_callouts(#state {}, [_Sock, IP, Port, _Packet]) ->
+    ?SEQ([
+      ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
+      ?PAR([
+          ?CALLOUT(dht_state, insert_node, [{?WILDCARD, IP, Port}], elements([{error, timeout}, true, false])),
+          ?CALLOUT(dht_socket, send, [sock_ref, IP, Port, ?WILDCARD], return(ok))])
+    ]).
+
 
 %% PING - Not finished yet, this requires blocking calls >:-)
 ping_pre(#state { init = I }) -> I.
