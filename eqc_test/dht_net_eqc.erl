@@ -7,7 +7,8 @@
 -record(state, {
 	init = false,
 	port = 1729,
-	token = undefined
+	token = undefined,
+	blocked = []
 }).
 
 api_spec() ->
@@ -37,7 +38,7 @@ api_spec() ->
 
 %% Typical socket responses:
 r_socket_send() ->
-    elements([ok, {error, timeout}, {error, einval}, {error, enoent}]).
+    elements([ok]).
 
 %% INITIALIZATION
 init_pre(#state { init = false }) -> true;
@@ -186,11 +187,23 @@ ping_pre(#state { init = I }) -> I.
 ping(Peer) ->
 	dht_net:ping(Peer).
 	
-%% ping_args(_S) ->
-%%	[{dht_eqc:ip(), dht_eqc:port}].
+ping_args(_S) ->
+	[{dht_eqc:ip(), dht_eqc:port()}].
 	
 ping_callouts(#state{}, [{IP, Port}]) ->
-    ?CALLOUT(dht_socket, send, [sock_ref, IP, Port, ?WILDCARD], r_socket_send()).
+    ?SEQ([
+        ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
+        ?CALLOUT(dht_socket, send, [sock_ref, IP, Port, ?WILDCARD], r_socket_send()),
+        ?SELFCALL(add_blocked, [?SELF, ping]),
+        ?BLOCK,
+        ?SELFCALL(del_blocked, [?SELF])
+    ]).
+
+add_blocked_next(#state { blocked = Bs } = S, _V, [Pid, Op]) ->
+    S#state { blocked = [{Pid, Op} | Bs] }.
+
+del_blocked_next(#state { blocked = Bs } = S, _V, [Pid]) ->
+    S#state { blocked = lists:keydelete(Pid, 1, Bs) }.
 
 %% Packet Injection
 %% ------------------

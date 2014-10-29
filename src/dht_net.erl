@@ -297,10 +297,13 @@ respond(Client, M) -> gen_server:reply(Client, M).
 
 %% view_packet_decode/1 is a view on the validity of an incoming packet
 view_packet_decode(Packet) ->
-    case dht_proto:decode(Packet) of
+    try dht_proto:decode(Packet) of
         {error, Tag, _ID, _Code, _Msg} = E -> {valid_decode, Tag, E};
         {response, Tag, _ID, _Reply} = R -> {valid_decode, Tag, R};
         {query, Tag, _ID, _Query} = Q -> {valid_decode, Tag, Q}
+    catch
+       _Class:_Error ->
+           invalid_decode
     end.
 
 unique_message_id(Peer, Active) ->
