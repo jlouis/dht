@@ -180,6 +180,24 @@ q_store_invalid_callouts(#state {}, [_Sock, IP, Port, _Packet]) ->
           ?CALLOUT(dht_socket, send, [sock_ref, IP, Port, ?WILDCARD], return(ok))])
     ]).
 
+%% STORE - execute
+store_pre(#state { init = I }) -> I.
+
+store(Peer, Token, IDKey, Port) ->
+    dht_net:store(Peer, Token, IDKey, Port).
+    
+store_args(_S) ->
+    [dht_eqc:socket(), dht_eqc:token(), dht_eqc:id(), dht_eqc:port()].
+
+store_callouts(#state{}, [_Peer, _Token, _IDKey, _Port]) ->
+    ?SEQ([
+        ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
+        ?CALLOUT(dht_socket, send, [sock_ref, ?WILDCARD, ?WILDCARD, ?WILDCARD], r_socket_send()),
+        ?SELFCALL(add_blocked, [?SELF, find_value]),
+        ?BLOCK,
+        ?SELFCALL(del_blocked, [?SELF])
+    ]).
+
 %% FIND_VALUE - execute find_value commands
 find_value_pre(#state { init = I }) -> I.
 
