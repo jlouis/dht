@@ -8,9 +8,19 @@
 q_ping() ->
     return(ping).
     
+q_find_node()->
+    ?LET(ID, dht_eqc:id(),
+        {find, node, ID}).
+        
+q_find_value() ->
+    ?LET(ID, dht_eqc:id(),
+        {find, value, ID}).
+        
 q_find() ->
-    ?LET({Mode, ID}, {elements([node, value]), dht_eqc:id()},
-      {find, Mode, ID}).
+	oneof([
+	    q_find_node(),
+	    q_find_value()
+	]).
         
 q_store(Token) ->
     ?LET([ID, Port], [dht_eqc:id(), dht_eqc:port()],

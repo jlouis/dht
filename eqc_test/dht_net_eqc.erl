@@ -91,23 +91,45 @@ q_ping_callouts(#state {}, [_Sock, IP, Port, _Packet]) ->
            ])
     ]).
 
-%% QUERY of a FIND message
-q_find_pre(#state { init = I }) -> I.
+%% QUERY of a FIND message for a node
+q_find_node_pre(#state { init = I }) -> I.
 
-q_find(Socket, IP, Port, Packet) ->
+q_find_node(Socket, IP, Port, Packet) ->
 	inject(Socket, IP, Port, Packet).
 	
-%% q_find_args(_S) ->
-%%     [sock_ref, dht_eqc:ip(), dht_eqc:port(), dht_proto_eqc:q(dht_proto_eqc:q_find())].
-    
-q_find_callouts(#state {}, [_Sock, IP, Port, _Packet]) ->
+q_find_node_args(_S) ->
+	[sock_ref, dht_eqc:ip(), dht_eqc:port(), dht_proto_eqc:q(dht_proto_eqc:q_find_node())].
+	
+q_find_node_callouts(#state {}, [_Sock, IP, Port, _Packet]) ->
     ?SEQ([
-      ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
-      ?PAR(
-        [?CALLOUT(dht_state, insert_node, [{?WILDCARD, IP, Port}], elements([{error, timeout}, true, false])),
-          ?SEQ([
-            ?CALLOUT(dht_state, closest_to, [?WILDCARD], return([])),
-            ?CALLOUT(dht_socket, send, [sock_ref, IP, Port, ?WILDCARD], ok)])])
+        ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
+        ?PAR([
+            ?CALLOUT(dht_state, insert_node, [{?WILDCARD, IP, Port}], elements([{error, timeout}, true, false])),
+            ?SEQ([
+              ?CALLOUT(dht_state, closest_to, [?WILDCARD], return([])),
+              ?CALLOUT(dht_socket, send, [sock_ref, IP, Port, ?WILDCARD], return(ok))
+            ]) ])
+    ]).
+
+%% QUERY of a FIND message for a value
+q_find_value_pre(#state { init = I }) -> I.
+
+q_find_value(Socket, IP, Port, Packet) ->
+	inject(Socket, IP, Port, Packet).
+	
+q_find_value_args(_S) ->
+	[sock_ref, dht_eqc:ip(), dht_eqc:port(), dht_proto_eqc:q(dht_proto_eqc:q_find_value())].
+	
+q_find_value_callouts(#state {}, [_Sock, IP, Port, _Packet]) ->
+    ?SEQ([
+        ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
+        ?PAR([
+            ?CALLOUT(dht_state, insert_node, [{?WILDCARD, IP, Port}], elements([{error, timeout}, true, false])),
+            ?SEQ([
+              ?CALLOUT(dht_store, find, [?WILDCARD], list(dht_eqc:node_t())),
+              ?OPTIONAL(?CALLOUT(dht_state, closest_to, [?WILDCARD], return([]))),
+              ?CALLOUT(dht_socket, send, [sock_ref, IP, Port, ?WILDCARD], return(ok))
+            ]) ])
     ]).
 
 %% QUERY of a STORE message
