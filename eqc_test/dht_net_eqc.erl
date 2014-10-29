@@ -180,6 +180,24 @@ q_store_invalid_callouts(#state {}, [_Sock, IP, Port, _Packet]) ->
           ?CALLOUT(dht_socket, send, [sock_ref, IP, Port, ?WILDCARD], return(ok))])
     ]).
 
+%% FIND_VALUE - execute find_value commands
+find_value_pre(#state { init = I }) -> I.
+
+find_value(Peer, IDKey) ->
+	dht_net:find_value(Peer, IDKey).
+	
+find_value_args(_S) ->
+	[dht_eqc:socket(), dht_eqc:id()].
+	
+find_value_callouts(#state{}, [_Node, _IDKey]) ->
+    ?SEQ([
+       ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
+       ?CALLOUT(dht_socket, send, [sock_ref, ?WILDCARD, ?WILDCARD, ?WILDCARD], r_socket_send()),
+       ?SELFCALL(add_blocked, [?SELF, find_value]),
+       ?BLOCK,
+       ?SELFCALL(del_blocked, [?SELF])
+   ]).
+
 %% FIND_NODE - execute find_node commands
 find_node_pre(#state { init = I }) -> I.
 
@@ -189,7 +207,7 @@ find_node(Node) ->
 find_node_args(_S) ->
 	[dht_eqc:node_t()].
 	
-find_node_callouts(#state{}, [Node]) ->
+find_node_callouts(#state{}, [_Node]) ->
     ?SEQ([
         ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
         ?CALLOUT(dht_socket, send, [sock_ref, ?WILDCARD, ?WILDCARD, ?WILDCARD], r_socket_send()),
@@ -228,7 +246,7 @@ del_blocked_next(#state { blocked = Bs } = S, _V, [Pid]) ->
 inject(Socket, IP, Port, Packet) ->
     Enc = iolist_to_binary(dht_proto:encode(Packet)),
     dht_net ! {udp, Socket, IP, Port, Enc},
-    timer:sleep(2),
+    timer:sleep(5),
     dht_net:sync().
 
 
