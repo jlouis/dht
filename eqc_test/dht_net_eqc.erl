@@ -180,8 +180,25 @@ q_store_invalid_callouts(#state {}, [_Sock, IP, Port, _Packet]) ->
           ?CALLOUT(dht_socket, send, [sock_ref, IP, Port, ?WILDCARD], return(ok))])
     ]).
 
+%% FIND_NODE - execute find_node commands
+find_node_pre(#state { init = I }) -> I.
 
-%% PING - Not finished yet, this requires blocking calls >:-)
+find_node(Node) ->
+	dht_net:find_node(Node).
+	
+find_node_args(_S) ->
+	[dht_eqc:node_t()].
+	
+find_node_callouts(#state{}, [Node]) ->
+    ?SEQ([
+        ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
+        ?CALLOUT(dht_socket, send, [sock_ref, ?WILDCARD, ?WILDCARD, ?WILDCARD], r_socket_send()),
+        ?SELFCALL(add_blocked, [?SELF, find_node]),
+        ?BLOCK,
+        ?SELFCALL(del_blocked, [?SELF])
+    ]).
+
+%% PING - execute ping commands
 ping_pre(#state { init = I }) -> I.
 
 ping(Peer) ->
