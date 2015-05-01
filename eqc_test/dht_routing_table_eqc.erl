@@ -43,6 +43,9 @@ insert_args(#state {}) ->
 insert_next(#state { nodes = Nodes } = State, _V, [Node]) ->
 	State#state { nodes = Nodes ++ [Node] }.
 
+insert_features(_State, _Args, _Return) ->
+	["R001: Insert a new node into the routing table"].
+
 %% Ask the system for the current state table ranges
 %% -------------------------------------------------
 ranges() ->
@@ -56,6 +59,9 @@ ranges_args(_S) ->
 ranges_post(#state {}, [], Ranges) ->
 	contiguous(Ranges).
 
+ranges_features(_S, _A, _Res) ->
+	["R002: Ask for the current routing table ranges"].
+
 %% Ask in what range a random ID falls in
 %% --------------------------------------
 range(ID) ->
@@ -64,21 +70,11 @@ range(ID) ->
 range_args(_S) ->
 	[dht_eqc:id()].
 	
-%% Delete a node from the routing table
-%% In this case, the node does not exist
-%% ------------------------------------
-delete_not_existing(Node) ->
-	routing_table:delete(Node).
-	
-delete_not_existing_args(#state {}) ->
-	?LET({ID, IP, Port}, {dht_eqc:id(), dht_eqc:ip(), dht_eqc:port()},
-	  [{ID, IP, Port}]).
-	  
-delete_not_existing_pre(#state { nodes = Ns }, [N]) ->
-    not lists:member(N, Ns).
+range_features(_S, _A, _Res) ->
+	["R003: Asking for a range for a random ID"].
 
 %% Delete a node from the routing table
-%% In this case, the node does exist in the table
+%% If the node is not present, this is a no-op.
 %% ------------------------------------
 delete(Node) ->
 	routing_table:delete(Node).
@@ -86,14 +82,27 @@ delete(Node) ->
 delete_pre(S) ->
 	has_nodes(S).
 
+nonexisting_node(Ns) ->
+  ?SUCHTHAT(Node, {dht_eqc:id(), dht_eqc:ip(), dht_eqc:port()},
+      not lists:member(Node, Ns)).
+
 delete_args(#state { nodes = Ns}) ->
-	[elements(Ns)].
+	Node = frequency(
+		[{1, nonexisting_node(Ns)}] ++
+		[{10, elements(Ns)} || Ns /= [] ]),
+	[Node].
 	
 delete_next(#state { nodes = Ns, deleted = Ds } = State, _, [Node]) ->
-	State#state {
-		nodes = lists:delete(Node, Ns),
-		deleted = Ds ++ [Node]
-	}.
+    case lists:member(Node, Ns) of
+        true -> State#state { nodes = lists:delete(Node, Ns), deleted = Ds ++ [Node] };
+        false -> State
+    end.
+
+delete_features(#state { nodes = Ns }, [Node], _R) ->
+    case lists:member(Node, Ns) of
+        true -> ["R004: Delete an existing node from the routing table"];
+        false -> ["R005: Delete a non-existing node from the routing table"]
+    end.
 
 %% Ask for members of a given ID
 %% Currently, we only ask for existing members, but this could also fault-inject
@@ -101,13 +110,23 @@ delete_next(#state { nodes = Ns, deleted = Ds } = State, _, [Node]) ->
 members(ID) ->
 	routing_table:members(ID).
 
-members_pre(S) ->
-    has_nodes(S).
+nonexisting_id(IDs) ->
+  ?SUCHTHAT(ID, dht_eqc:id(),
+      not lists:member(ID, IDs)).
 
 members_args(#state { nodes = Ns }) ->
-	[elements(ids(Ns))].
+    Node = frequency(
+    	[{1, nonexisting_id(ids(Ns))}] ++
+    	[{10, elements(ids(Ns))} || Ns /= [] ]),
+    [Node].
 
-members_post(#state{}, [_ID], Res) -> length(Res) =< 8.
+members_post(_S, _A, Res) -> length(Res) =< 8.
+    
+members_features(#state { nodes = Ns }, [ID], _Res) ->
+    case lists:member(ID, ids(Ns)) of
+        true -> ["R006: Members of an existing ID"];
+        false -> ["R007: Members of a non-existing ID"]
+    end.
 
 %% Ask for membership of the Routing Table
 %% ---------------------------------------
@@ -122,12 +141,14 @@ is_member_args(#state { nodes = Ns, deleted = DNs }) ->
 
 is_member_post(#state { deleted = DNs }, [N], Res) ->
     case lists:member(N, DNs) of
-      true ->
-        %% Among the deleted nodes, must never be in the routing table
-        Res == false;
-      false ->
-        %% Not among the deleted nodes, can be a subset so this is always ok
-        true
+      true -> Res == false;
+      false -> true
+    end.
+
+is_member_features(#state { deleted = DNs}, [N], _Res) ->
+    case lists:member(N, DNs) of
+      true -> ["R008: is_member on deleted node"];
+      false -> ["R009: is_member on an existing node"]
     end.
 
 %% Ask for the node list
@@ -141,6 +162,9 @@ node_list_args(_S) ->
 node_list_post(#state { nodes = Ns }, _Args, RNs) ->
 	is_subset(RNs, Ns).
 
+node_list_features(_S, _A, _R) ->
+	["R010: Asking for the current node list"].
+
 %% Ask if the routing table has a bucket
 %% -------------------------------------
 has_bucket(B) ->
@@ -149,6 +173,9 @@ has_bucket(B) ->
 has_bucket_args(_S) ->
 	[bucket()].
 
+has_bucket_features(_S, _A, true) -> ["R011: Asking for a bucket which exists"];
+has_bucket_features(_S, _A, false) -> ["R012: Asking for a bucket which does not exist"].
+
 %% Ask who is closest to a given ID
 %% --------------------------------
 closest_to(ID, Num) ->
@@ -156,6 +183,9 @@ closest_to(ID, Num) ->
 	
 closest_to_args(#state { }) ->
 	[dht_eqc:id(), nat()].
+
+closest_to_features(_S, _A, _R) ->
+	["R013: Asking for the nodes closest to another node"].
 
 %% Currently skipped commands
 %% closest_to(ID, Self, Buckets, Filter, Num)/5
@@ -183,17 +213,17 @@ weight(_S, _Cmd) -> 1.
 %% ----------
 
 prop_seq() ->
-    ?SETUP(fun() ->
-        ok,
-        fun() -> ok end
-      end,
+    ?SETUP(fun() -> ok, fun() -> ok end end,
     ?FORALL(Self, dht_eqc:id(),
     ?FORALL(Cmds, commands(?MODULE, #state { self = Self}),
       begin
         ok = routing_table:reset(Self),
         {H, S, R} = run_commands(?MODULE, Cmds),
-        aggregate(command_names(Cmds),
-          pretty_commands(?MODULE, Cmds, {H, S, R}, R == ok))
+        pretty_commands(?MODULE, Cmds, {H, S, R},
+            aggregate(with_title('Features'), call_features(H),
+            aggregate(with_title('Commands'), command_names(Cmds),
+            collect(eqc_lib:summary('Length'), length(Cmds),
+                R == ok))))
       end))).
 
 %% Internal functions
