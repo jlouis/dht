@@ -1,29 +1,15 @@
-PROJECT = dht
+REBAR=rebar3
 
-.DEFAULT_GOAL := all
+compile:
+	$(REBAR) compile | sed -e 's|_build/default/lib/dht/||g'
 
-# Options.
-ERLC_OPTS = +debug_info # +'{parse_transform, lager_transform}'
-PLT_APPS = crypto public_key ssl asn1
-DIALYZER_OPTS = --fullpath
+dialyzer:
+	$(REBAR) dialyzer | sed -e 's|_build/default/lib/dht/||g'
 
-# Dependencies.
-DEPS = recon
-#dep_lager = https://github.com/basho/lager.git 2.0.3
-dep_recon = https://github.com/ferd/recon.git master
-
-
-# Standard targets.
-
-analyze:
-	@dialyzer ebin --no_native $(DIALYZER_OPTS)
-
-# EQC
-eqc-ci: all
-	rm ebin/*.beam
+eqc-ci:
+	$(REBAR) compile
 	cp eqc_test/*.erl src
 	mkdir -p ebin
 	erl -make
 
-include erlang.mk
 

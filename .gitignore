@@ -8,3 +8,5 @@ src/dialyze.out
 dht.state.bin
 eqc_test/.eqc-info
 eqc_test/current_counterexample.eqc
+_build
+.rebar
