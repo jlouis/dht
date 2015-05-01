@@ -510,7 +510,7 @@ handle_insert_node_new({ID, _, _} = Node, #state{ node_timeout = NTimeout, node_
 %%
 
 random_node_tag() ->
-    _ = random:seed(erlang:now()),
+    _ = random:seed(erlang:timestamp()),
     random:uniform(?MAX_UNREACHABLE).
 
 refresh_bucket(Range, Members,
