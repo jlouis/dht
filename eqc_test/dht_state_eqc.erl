@@ -69,39 +69,80 @@ g_node() ->
 %%
 
 %% INITIALIZATION
-init_pre(#state { init = false }) -> true;
-init_pre(#state {}) -> false.
+start_node_pre(#state { init = I }) -> not I.
 
-init(NodeID) ->
-	{ok, _Pid} = dht_state:start_link(NodeID, no_state_file, []),
-	ok.
+start_node(NodeID) ->
+	{ok, Pid} = dht_state:start_link(NodeID, no_state_file, []),
+	unlink(Pid),
+	erlang:is_process_alive(Pid).
 	
-init_args(#state { id = ID }) -> [ID].
+start_node_args(#state { id = ID }) -> [ID].
 
-init_callouts(#state { id = ID }, [ID]) ->
-    ?SEQ([
-        ?CALLOUT(dht_routing_table, new, [ID], rt_ref),
-        ?CALLOUT(dht_routing_table, node_list, [rt_ref], []),
-        ?CALLOUT(dht_routing_table, node_id, [rt_ref], ID),
-        ?CALLOUT(dht_routing_table, ranges, [rt_ref], [])
-    ]).
+start_node_callouts(#state { id = ID }, [ID]) ->
+    ?CALLOUT(dht_routing_table, new, [ID], rt_ref),
+    ?CALLOUT(dht_routing_table, node_list, [rt_ref], []),
+    ?CALLOUT(dht_routing_table, node_id, [rt_ref], ID),
+    ?CALLOUT(dht_routing_table, ranges, [rt_ref], []).
 
-init_next(#state{} = State, _V, _) ->
+start_node_next(#state{} = State, _V, _) ->
 	State#state { init = true }.
 
-init_return(_, [_]) -> ok.
+start_node_return(_, [_]) -> true.
 
 %% NODE ID
 %% ---------------------
-node_pre(#state { init = S }) -> S.
-
 node_id() ->
 	dht_state:node_id().
+
+node_id_pre(#state { init = Init }) -> Init.
 	
 node_id_args(_S) ->
 	[].
 	
 node_id_return(#state { id = ID }, []) -> ID.
+
+%% NODE LIST
+%% ---------------------
+node_list() ->
+	dht_state:node_list().
+	
+node_list_pre(#state { init = Init }) -> Init.
+
+node_list_args(_S) -> [].
+
+node_list_callouts(_S, []) ->
+    ?MATCH(R, ?CALLOUT(dht_routing_table, node_list, [rt_ref], list(g_node()))),
+    ?RET(R).
+
+%% NOTIFY
+%% ---------------------
+notify(Node, Event) ->
+	dht_state:notify(Node, Event).
+	
+notify_pre(#state { init = Init }) -> Init.
+
+notify_args(_S) ->
+    [g_node(), elements([request_timeout, request_success, request_from])].
+    
+notify_callouts(S, [Node, request_timeout]) ->
+    ?MATCH(R, ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref], bool())),
+    case R of
+      false -> ?RET(ok);
+      true -> ?RET(ok)
+    end;
+notify_callouts(S, [Node, request_from]) -> notify_callouts(S, [Node, request_success]);
+notify_callouts(S, [Node, request_success]) ->
+    ?MATCH(R, ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref], bool())),
+    case R of
+        false -> ?RET(ok);
+        true ->
+           ?APPLY(cycle_bucket_timers, []),
+           ?RET(ok)
+    end.
+
+cycle_bucket_timers_callouts(#state { id = ID }, []) ->
+    ?CALLOUT(dht_routing_table, range, [ID, rt_ref], range),
+    ?CALLOUT(dht_routing_table, members, [range, rt_ref], list(g_node())).
 
 %% PING
 %% ---------------------
@@ -114,10 +155,8 @@ ping_args(_S) ->
     [ip_address(), port_number()].
 
 ping_callouts(_S, [IP, Port]) ->
-    ?SEQ([
-    	?BIND(R, ?CALLOUT(dht_net, ping, [{IP, Port}], pang),
-    		?RET(R))
-    ]).
+    ?MATCH(R, ?CALLOUT(dht_net, ping, [{IP, Port}], pang)),
+    ?RET(R).
 
 %% CLOSEST TO
 %% ------------------------
@@ -130,13 +169,11 @@ closest_to_args(_S) ->
 	[dht_eqc:id(), nat()].
 	
 closest_to_callouts(_S, [ID, Num]) ->
-    ?SEQ([
-        ?BIND(NN, ?CALLOUT(
-        				dht_routing_table,
-        				closest_to, [ID, ?WILDCARD, Num, ?WILDCARD],
-        				list(g_node())),
-        	?RET(NN))
-    ]).
+    ?MATCH(NN, ?CALLOUT(
+                      dht_routing_table,
+                      closest_to, [ID, ?WILDCARD, Num, ?WILDCARD],
+                      list(g_node()))),
+    ?RET(NN).
 
 %% KEEPALIVE
 %% ---------------------------
@@ -149,12 +186,10 @@ keepalive_args(_S) ->
 	[g_node()].
 	
 keepalive_callouts(_S, [{_, IP, Port} = Node]) ->
-    ?SEQ([
-            ?SELFCALL(ping, [IP, Port]),
-            ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref], false),
-            ?RET(ok)
-    ]).
-        
+    ?APPLY(ping, [IP, Port]),
+    ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref], false),
+    ?RET(ok).
+
 %% MODEL CLEANUP
 %% ------------------------------
 
@@ -174,18 +209,26 @@ cleanup() ->
 
 %% PROPERTY
 %% -----------------------
+postcondition_common(S, Call, Res) ->
+    eq(Res, return_value(S, Call)).
+
+gen_initial_state() ->
+    ?LET(NodeID, dht_eqc:id(),
+      #state { id = NodeID, init = false }).
 
 prop_state_correct() ->
     ?SETUP(fun() ->
         eqc_mocking:start_mocking(api_spec()),
         fun() -> ok end
     end,
-    ?FORALL(NodeID, dht_eqc:id(),
-    ?FORALL(Cmds, commands(?MODULE, #state { id = NodeID }),
+    ?FORALL(StartState, gen_initial_state(),
+    ?FORALL(Cmds, commands(?MODULE, StartState),
     ?TRAPEXIT(
         begin
             {H, S, R} = run_commands(?MODULE, Cmds),
             ok = cleanup(),
             pretty_commands(?MODULE, Cmds, {H, S, R},
-                aggregate(command_names(Cmds), R == ok))
+                collect(eqc_lib:summary('Length'), length(Cmds),
+                aggregate(command_names(Cmds),
+                  R == ok)))
         end)))).

@@ -209,7 +209,7 @@ notify(Node, Event)
     Event == request_timeout;
     Event == request_success;
     Event == request_from ->
-	gen_server:call(?MODULE, {Event, Node}).
+	gen_server:call(?MODULE, {notify, Event, Node}).
 
 %% @doc dump_state/0 dumps the routing table state to disk
 %% @end
@@ -380,7 +380,7 @@ handle_call({closest_to, ID, NumNodes}, _From,
         end,
     NearNodes = dht_routing_table:closest_to(ID, Filter, NumNodes, Tbl),
     {reply, NearNodes, State};
-handle_call({request_timeout, Node}, _From,
+handle_call({notify, request_timeout, Node}, _From,
 	        #state{
 	          routing_table = Tbl,
 	          node_timeout = NTimeout,
@@ -395,7 +395,7 @@ handle_call({request_timeout, Node}, _From,
           {reply, ok, State#state {
                           node_timers = timer_add(Node, LActive, NTimer, TmpNTimers) }}
     end;
-handle_call({request_success, {ID, _IP, _Port} = Node}, _From,
+handle_call({notify, request_success, {ID, _IP, _Port} = Node}, _From,
 	        #state{ routing_table = Tbl } = State) ->
     case dht_routing_table:is_member(Node, Tbl) of
 	    false -> {reply, ok, State};
@@ -404,7 +404,7 @@ handle_call({request_success, {ID, _IP, _Port} = Node}, _From,
 	          cycle_bucket_timers(ID,
 	            cycle_node_timer(Node, os:timestamp(), State))}
     end;
-handle_call({request_from, Node}, From, State) ->
+handle_call({notify, request_from, Node}, From, State) ->
     handle_call({request_success, Node}, From, State);
 handle_call(dump_state, From, #state{ state_file = StateFile } = State) ->
     handle_call({dump_state, StateFile}, From, State);
