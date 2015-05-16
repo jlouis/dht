@@ -45,10 +45,8 @@
 %% @end
 -module(dht_state).
 -behaviour(gen_server).
--define(K, 8).
--define(in_range(Dist, Min, Max), ((Dist >= Min) andalso (Dist < Max))).
--define(MAX_UNREACHABLE, 128).
--define(UNREACHABLE_TAB, dht_state_unreachable).
+
+-include_lib("kernel/include/inet.hrl").
 
 %% Lifetime
 -export([
@@ -81,24 +79,30 @@
 	 terminate/2,
 	 code_change/3]).
 
--record(state, {
-    node_id :: dht:node_id(),
-    routing_table :: dht_routing_table:t(), % The actual routing table
-    node_timers = timer_empty() :: gb_trees:tree(dht:node_t(), {any(), any()}), % Node activity times and timeout references
-    bucket_timers = timer_empty() :: gb_trees:tree(dht_routing_table:range(), {any(), any()}), % Bucker activity times and timeout references
-    node_timeout :: pos_integer(),  % Default node keepalive timeout
-    bucket_timeout :: pos_integer(),   % Default bucket refresh timeout
-    state_file="/tmp/dht_state" :: string() }). % Path to persistent state
-
--include_lib("kernel/include/inet.hrl").
+-define(K, 8).
+-define(in_range(Dist, Min, Max), ((Dist >= Min) andalso (Dist < Max))).
+-define(MAX_UNREACHABLE, 128).
+-define(UNREACHABLE_TAB, dht_state_unreachable).
 
 %
 % The bucket refresh timeout is the amount of time that the
 % server will tolerate a node to be disconnected before it
 % attempts to refresh the bucket.
 %
-bucket_timeout() -> 5 * 60 * 1000.
-node_timeout() -> 10 * 60 * 1000.
+-define(BUCKET_TIMEOUT, 5 * 60 * 1000).
+-define(NODE_TIMEOUT, 10 * 60 * 1000).
+
+-record(state, {
+    node_id :: dht:node_id(),
+    routing_table :: dht_routing_table:t(), % The actual routing table
+    node_timers = timer_empty() :: gb_trees:tree(dht:node_t(), {any(), any()}), % Node activity times and timeout references
+    bucket_timers = timer_empty() :: gb_trees:tree(dht_routing_table:range(), {any(), any()}), % Bucker activity times and timeout references
+    node_timeout = ?NODE_TIMEOUT :: pos_integer(),  % Default node keepalive timeout
+    bucket_timeout = ?BUCKET_TIMEOUT :: pos_integer(),   % Default bucket refresh timeout
+    state_file="/tmp/dht_state" :: string() }). % Path to persistent state
+
+%% Helper for calling
+call(X) -> gen_server:call(?MODULE, X).
 
 
 start_link(StateFile, BootstrapNodes) ->
@@ -119,18 +123,14 @@ node_id() ->
 %% @doc node_list/0 returns the list of nodes in the current routing table
 %% @end
 -spec node_list() -> [dht:node_t()].
-node_list() ->
-    gen_server:call(?MODULE, node_list).
+node_list() -> call(node_list).
 
 %%
 %% @doc insert_node/1 inserts a new node according to the options given
 %%
-%% There are three variants of this function:
+%% There are two variants of this function:
 %% * If inserting {IP, Port} a ping will first be made to make sure the node is alive and find its ID
-%% * If inserting {ID, IP, Port} no options, then a ping is first made to make sure the node exists
-%% * If inserting {ID, IP, Port} with options force := true, then the node is forced into the routing table.
-%%   This option is meant to be used when we already know the node is up and running, so we can
-%%   skip the additional ping.
+%% * If inserting {ID, IP, Port}, then a ping is first made to make sure the node exists
 %% @end
 -spec insert_node(Node) -> true | false | {error, Reason}
   when
@@ -139,8 +139,7 @@ node_list() ->
 insert_node({IP, Port}) ->
 	case ping(IP, Port, #{ unreachable_check => true}) of
 	    pang -> {error, timeout};
-	    ID ->
-	    	gen_server:call(?MODULE, {insert_node, {ID, IP, Port}})
+	    ID -> call({insert_node, {ID, IP, Port}})
 	end;
 insert_node(Node) ->
 	insert_node_interesting(Node, is_interesting(Node)).
@@ -150,7 +149,7 @@ insert_node_interesting({ID, IP, Port}, true) ->
 	case ping(IP, Port, #{ unreachable_check => true}) of
 		pang -> {error, timeout};
 		{ok, ID} ->
-			gen_server:call(?MODULE, {insert_node, {ID, IP, Port}});
+			call({insert_node, {ID, IP, Port}});
 		_WrongID ->
 			{error, inconsistent_id}
 	end.
@@ -167,19 +166,17 @@ insert_nodes(NodeInfos) ->
 %% function to avoid issuing ping-queries to every node sending this node a query
 %% @end
 -spec is_interesting(dht:node_t()) -> boolean().
-is_interesting({_, _, _} = Node) ->
-    gen_server:call(?MODULE, {is_interesting, Node}).
+is_interesting({_, _, _} = Node) -> call({is_interesting, Node}).
 
 %% @equiv closest_to(NodeID, 8)
 -spec closest_to(dht:node_id()) -> list(dht:node_t()).
-closest_to(NodeID) ->
-    closest_to(NodeID, 8).
+closest_to(NodeID) -> closest_to(NodeID, 8).
 
 %% @doc closest_to/2 returns the neighborhood around an ID known to the routing table
 %% @end
 -spec closest_to(dht:node_id(), pos_integer()) -> list(dht:node_t()).
 closest_to(NodeID, NumNodes) ->
-    gen_server:call(?MODULE, {closest_to, NodeID, NumNodes}).
+    call({closest_to, NodeID, NumNodes}).
 
 %% @doc notify/2 notifies the routing table of an event on a given node
 %% Possible events are one of `request_timeout', `request_timeout', or `request_success'.
@@ -188,22 +185,23 @@ closest_to(NodeID, NumNodes) ->
     when
       Node :: dht:node_t(),
       Event :: request_success | request_from | request_timeout.
-notify(Node, Event)
-  when
-    Event == request_timeout;
-    Event == request_success;
-    Event == request_from ->
-	gen_server:call(?MODULE, {notify, Event, Node}).
+notify(Node, request_success) -> request_success(Node);
+notify(Node, request_timeout) -> request_timeout(Node);
+notify(Node, request_from) -> request_from(Node).
+
+request_success(Node) -> call({notify, request_success, Node}).
+request_timeout(Node) -> call({notify, request_timeout, Node}).
+request_from(Node) -> call({notify, request_from, Node}).
 
 %% @doc dump_state/0 dumps the routing table state to disk
 %% @end
 dump_state() ->
-    gen_server:call(?MODULE, dump_state).
+    call(dump_state).
 
 %% @doc dump_state/1 dumps the routing table state to disk into a given file
 %% @end
 dump_state(Filename) ->
-    gen_server:call(?MODULE, {dump_state, Filename}).
+    call({dump_state, Filename}).
 
 -spec keepalive(dht:node_t()) -> 'ok'.
 keepalive({ID, IP, Port} = Node) ->
@@ -312,14 +310,17 @@ init([RequestedNodeID, StateFile, BootstrapNodes]) ->
 	node_id = NodeID,
 	bucket_timers = initialize_timers(Now, RoutingTbl),
 	state_file = StateFile,
-	routing_table = RoutingTbl,
-	bucket_timeout = bucket_timeout(),
-	node_timeout = node_timeout()
+	routing_table = RoutingTbl
     },
     State = fold_insert_nodes(NodeList, InitState),
     {ok, State}.
 
 %% @private
+handle_call({insert_node, Node}, _From, State) ->
+    case rt_insert(Node, State) of
+      {ok, S} -> {reply, true, S};
+      {not_inserted, S} -> {reply, false, S}
+    end;
 handle_call({is_interesting, {ID, IP, Port}}, _From,
 	#state{ routing_table = RoutingTbl } = State) ->
     case dht_routing_table:is_member({ID, IP, Port}, RoutingTbl) of
@@ -354,7 +355,7 @@ handle_call({notify, request_timeout, Node}, _From,
       true ->
           {LActive, _} = timer_get(Node, PrevNTimers),
           TmpNTimers = timer_del(Node, PrevNTimers),
-          NTimer = node_timer_from(os:timestamp(), NTimeout, Node),
+          NTimer = node_timer_from(dht_time:monotonic_time(), NTimeout, Node),
           {reply, ok, State#state {
                           node_timers = timer_add(Node, LActive, NTimer, TmpNTimers) }}
     end;
@@ -365,7 +366,7 @@ handle_call({notify, request_success, {ID, _IP, _Port} = Node}, _From,
 	    true ->
 	        {reply, ok,
 	          cycle_bucket_timers(ID,
-	            cycle_node_timer(Node, os:timestamp(), State))}
+	            cycle_node_timer(Node, dht_time:monotonic_time(), State))}
     end;
 handle_call({notify, request_from, Node}, From, State) ->
     handle_call({notify, request_success, Node}, From, State);
@@ -400,7 +401,7 @@ handle_info({inactive_node, Node}, #state { routing_table = Tbl, node_timers = P
             ok = handle_timeout(Node, HasTimedout),
             case TimerCanceled orelse HasTimedout of
                 true ->
-                    {noreply, cycle_node_timer(Node, os:timestamp(), LActive, State)};
+                    {noreply, cycle_node_timer(Node, dht_time:monotonic_time(), LActive, State)};
 	      false ->
 	          {noreply, State}
 	  end
@@ -425,7 +426,7 @@ handle_info({inactive_bucket, Range},
 	      false ->
 	         {noreply, State};
 	     true ->
-	         Now = os:timestamp(),
+	         Now = dht_time:monotonic_time(),
 	         TmpBTimers = timer_del(Range, PrevBTimers),
 	         LRecent = timer_oldest(Members, NTimers),
 	         NewTimer = bucket_timer_from(Now, BTimeout, LRecent, NTimeout, Range),
@@ -552,7 +553,7 @@ has_timed_out(Item, Timeout, TimerTree) ->
 initialize_timers(Now, RoutingTbl) ->
     Ranges = dht_routing_table:ranges(RoutingTbl),
     F = fun(R, Acc) ->
-        BTimer = bucket_timer_from(Now, node_timeout(), Now, bucket_timeout(), R),
+        BTimer = bucket_timer_from(Now, ?NODE_TIMEOUT, Now, ?BUCKET_TIMEOUT, R),
         timer_add(R, Now, BTimer, Acc)
     end,
     lists:foldl(F, timer_empty(), Ranges).
@@ -578,7 +579,7 @@ timer_del(Item, Timers) ->
     _ = erlang:cancel_timer(TRef),
     gb_trees:delete(Item, Timers).
 
-timer_oldest([], _) -> os:timestamp(); %% None available
+timer_oldest([], _) -> dht_time:monotonic_time(); %% None available
 timer_oldest(Items, TimerTree) ->
     ATimes = [element(1, timer_get(I, TimerTree)) || I <- Items],
     lists:min(ATimes).
@@ -630,7 +631,7 @@ rt_add_node(Node, Now, #state { node_timeout = NTimeout, node_timers = NTimers }
 %% rt_add/2 attempts to add a node to the routing table
 %% This function in particular makes sure it also gets node and bucket timers right and updated as well
 rt_add(Node, #state { routing_table = Tbl } = State) ->
-    Now = os:timestamp(),
+    Now = dht_time:monotonic_time(),
     T = dht_routing_table:insert(Node, Tbl),
     case dht_routing_table:is_member(Node, T) of
        false ->
