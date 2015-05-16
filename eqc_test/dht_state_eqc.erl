@@ -6,7 +6,9 @@
 
 -record(state,{
 	init = false,
-	id % The NodeID the node is currently running under
+	time = 0, %% Current notion of where we are time-wise (in ms)
+	id, % The NodeID the node is currently running under
+	node_list % The list of nodes currently installed in the routing table
 }).
 
 api_spec() ->
@@ -36,6 +38,13 @@ api_spec() ->
 		  		functions = [
 		  			#api_fun { name = ping, arity = 1 }
 		  		]
+		  	},
+		  	#api_module {
+		  		name = dht_time,
+		  		functions = [
+		  			#api_fun { name = monotonic_time, arity = 0},
+		  			#api_fun { name = convert_time_unit, arity = 3 }
+		  		]
 		  	}
 		  ]
 	}.
@@ -56,9 +65,6 @@ ipv6_address() ->
 port_number() ->
     choose(0, 1024*64 - 1).
 
-g_node() ->
-	{dht_eqc:id(), ip_address(), port_number()}.
-
 %% Commands we are skipping:
 %% 
 %% We skip the state load/store functions. Mostly due to jlouis@ not thinking this is where the bugs are
@@ -71,23 +77,42 @@ g_node() ->
 %% INITIALIZATION
 start_node_pre(#state { init = I }) -> not I.
 
-start_node(NodeID) ->
+start_node(NodeID, _Nodes) ->
 	{ok, Pid} = dht_state:start_link(NodeID, no_state_file, []),
 	unlink(Pid),
 	erlang:is_process_alive(Pid).
 	
-start_node_args(#state { id = ID }) -> [ID].
+start_node_args(#state { id = ID }) ->
+    Nodes = list(dht_eqc:peer()),
+    [ID, Nodes].
 
-start_node_callouts(#state { id = ID }, [ID]) ->
+ranges([]) -> [];
+ranges([_|_]) -> [{0, 1 bsl 256 - 1}].
+
+start_node_callouts(#state { id = ID, time = TS }, [ID, Nodes]) ->
+    ?CALLOUT(dht_time, monotonic_time, [], TS),
     ?CALLOUT(dht_routing_table, new, [ID], rt_ref),
-    ?CALLOUT(dht_routing_table, node_list, [rt_ref], []),
+    ?CALLOUT(dht_routing_table, node_list, [rt_ref], Nodes),
     ?CALLOUT(dht_routing_table, node_id, [rt_ref], ID),
-    ?CALLOUT(dht_routing_table, ranges, [rt_ref], []).
+    ?APPLY(initialize_timers, [ID, Nodes]),
+    ?RET(true).
 
-start_node_next(#state{} = State, _V, _) ->
-	State#state { init = true }.
+start_node_next(#state{} = State, _V, [_, Nodes]) ->
+	State#state { init = true, node_list = Nodes }.
 
-start_node_return(_, [_]) -> true.
+initialize_timers_callouts(#state { time = TS }, [_ID, Nodes]) ->
+    Ranges = ranges(Nodes),
+    io:format("Ranges2: ~p", [Ranges]),
+    ?CALLOUT(dht_routing_table, ranges, [rt_ref], Ranges),
+    case Ranges of
+        [] -> ?RET(ok);
+        Rs ->
+          ?SEQ(
+           [?SEQ(
+            ?CALLOUT(dht_time, monotonic_time, [], TS),
+            ?CALLOUT(dht_time, convert_time_unit, [TS, native, milli_seconds], TS)) || _ <- Rs]),
+          ?RET(ok)
+    end.
 
 %% NODE ID
 %% ---------------------
@@ -111,7 +136,7 @@ node_list_pre(#state { init = Init }) -> Init.
 node_list_args(_S) -> [].
 
 node_list_callouts(_S, []) ->
-    ?MATCH(R, ?CALLOUT(dht_routing_table, node_list, [rt_ref], list(g_node()))),
+    ?MATCH(R, ?CALLOUT(dht_routing_table, node_list, [rt_ref], list(dht_eqc:peer()))),
     ?RET(R).
 
 %% NOTIFY
@@ -119,30 +144,26 @@ node_list_callouts(_S, []) ->
 notify(Node, Event) ->
 	dht_state:notify(Node, Event).
 	
-notify_pre(#state { init = Init }) -> Init.
+notify_pre(#state { init = Init, node_list = Nodes }) -> Init andalso (Nodes /= []).
 
-notify_args(_S) ->
-    [g_node(), elements([request_timeout, request_success, request_from])].
+notify_args(#state { node_list = Nodes }) ->
+    [elements(Nodes), elements([request_timeout, request_success, request_from])].
     
-notify_callouts(S, [Node, request_timeout]) ->
-    ?MATCH(R, ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref], bool())),
-    case R of
-      false -> ?RET(ok);
-      true -> ?RET(ok)
-    end;
+notify_pre(#state { init = Init, node_list = Ns }, [Node, _]) ->
+    Init andalso lists:member(Node, Ns).
+
+notify_callouts(_S, [Node, request_timeout]) ->
+    ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref], true),
+    ?RET(ok);
 notify_callouts(S, [Node, request_from]) -> notify_callouts(S, [Node, request_success]);
-notify_callouts(S, [Node, request_success]) ->
-    ?MATCH(R, ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref], bool())),
-    case R of
-        false -> ?RET(ok);
-        true ->
-           ?APPLY(cycle_bucket_timers, []),
-           ?RET(ok)
-    end.
+notify_callouts(_S, [Node, request_success]) ->
+    ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref], true),
+    ?APPLY(cycle_bucket_timers, []),
+    ?RET(ok).
 
 cycle_bucket_timers_callouts(#state { id = ID }, []) ->
     ?CALLOUT(dht_routing_table, range, [ID, rt_ref], range),
-    ?CALLOUT(dht_routing_table, members, [range, rt_ref], list(g_node())).
+    ?CALLOUT(dht_routing_table, members, [range, rt_ref], list(dht_eqc:peer())).
 
 %% PING
 %% ---------------------
@@ -172,7 +193,7 @@ closest_to_callouts(_S, [ID, Num]) ->
     ?MATCH(NN, ?CALLOUT(
                       dht_routing_table,
                       closest_to, [ID, ?WILDCARD, Num, ?WILDCARD],
-                      list(g_node()))),
+                      list(dht_eqc:peer()))),
     ?RET(NN).
 
 %% KEEPALIVE
@@ -183,7 +204,7 @@ keepalive(Node) ->
 	dht_state:keepalive(Node).
 	
 keepalive_args(_S) ->
-	[g_node()].
+	[dht_eqc:peer()].
 	
 keepalive_callouts(_S, [{_, IP, Port} = Node]) ->
     ?APPLY(ping, [IP, Port]),

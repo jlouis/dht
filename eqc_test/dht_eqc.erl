@@ -19,7 +19,7 @@ port() ->
 socket() ->
     {ip(), port()}.
 
-node_t() ->
+peer() ->
     ?LET({ID, IP, Port}, {id(), ip(), port()},
         {ID, IP, Port}).
 

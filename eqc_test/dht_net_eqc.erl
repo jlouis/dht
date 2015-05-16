@@ -55,9 +55,7 @@ init_next(State, _V, [Port, [Token]]) ->
     State#state { init = true, token = Token, port = Port }.
 
 init_callouts(#state { }, [P, _T]) ->
-    ?SEQ([
-      ?CALLOUT(dht_socket, open, [P, ?WILDCARD], {ok, sock_ref})
-    ]).
+    ?CALLOUT(dht_socket, open, [P, ?WILDCARD], {ok, sock_ref}).
 
 init_return(_, [_]) -> ok.
 
@@ -70,8 +68,8 @@ node_port() ->
 node_port_args(_S) -> [].
 
 node_port_callouts(#state { }, []) ->
-    ?BIND(R, ?CALLOUT(dht_socket, sockname, [sock_ref], {ok, dht_eqc:socket()}),
-        ?RET(R)).
+    ?MATCH(R, ?CALLOUT(dht_socket, sockname, [sock_ref], {ok, dht_eqc:socket()})),
+    ?RET(R).
 
 %% QUERY of a PING message
 q_ping_pre(#state { init = I }) -> I.
@@ -84,12 +82,10 @@ q_ping_args(_S) ->
           [sock_ref, IP, Port, Packet]).
 
 q_ping_callouts(#state {}, [_Sock, IP, Port, _Packet]) ->
-    ?SEQ([
-        ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
-        ?PAR(
-           [?CALLOUT(dht_state, insert_node, [{?WILDCARD, IP, Port}], elements([{error, timeout}, true, false])),
-            ?CALLOUT(dht_socket, send, [sock_ref, IP, Port, ?WILDCARD], return(ok))
-           ])
+    ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
+    ?PAR([
+      ?CALLOUT(dht_state, insert_node, [{?WILDCARD, IP, Port}], elements([{error, timeout}, true, false])),
+      ?CALLOUT(dht_socket, send, [sock_ref, IP, Port, ?WILDCARD], return(ok))
     ]).
 
 %% QUERY of a FIND message for a node
@@ -127,7 +123,7 @@ q_find_value_callouts(#state {}, [_Sock, IP, Port, _Packet]) ->
         ?PAR([
             ?CALLOUT(dht_state, insert_node, [{?WILDCARD, IP, Port}], elements([{error, timeout}, true, false])),
             ?SEQ([
-              ?CALLOUT(dht_store, find, [?WILDCARD], list(dht_eqc:node_t())),
+              ?CALLOUT(dht_store, find, [?WILDCARD], list(dht_eqc:peer())),
               ?OPTIONAL(?CALLOUT(dht_state, closest_to, [?WILDCARD], return([]))),
               ?CALLOUT(dht_socket, send, [sock_ref, IP, Port, ?WILDCARD], return(ok))
             ]) ])
@@ -223,7 +219,7 @@ find_node(Node) ->
 	dht_net:find_node(Node).
 	
 find_node_args(_S) ->
-	[dht_eqc:node_t()].
+	[dht_eqc:peer()].
 	
 find_node_callouts(#state{}, [_Node]) ->
     ?SEQ([

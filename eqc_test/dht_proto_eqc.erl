@@ -40,11 +40,11 @@ q(G) ->
 r_ping() -> return(ping).
         
 r_find_node() ->
-    ?LET(Rs, list(dht_eqc:node_t()),
+    ?LET(Rs, list(dht_eqc:peer()),
         {find, node, Rs}).
 
 r_find_value() ->
-    ?LET({Rs, Token}, {list(dht_eqc:node_t()), dht_eqc:token()},
+    ?LET({Rs, Token}, {list(dht_eqc:peer()), dht_eqc:token()},
         {find, value, Token, Rs}).
 
 r_find() ->

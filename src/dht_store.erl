@@ -30,7 +30,7 @@ init([]) ->
     {ok, #state { tbl = Tbl }}.
 	
 handle_call({store, ID, Peer}, _From, State) ->
-    Now = dht_time:timestamp(),
+    Now = dht_time:system_time(),
     ets:insert(?TBL, {ID, Peer, Now}),
     {reply, ok, State};
 handle_call({find, Key}, _From, State) ->
