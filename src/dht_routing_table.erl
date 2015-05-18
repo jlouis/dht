@@ -25,18 +25,14 @@
 %% Query
 -export([
 	closest_to/4,
-	has_bucket/2,
 	is_member/2,
+	is_range/2,
 	members/2,
 	node_id/1,
 	node_list/1,
 	range/2,
 	ranges/1
-
 ]).
-
-%% Conversion to persistent state
--export([to_binary/1, from_binary/1]).
 
 -define(K, 8).
 -define(in_range(Dist, Min, Max), ((Dist >= Min) andalso (Dist < Max))).
@@ -60,14 +56,6 @@ new(Self) when is_integer(Self), Self >= 0 ->
        self = Self,
        table = [{0, MaxID, []}]
     }.
-
--spec to_binary(t()) -> binary().
-to_binary(#routing_table{} = RT) ->
-    term_to_binary(RT, [compressed]).
-
--spec from_binary(binary()) -> t().
-from_binary(Bin) ->
-    binary_to_term(Bin).
 
 -spec node_id(t()) -> dht:node_id().
 node_id(#routing_table { self = ID }) ->
@@ -159,7 +147,7 @@ delete_(Dist, Node, [H|T], Acc) ->
 %%
 members(Range={_Min, _Max}, #routing_table { table = Buckets}) ->
     members_1(Range, Buckets);
-members(ID, #routing_table { self = Self, table = Buckets}) ->
+members({ID, _, _}, #routing_table { self = Self, table = Buckets}) ->
     members_2(dht_metric:d(ID, Self), Buckets).
 
 members_1({Min, Max}, [{Min, Max, Members}|_]) ->
@@ -187,11 +175,11 @@ is_member_(Dist, Node, [_|Tail]) ->
 
 
 %%
-%% Check if a bucket exists in a bucket list
+%% Check if a range exists in a range list
 %%
--spec has_bucket({dht:node_id(), dht:node_id()}, t()) -> boolean().
-has_bucket(Bucket, #routing_table { table = Entries}) ->
-    lists:member(Bucket, [{Min, Max} || {Min, Max, _} <- Entries]).
+-spec is_range({dht:node_id(), dht:node_id()}, t()) -> boolean().
+is_range(Range, #routing_table { table = Entries}) ->
+    lists:member(Range, [{Min, Max} || {Min, Max, _} <- Entries]).
 
 -spec closest_to(dht:node_id(), fun ((dht:node_id()) -> boolean()), pos_integer(), t()) ->
                         list(dht:node_t()).

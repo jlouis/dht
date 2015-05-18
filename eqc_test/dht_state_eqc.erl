@@ -95,6 +95,7 @@ start_node_callouts(#state { id = ID, time = TS }, [ID, Nodes]) ->
     ?CALLOUT(dht_routing_table, node_list, [rt_ref], Nodes),
     ?CALLOUT(dht_routing_table, node_id, [rt_ref], ID),
     ?APPLY(initialize_timers, [ID, Nodes]),
+    ?APPLY(fold_insert_nodes, Nodes),
     ?RET(true).
 
 start_node_next(#state{} = State, _V, [_, Nodes]) ->
@@ -102,7 +103,6 @@ start_node_next(#state{} = State, _V, [_, Nodes]) ->
 
 initialize_timers_callouts(#state { time = TS }, [_ID, Nodes]) ->
     Ranges = ranges(Nodes),
-    io:format("Ranges2: ~p", [Ranges]),
     ?CALLOUT(dht_routing_table, ranges, [rt_ref], Ranges),
     case Ranges of
         [] -> ?RET(ok);
@@ -113,6 +113,13 @@ initialize_timers_callouts(#state { time = TS }, [_ID, Nodes]) ->
             ?CALLOUT(dht_time, convert_time_unit, [TS, native, milli_seconds], TS)) || _ <- Rs]),
           ?RET(ok)
     end.
+    
+fold_insert_nodes_callouts(_S, []) -> ?RET(ok);
+fold_insert_nodes_callouts(_S, [N|Ns]) ->
+    ?SEQ(
+      ?CALLOUT(dht_routing_table, is_member, [N, rt_ref], true),
+      fold_insert_nodes_callouts(_S, Ns)).
+
 
 %% NODE ID
 %% ---------------------
