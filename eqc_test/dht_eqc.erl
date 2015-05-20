@@ -27,6 +27,14 @@ tag() ->
     ?LET(ID, choose(0, 16#FFFF),
         <<ID:16>>).
 
+unique_id_pair() ->
+    ?SUCHTHAT({X, Y}, {id(), id()},
+      X /= Y).
+
+range() ->
+    ?LET({X, Y}, unique_id_pair(),
+      {min(X,Y),
+       max(X,Y)}).
 
 token() ->
     ?LET([L, U], [choose(0, 16#FFFF), choose(0, 16#FFFF)],

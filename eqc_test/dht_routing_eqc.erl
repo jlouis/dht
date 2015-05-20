@@ -10,7 +10,9 @@
 -record(state, {
 	init, % Is the routing system initialized?
 	id, % Current ID of this node
-	time % what time is it in the system?
+	time, % what time is it in the system?
+	node_timers = [], % List of the current node timers in the system
+	range_timers = [] % List of the current range timers in the system
 }).
 
 
@@ -46,7 +48,9 @@ gen_state() ->
     #state {
       init = false,
       id = dht_eqc:id(),
-      time = int()
+      time = int(),
+      node_timers = [],
+      range_timers = []
     }.
 
 %% NEW
@@ -59,7 +63,10 @@ new(Tbl) ->
 
 new_pre(S) -> not initialized(S).
 
-new_args(_S) -> [rt_ref].
+new_args(_S) ->
+  Nodes = list(dht_eqc:peer()),
+  Ranges = list(dht_eqc:range()),
+  [rt_ref].
 
 new_callouts(#state { id = ID, time = T}, _) ->
     ?CALLOUT(dht_time, monotonic_time, [], T),
