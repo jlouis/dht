@@ -2,7 +2,7 @@
 %%% Kept as one big module for ease of development.
 %%% @end
 -module(eqc_lib).
--vsn("1.2.1").
+-vsn("1.3.0").
 -include_lib("eqc/include/eqc.hrl").
 
 -compile(export_all).
@@ -233,3 +233,40 @@ percentile_pick([{_E, N} | RLEs], ToSkip) ->
 perc(P, Len) ->
     V = round(P * Len / 100),
     erlang:max(1, V).
+
+%% TRACKER PROCESS
+%% The tracker process can be used to track a state outside the EQC state
+reset(Name) ->
+    case whereis(Name) of
+        undefined ->
+          Pid = spawn_link(fun() -> tracker_loop(undefined) end),
+          register(Name, Pid),
+          ok;
+        P when is_pid(P) ->
+          P ! reset,
+          ok
+    end.
+
+bind(Name, Fun) ->
+    Name ! {get_state, self()},
+    receive
+      {state, S} ->
+        case Fun(S) of
+          {ok, R, N} ->
+            Name ! {set_state, N},
+            R
+        end
+    after 5000 ->
+        exit(timeout)
+    end.
+
+tracker_loop(S) ->
+    receive
+      reset -> ?MODULE:tracker_loop(undefined);
+      stop -> ok;
+      {get_state, From} ->
+          From ! {state, S},
+          ?MODULE:tracker_loop(S);
+      {set_state, N} ->
+          ?MODULE:tracker_loop(N)
+    end.
