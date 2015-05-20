@@ -14,10 +14,21 @@
 -export([new/1]).
 -export([export/1]).
 
--export([range_members/2,
-	inactive/3, try_insert/2, neighbors/3, is_member/2, refresh_range_by_node/2,
-	refresh_node/2, node_list/1, node_timer_state/2, range_timer_state/2, range_state/2,
-	refresh_range/3, insert/2]).
+-export([
+	inactive/3,
+	insert/2,
+	is_member/2,
+	neighbors/3,
+	node_list/1,
+	node_timer_state/2,
+	range_members/2,
+	range_state/2,
+	range_timer_state/2,
+	refresh_node/2,
+	refresh_range/3,
+	refresh_range_by_node/2,
+	try_insert/2
+]).
 
 
 %
@@ -30,8 +41,8 @@
 
 -record(routing, {
     table,
-    nodes = {?NODE_TIMEOUT, #{}},
-    ranges = {?RANGE_TIMEOUT, #{}}
+    nodes = #{},
+    ranges = #{}
 }).
 
 %% API
@@ -56,11 +67,11 @@ try_insert(Node, #routing { table = Tbl }) ->
 
 %% @doc insert/2 inserts a new node in the routing table
 %% @end
-insert({ID, _, _} = Node, #routing { table = Tbl } = State) ->
+insert(Node, #routing { table = Tbl } = State) ->
     case dht_routing_table:is_member(Node, Tbl) of
         true -> {already_member, State};
         false ->
-            Neighbours = dht_routing_table:members(ID, Tbl),
+            Neighbours = dht_routing_table:members(Node, Tbl),
             case inactive(Neighbours, nodes, State) of
               [] -> adjoin(Node, State);
               [Old | _] ->
@@ -71,7 +82,7 @@ insert({ID, _, _} = Node, #routing { table = Tbl } = State) ->
 
 %% @doc adjoin/2 adjoins a new node to the routing table
 %% @end
-adjoin(Node, #routing { table = Tbl, nodes = {NTimout, NT} } = Routing) ->
+adjoin(Node, #routing { table = Tbl, nodes = NT } = Routing) ->
     Now = dht_time:monotonic_time(),
     T = dht_routing_table:insert(Node, Tbl),
     case dht_routing_table:is_member(Node, T) of
@@ -79,8 +90,8 @@ adjoin(Node, #routing { table = Tbl, nodes = {NTimout, NT} } = Routing) ->
         {not_inserted, Routing#routing { table = T }};
       true ->
         %% Update the timers, if they need to change
-        TimerRef = node_timer_from(Now, NTimout, NT),
-        NewState = Routing#routing { nodes = {NTimout, NT#{ Node => {Now, TimerRef} }}},
+        TimerRef = node_timer_from(Now, ?NODE_TIMEOUT, NT),
+        NewState = Routing#routing { nodes = NT#{ Node => {Now, TimerRef} } },
         {ok, update_ranges(Tbl, Now, NewState)}
     end.
 
@@ -94,7 +105,7 @@ update_ranges(OldTbl, Now, #routing { table = NewTbl } = State) ->
 fold_update_ranges(Ops, Now,
 	#routing {
 		nodes = {_, NT},
-		ranges = {RTimeout, RT},
+		ranges = {?RANGE_TIMEOUT, RT},
 		table = Tbl
 	} = Routing) ->
     F = fun
@@ -102,25 +113,25 @@ fold_update_ranges(Ops, Now,
         ({add, R}, TM) ->
             Members = dht_routing_table:members(R, Tbl),
             Recent = timer_oldest(Members, NT),
-            TRef = range_timer_from(Now, RTimeout, Recent, NT, R),
+            TRef = range_timer_from(Now, ?RANGE_TIMEOUT, Recent, NT, R),
             timer_add(R, Now, TRef, TM)
     end,
-    Routing#routing { ranges = {RTimeout, lists:foldl(F, RT, Ops)} }.
+    Routing#routing { ranges = {?RANGE_TIMEOUT, lists:foldl(F, RT, Ops)} }.
 
 %% @doc remove/2 removes a node from the routing table (and deletes the associated timer structure)
 %% @end
-remove(Node, #routing { table = Tbl, nodes = {NTimeout, NT}} = State) ->
+remove(Node, #routing { table = Tbl, nodes = NT} = State) ->
     State#routing {
         table = dht_routing_table:delete(Node, Tbl),
-        nodes = {NTimeout, timer_delete(Node, NT)}
+        nodes = timer_delete(Node, NT)
     }.
 
-refresh_node(Node, #routing { nodes = {NTimeout, NT}} = Routing) ->
+refresh_node(Node, #routing { nodes = NT} = Routing) ->
     Now = dht_time:monotonic_time(),
     {LastActive, _} = maps:get(Node, NT),
     T = maps:remove(Node, NT),
-    TRef = node_timer_from(Now, NTimeout, Node),
-    Routing#routing { nodes = {NTimeout, timer_add(Node, LastActive, TRef, T)}}.
+    TRef = node_timer_from(Now, ?NODE_TIMEOUT, Node),
+    Routing#routing { nodes = timer_add(Node, LastActive, TRef, T)}.
 
 refresh_range_by_node({ID, _, _}, #routing { table = Tbl, ranges = {_, RT} } = Routing) ->
     Range = dht_routing_table:range(ID, Tbl),
@@ -130,29 +141,29 @@ refresh_range_by_node({ID, _, _}, #routing { table = Tbl, ranges = {_, RT} } = R
 refresh_range(Range, Timepoint,
 	#routing {
 	    table = Tbl,
-	    nodes = {NTimeout, NT},
-	    ranges = {RTimeout, RT}} = Routing) ->
+	    nodes = NT,
+	    ranges = RT} = Routing) ->
     %% Find oldest member in the range
     Members = dht_routing_table:members(Range, Tbl),
     LRecent = timer_oldest(Members, NT),
     
     %% Update the range timer to the oldest member
     TmpR = maps:remove(Range, RT),
-    RTRef = range_timer_from(Timepoint, RTimeout, LRecent, NTimeout, Range),
+    RTRef = range_timer_from(Timepoint, ?RANGE_TIMEOUT, LRecent, ?NODE_TIMEOUT, Range),
     NewRT = timer_add(Range, Timepoint, RTRef, TmpR),
     %% Insert the new data
-    Routing#routing { ranges = {RTimeout, NewRT}}.
+    Routing#routing { ranges = {?RANGE_TIMEOUT, NewRT}}.
 
-node_timer_state(Node, #routing { table = Tbl, nodes = {NTimeout, NT}}) ->
+node_timer_state(Node, #routing { table = Tbl, nodes = NT}) ->
     case dht_routing_table:is_member(Node, Tbl) of
         false -> not_member;
-        true -> timer_state(Node, NTimeout, NT)
+        true -> timer_state(Node, ?NODE_TIMEOUT, NT)
     end.
 
-range_timer_state(Range, #routing { table = Tbl, ranges = {RTimeout, RT}}) ->
+range_timer_state(Range, #routing { table = Tbl, ranges = RT}) ->
     case dht_routing_table:is_range(Range, Tbl) of
         false -> not_member;
-        true -> timer_state(Range, RTimeout, RT)
+        true -> timer_state(Range, ?RANGE_TIMEOUT, RT)
     end.
 
 range_state(Range, #routing { table = Tbl } = Routing) ->
@@ -166,10 +177,13 @@ export(#routing { table = Tbl }) -> Tbl.
 
 node_list(#routing { table = Tbl }) -> dht_routing_table:node_list(Tbl).
 
-neighbors(ID, K, #routing { table = Tbl, nodes = {NTimeout, NT} }) ->
-    Filter = fun(Node) -> not timeout(Node, NTimeout, NT) end,
+neighbors(ID, K, #routing { table = Tbl, nodes = NT }) ->
+    Filter = fun(Node) -> not timeout(Node, ?NODE_TIMEOUT, NT) end,
     dht_routing_table:closest_to(ID, Filter, K, Tbl).
 
+inactive(Nodes, nodes, #routing { nodes = Timing }) ->
+    [N || N <- Nodes, timed_out(N, Timing)].
+    
 %% INTERNAL FUNCTIONS
 %% ------------------------------------------------------
 
@@ -192,9 +206,6 @@ init_range_timers(Now, Tbl) ->
     end,
     lists:foldl(F, #{}, Ranges).
 
-inactive(Nodes, nodes, #routing { nodes = Timing }) ->
-    [N || N <- Nodes, timed_out(N, Timing)].
-    
 active(Nodes, nodes, #routing { nodes = Timing }) ->
     [N || N <- Nodes, not timed_out(N, Timing)].
 
@@ -220,18 +231,18 @@ timer_oldest(Items, Timers) ->
 
 timer_from(Time, Timeout, Msg) ->
     Interval = ms_between(Time, Timeout),
-    erlang:send_after(Interval, self(), Msg).
-
+    dht_time:send_after(Interval, self(), Msg).
 
 %% In the best case, the bucket should time out N seconds
 %% after the first node in the bucket timed out. If that node
 %% can't be replaced, a bucket refresh should be performed
 %% at most every N seconds, based on when the bucket was last
 %% marked as active, instead of _constantly_.
-range_timer_from(Time, BTimeout, LeastRecent, _NTimeout, Range) when LeastRecent < Time ->
+range_timer_from(Time, BTimeout, LeastRecent, _, Range) when LeastRecent < Time ->
     timer_from(Time, BTimeout, {inactive_range, Range});
-range_timer_from(Time, _BTimeout, LeastRecent, NTimeout, Range) when LeastRecent >= Time ->
-    timer_from(LeastRecent, 2*NTimeout, {inactive_range, Range}).
+range_timer_from(Time, _BTimeout, LeastRecent, Timeout, Range)
+	when LeastRecent >= Time ->
+    timer_from(LeastRecent, 2*Timeout, {inactive_range, Range}).
 
 node_timer_from(Time, Timeout, Node) ->
     Msg = {inactive_node, Node},

@@ -185,7 +185,7 @@ return(Peer, Response) ->
 init([DHTPort, Opts]) ->
     {ok, Base} = application:get_env(dht, listen_opts),
     {ok, Socket} = dht_socket:open(DHTPort, [binary, inet, {active, ?UDP_MAILBOX_SZ} | Base]),
-    erlang:send_after(?TOKEN_LIFETIME, self(), renew_token),
+    dht_time:send_after(?TOKEN_LIFETIME, self(), renew_token),
     {ok, #state{
     	socket = Socket, 
     	outstanding = gb_trees:empty(),
@@ -221,7 +221,7 @@ handle_info({request_timeout, _, Key}, State) ->
     HandledState = handle_request_timeout(Key, State),
     {noreply, HandledState};
 handle_info(renew_token, State) ->
-    erlang:send_after(?TOKEN_LIFETIME, self(), renew_token),
+    dht_time:send_after(?TOKEN_LIFETIME, self(), renew_token),
     {noreply, handle_recycle_token(State)};
 handle_info({udp_passive, Socket}, #state { socket = Socket } = State) ->
 	ok = inet:setopts(Socket, [{active, ?UDP_MAILBOX_SZ}]),
@@ -335,7 +335,7 @@ send_query({IP, Port} = Peer, Query, From, #state { outstanding = Active, socket
 
     case dht_socket:send(Socket, IP, Port, Packet) of
         ok ->
-            TRef = erlang:send_after(?QUERY_TIMEOUT, self(),
+            TRef = dht_time:send_after(?QUERY_TIMEOUT, self(),
                                      {request_timeout, self(), {Peer, MsgID}}),
 
             Key = {Peer, MsgID},

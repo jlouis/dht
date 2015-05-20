@@ -24,7 +24,8 @@ api_spec() ->
             #api_fun { name = monotonic_time, arity = 0 },
             #api_fun { name = convert_time_unit, arity = 3 },
             #api_fun { name = system_time, arity = 0 },
-            #api_fun { name = timestamp, arity = 0 }
+            #api_fun { name = timestamp, arity = 0 },
+            #api_fun { name = send_after, arity = 3 }
           ]},
         #api_module {
           name = dht_routing_table,
@@ -34,7 +35,8 @@ api_spec() ->
             #api_fun { name = node_id, arity = 1 },
             #api_fun { name = is_member, arity = 2 },
             #api_fun { name = members, arity = 2 },
-            #api_fun { name = insert, arity = 2 }
+            #api_fun { name = insert, arity = 2 },
+            #api_fun { name = delete, arity = 2 }
           ]}
        ]}.
 
@@ -55,25 +57,57 @@ new(Tbl) ->
       {ok, ID, Routing}
     end).
 
-new_pre(#state { init = I }) -> not I.
+new_pre(S) -> not initialized(S).
 
 new_args(_S) -> [rt_ref].
 
 new_callouts(#state { id = ID, time = T}, _) ->
-  ?CALLOUT(dht_time, monotonic_time, [], T),
-  ?CALLOUT(dht_routing_table, node_list, [rt_ref], []),
-  ?CALLOUT(dht_routing_table, node_id, [rt_ref], ID),
-  ?CALLOUT(dht_routing_table, ranges, [rt_ref], []),
-  ?RET(ID).
+    ?CALLOUT(dht_time, monotonic_time, [], T),
+    ?CALLOUT(dht_routing_table, node_list, [rt_ref], []),
+    ?CALLOUT(dht_routing_table, node_id, [rt_ref], ID),
+    ?CALLOUT(dht_routing_table, ranges, [rt_ref], []),
+    ?RET(ID).
   
 new_next(State, _, _) -> State#state { init = true }.
+
+%% INSERTION
+%% --------------------------------------------------
+insert(Node) ->
+    eqc_lib:bind(?DRIVER,
+      fun(T) ->
+          {R, S} = dht_routing:insert(Node, T),
+          {ok, R, S}
+      end).
+
+insert_pre(S) -> initialized(S).
+
+insert_args(_S) ->
+    [dht_eqc:peer()].
+    
+%% @todo: Return non-empty members!
+insert_callouts(_S, [Node]) ->
+    ?MATCH(Member, ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref], bool())),
+    case Member of
+        true -> ?RET(already_member);
+        false ->
+            ?MATCH(Neighbours, ?CALLOUT(dht_routing_table, members, [Node, rt_ref], [])),
+            case Neighbours of
+               [] ->
+                 ?MATCH(R, ?APPLY(adjoin, [Node])),
+                 ?RET(R);
+               [Old | _] ->
+                 ?APPLY(remove, [Old]),
+                 ?MATCH(R, ?APPLY(adjoin, [Node])),
+                 ?RET(R)
+            end
+     end.
 
 %% IS_MEMBER
 %% --------------------------------------------------
 is_member(Node) ->
     eqc_lib:bind(?DRIVER, fun(T) -> {ok, dht_routing:is_member(Node, T), T} end).
 
-is_member_pre(#state{ init = I }) -> I.
+is_member_pre(S) -> initialized(S).
 
 is_member_args(_S) ->
     [dht_eqc:peer()].
@@ -82,12 +116,12 @@ is_member_callouts(_S, [Node]) ->
     ?MATCH(R, ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref], bool())),
     ?RET(R).
 
-%% IS_MEMBER
+%% RANGE_MEMBERS
 %% --------------------------------------------------
 range_members(Node) ->
     eqc_lib:bind(?DRIVER, fun(T) -> {ok, dht_routing:range_members(Node, T), T} end).
 
-range_members_pre(#state{ init = I }) -> I.
+range_members_pre(S) -> initialized(S).
 
 range_members_args(_S) ->
     [dht_eqc:peer()].
@@ -101,7 +135,7 @@ range_members_callouts(_S, [Node]) ->
 try_insert(Node) ->
     eqc_lib:bind(?DRIVER, fun(T) -> {ok, dht_routing:try_insert(Node, T), T} end).
     
-try_insert_pre(#state { init = I }) -> I.
+try_insert_pre(S) -> initialized(S).
 
 try_insert_args(_S) ->
     [dht_eqc:peer()].
@@ -111,6 +145,29 @@ try_insert_callouts(_S, [Node]) ->
     ?MATCH(R, ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref], bool())),
     ?RET(R).
 
+
+%% REMOVAL (Internal call)
+%% --------------------------------------------------
+remove_callouts(_S, [Node]) ->
+    ?CALLOUT(dht_routing_table, delete, [Node, rt_ref], rt_ref),
+    ?RET(ok).
+
+%% ADJOIN (Internal call)
+%% --------------------------------------------------
+adjoin_callouts(#state { time = T }, [Node]) ->
+    ?CALLOUT(dht_time, monotonic_time, [], T),
+    ?CALLOUT(dht_routing_table, insert, [Node, rt_ref], rt_ref),
+    ?MATCH(Member, ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref], bool())),
+    case Member of
+        false ->
+            ?RET(not_inserted);
+        true ->
+            ?CALLOUT(dht_time, send_after, [T, ?WILDCARD, ?WILDCARD], make_ref()),
+            ?CALLOUT(dht_routing_table, ranges, [rt_ref], rt_ref),
+            ?CALLOUT(dht_routing_table, ranges, [rt_ref], rt_ref),
+            ?RET(ok)
+    end.
+    
 %% ADVANCING TIME
 %% --------------------------------------------------
 advance_time(_A) -> ok.
@@ -143,3 +200,5 @@ prop_routing_correct() ->
           aggregate(command_names(Cmds),
             R == ok)))
       end))).
+
+initialized(#state { init = I }) -> I.
