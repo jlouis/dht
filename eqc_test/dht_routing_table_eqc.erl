@@ -14,37 +14,36 @@
 %% Generators
 %% ----------
 
-bucket() ->
+range() ->
     MaxID = 1 bsl 160,
-    bucket(0, MaxID).
+    range(0, MaxID).
     
-bucket(Low, High) when High - Low < 8 -> return({Low, High});
-bucket(Low, High) ->
+range(Low, High) when High - Low < 8 -> return({Low, High});
+range(Low, High) ->
   Diff = High - Low,
   Half = High - (Diff div 2),
 
   frequency([
     {1, return({Low, High})},
     {8, ?SHRINK(
-            oneof([?LAZY(bucket(Half, High)),
-                   ?LAZY(bucket(Low, Half))]),
+            oneof([?LAZY(range(Half, High)),
+                   ?LAZY(range(Low, Half))]),
             [return({Low, High})])}
   ]).
 
 %% Insertion of new entries into the routing table
 %% -----------------------------------------------
-insert({ID, IP, Port}) ->
-	routing_table:insert({ID, IP, Port}).
+insert(Node) ->
+	routing_table:insert(Node).
 	
 insert_args(#state {}) ->
-	?LET({ID, IP, Port}, {dht_eqc:id(), dht_eqc:ip(), dht_eqc:port()},
-	  [{ID, IP, Port}]).
+    [dht_eqc:peer()].
 	  
 insert_next(#state { nodes = Nodes } = State, _V, [Node]) ->
-	State#state { nodes = Nodes ++ [Node] }.
+    State#state { nodes = Nodes ++ [Node] }.
 
 insert_features(_State, _Args, _Return) ->
-	["R001: Insert a new node into the routing table"].
+    ["R001: Insert a new node into the routing table"].
 
 %% Ask the system for the current state table ranges
 %% -------------------------------------------------
@@ -111,13 +110,13 @@ members(ID) ->
 	routing_table:members(ID).
 
 nonexisting_id(IDs) ->
-  ?SUCHTHAT(ID, dht_eqc:id(),
+  ?SUCHTHAT({ID, _, _}, dht_eqc:peer(),
       not lists:member(ID, IDs)).
 
 members_args(#state { nodes = Ns }) ->
     Node = frequency(
     	[{1, nonexisting_id(ids(Ns))}] ++
-    	[{10, elements(ids(Ns))} || Ns /= [] ]),
+    	[{10, elements(Ns)} || Ns /= [] ]),
     [Node].
 
 members_post(_S, _A, Res) -> length(Res) =< 8.
@@ -167,14 +166,14 @@ node_list_features(_S, _A, _R) ->
 
 %% Ask if the routing table has a bucket
 %% -------------------------------------
-has_bucket(B) ->
-	routing_table:has_bucket(B).
+is_range(B) ->
+	routing_table:is_range(B).
 	
-has_bucket_args(_S) ->
-	[bucket()].
+is_range_args(_S) ->
+	[range()].
 
-has_bucket_features(_S, _A, true) -> ["R011: Asking for a bucket which exists"];
-has_bucket_features(_S, _A, false) -> ["R012: Asking for a bucket which does not exist"].
+is_range_features(_S, _A, true) -> ["R011: Asking for a bucket which exists"];
+is_range_features(_S, _A, false) -> ["R012: Asking for a bucket which does not exist"].
 
 %% Ask who is closest to a given ID
 %% --------------------------------
