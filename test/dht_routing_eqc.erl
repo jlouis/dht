@@ -181,12 +181,12 @@ inactive_pre(S) -> initialized(S).
 inactive_args(_S) ->
     [list(dht_eqc:peer())].
     
-inactive_callouts(_S, [Nodes]) ->
+inactive_callouts(#state { time = T }, [Nodes]) ->
+  ?SEQ([
     ?SEQ([
-      ?SEQ(
-        ?CALLOUT(dht_time, monotonic_time, [], T),
-        ?CALLOUT(dht_time, convert_time_unit([?WILDCARD, native, milli_seconds], T)
-      ) || _N <- Nodes]).
+      ?CALLOUT(dht_time, monotonic_time, [], T),
+      ?CALLOUT(dht_time, convert_time_unit, [?WILDCARD, native, milliseconds], T)
+    ]) || _N <- Nodes]).
 
 %% REMOVAL (Internal call)
 %% --------------------------------------------------
