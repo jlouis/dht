@@ -104,8 +104,8 @@ update_ranges(OldTbl, Now, #routing { table = NewTbl } = State) ->
     
 fold_update_ranges(Ops, Now,
 	#routing {
-		nodes = {_, NT},
-		ranges = {?RANGE_TIMEOUT, RT},
+		nodes = NT,
+		ranges = RT,
 		table = Tbl
 	} = Routing) ->
     F = fun
@@ -116,7 +116,7 @@ fold_update_ranges(Ops, Now,
             TRef = range_timer_from(Now, ?RANGE_TIMEOUT, Recent, NT, R),
             timer_add(R, Now, TRef, TM)
     end,
-    Routing#routing { ranges = {?RANGE_TIMEOUT, lists:foldl(F, RT, Ops)} }.
+    Routing#routing { ranges = lists:foldl(F, RT, Ops) }.
 
 %% @doc remove/2 removes a node from the routing table (and deletes the associated timer structure)
 %% @end
@@ -133,7 +133,7 @@ refresh_node(Node, #routing { nodes = NT} = Routing) ->
     TRef = node_timer_from(Now, ?NODE_TIMEOUT, Node),
     Routing#routing { nodes = timer_add(Node, LastActive, TRef, T)}.
 
-refresh_range_by_node({ID, _, _}, #routing { table = Tbl, ranges = {_, RT} } = Routing) ->
+refresh_range_by_node({ID, _, _}, #routing { table = Tbl, ranges = RT } = Routing) ->
     Range = dht_routing_table:range(ID, Tbl),
     {RActive, _} = maps:get(Range, RT),
     refresh_range(Range, RActive, Routing).
@@ -152,7 +152,7 @@ refresh_range(Range, Timepoint,
     RTRef = range_timer_from(Timepoint, ?RANGE_TIMEOUT, LRecent, ?NODE_TIMEOUT, Range),
     NewRT = timer_add(Range, Timepoint, RTRef, TmpR),
     %% Insert the new data
-    Routing#routing { ranges = {?RANGE_TIMEOUT, NewRT}}.
+    Routing#routing { ranges = NewRT}.
 
 node_timer_state(Node, #routing { table = Tbl, nodes = NT}) ->
     case dht_routing_table:is_member(Node, Tbl) of
