@@ -25,6 +25,9 @@
 %% until we find better nodes for that range. Because nodes come and go in the DHT in general,
 %% so remember where there were a node back in the day will help tremendously.
 %%
+%% TODO: One consideration could be to add Nodes and Ranges to the initial model state
+%%   as well. This would allow us to better handle queries on what nodes are in there, and
+%%   what we can do with those nodes.
 -module(dht_routing_eqc).
 -compile(export_all).
 
@@ -158,6 +161,20 @@ init_node_timers_callouts(_, [Nodes]) ->
 
 %% INSERTION
 %% --------------------------------------------------
+
+%% Inserting a node into the routing table can have several outcomes:
+%%
+%% * The node is not inserted, because it is already a member of the routing table
+%%   in the first place.
+%% * The node could be inserted, but we alreay have enough nodes for its range in
+%%   the routing table.
+%% * The node is inserted into the routing table because it replaces old inactive nodes
+%%   in a range.
+%% * The node is inserted into the routing table, because there is space for it in a
+%%   range.
+
+%% Insertion returns `{R, S}' where `S' is the new state and `R' is the response. We
+%% check the response is in accordance with what we think.
 insert(Node) ->
     eqc_lib:bind(?DRIVER,
       fun(T) ->
@@ -165,12 +182,29 @@ insert(Node) ->
           {ok, R, S}
       end).
 
+%% You can only insert data when the system has been initialized.
 insert_pre(S) -> initialized(S).
 
-insert_args(_S) ->
-    [dht_eqc:peer()].
+%% Any peer is eligible for insertion at any time. There are no limits on how and when
+%% you can do this insertion.
+insert_args(_S) -> [dht_eqc:peer()].
     
-%% @todo: Return non-empty members!
+
+%% Insertion splits into several possible rules based on the state of the routing table
+%% with respect to the Node we try to insert:
+%%
+%% First, there is a member-check. Nodes which are already members are ignored and
+%% nothing happens to the routing table.
+%%
+%% For a non-member we obtain its neighbours in the routing table, and figure out
+%% if there are any inactive members. If there are, we remove one member to make sure
+%% there is space in the range.
+%%
+%% Finally we `adjoin' the Node to the routing table, which is addressed as a separate
+%% internal model transition.
+%%
+%% TODO: This code has to return valid members from the routing table, because 'inactive'
+%% currently fails if it gets something which is not a valid member.
 insert_callouts(_S, [Node]) ->
     ?MATCH(Member, ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref], bool())),
     case Member of
@@ -179,14 +213,11 @@ insert_callouts(_S, [Node]) ->
             ?MATCH(Neighbours, ?CALLOUT(dht_routing_table, members, [Node, rt_ref], list(dht_eqc:peer()))),
             ?MATCH(Inactive, ?APPLY(inactive, [Neighbours])),
             case Inactive of
-               [] ->
-                 ?MATCH(R, ?APPLY(adjoin, [Node])),
-                 ?RET(R);
-               [Old | _] ->
-                 ?APPLY(remove, [Old]),
-                 ?MATCH(R, ?APPLY(adjoin, [Node])),
-                 ?RET(R)
-            end
+               [] -> ?EMPTY;
+               [Old | _] -> ?APPLY(remove, [Old])
+            end,
+            ?MATCH(R, ?APPLY(adjoin, [Node])),
+            ?RET(R)
      end.
 
 %% IS_MEMBER
@@ -264,9 +295,11 @@ inactive(Nodes) ->
       
 inactive_pre(S) -> initialized(S).
 
-%% TODO: This assumption is quite weak because we only ever ask for nodes
-%% which has been added to the RT at some point.
-inactive_args(_S) -> [list(dht_eqc:peer())].
+inactive_args(State) ->
+    case node_timers(State, nodes) of
+        [] -> [[]];
+        Nodes -> [list(elements(Nodes))]
+    end.
 
 %% The call checks the time for each node it is given
 inactive_callouts(_S, [Nodes]) ->
@@ -300,12 +333,16 @@ time_check_callouts(#state { time = T } = State, [Node]) ->
     
 %% REMOVAL (Internal call)
 %% --------------------------------------------------
+
+%% TODO: Think about the rules for timers if we remove stuff
 remove_callouts(_S, [Node]) ->
     ?CALLOUT(dht_routing_table, delete, [Node, rt_ref], rt_ref),
     ?RET(ok).
 
 %% ADJOIN (Internal call)
 %% --------------------------------------------------
+
+%% TODO: Go through this call for correctness
 adjoin_callouts(#state { time = T }, [Node]) ->
     ?CALLOUT(dht_time, monotonic_time, [], T),
     ?CALLOUT(dht_routing_table, insert, [Node, rt_ref], rt_ref),
@@ -399,3 +436,5 @@ find_timeout(#state { node_timers = NT, timers = TS }, Node) ->
             {ok, P}
     end.
 
+node_timers(#state { node_timers = NTs }, nodes) ->
+    [N || {_, N} <- NTs].
