@@ -15,6 +15,7 @@
 -export([export/1]).
 
 -export([
+	can_insert/2,
 	inactive/3,
 	insert/2,
 	is_member/2,
@@ -26,8 +27,7 @@
 	range_timer_state/2,
 	refresh_node/2,
 	refresh_range/3,
-	refresh_range_by_node/2,
-	try_insert/2
+	refresh_range_by_node/2
 ]).
 
 
@@ -61,7 +61,7 @@ new(Tbl) ->
 is_member(Node, #routing { table = T }) -> dht_routing_table:is_member(Node, T).
 range_members(Node, #routing { table = T }) -> dht_routing_table:members(Node, T).
 
-try_insert(Node, #routing { table = Tbl }) ->
+can_insert(Node, #routing { table = Tbl }) ->
     Tbl2 = dht_routing_table:insert(Node, Tbl),
     dht_routing_table:is_member(Node, Tbl2).
 

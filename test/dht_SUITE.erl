@@ -5,7 +5,7 @@
 -compile(export_all).
 
 suite() ->
-    [{timetrap, {minutes, 10}}].
+    [{timetrap, {seconds, 15}}].
     
 init_per_group(_Group, Config) ->
     Config.

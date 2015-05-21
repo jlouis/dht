@@ -307,7 +307,7 @@ handle_call({is_interesting, Node}, _From, #state{ routing = Routing } = State) 
             case Inactive orelse (length(RangeMembers) < ?K) of
                 true -> {reply, true, State}; % either inactivity or there is too few members
                 false ->
-                    {reply, dht_routing:try_insert(Node, Routing), State}
+                    {reply, dht_routing:can_insert(Node, Routing), State}
             end
     end;
 handle_call({closest_to, ID, NumNodes}, _From, #state{routing = Routing } = State) ->
