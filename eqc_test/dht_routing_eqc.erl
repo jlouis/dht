@@ -1,5 +1,7 @@
+%% @doc EQC model for routing+timing
+%%
+%% This module implements, …
 -module(dht_routing_eqc).
-
 -compile(export_all).
 
 -include_lib("eqc/include/eqc.hrl").
@@ -11,6 +13,7 @@
 	init, % Is the routing system initialized?
 	id, % Current ID of this node
 	time, % what time is it in the system?
+	tref = 0, % counters for timer refs in the model
 	node_timers = [], % List of the current node timers in the system
 	range_timers = [] % List of the current range timers in the system
 }).
@@ -55,7 +58,7 @@ gen_state() ->
 
 %% NEW
 %% --------------------------------------------------
-new(Tbl) ->
+new(Tbl, _Nodes, _Ranges) ->
     eqc_lib:bind(?DRIVER, fun(_T) ->
       {ok, ID, Routing} = dht_routing:new(Tbl),
       {ok, ID, Routing}
@@ -66,16 +69,28 @@ new_pre(S) -> not initialized(S).
 new_args(_S) ->
   Nodes = list(dht_eqc:peer()),
   Ranges = list(dht_eqc:range()),
-  [rt_ref].
+  [rt_ref, Nodes, Ranges].
 
-new_callouts(#state { id = ID, time = T}, _) ->
+new_callouts(#state { id = ID, time = T}, [_, Nodes, Ranges]) ->
     ?CALLOUT(dht_time, monotonic_time, [], T),
-    ?CALLOUT(dht_routing_table, node_list, [rt_ref], []),
+    ?CALLOUT(dht_routing_table, node_list, [rt_ref], Nodes),
     ?CALLOUT(dht_routing_table, node_id, [rt_ref], ID),
-    ?CALLOUT(dht_routing_table, ranges, [rt_ref], []),
+    ?CALLOUT(dht_routing_table, ranges, [rt_ref], Ranges),
+    ?APPLY(init_range_timers, [Ranges]),
+    ?APPLY(init_node_timers, [Nodes]),
     ?RET(ID).
   
 new_next(State, _, _) -> State#state { init = true }.
+
+%% INIT_RANGE_TIMERS (Internal call)
+%% --------------------------------------------------
+init_range_timers_callouts(#state { }, [Ranges]) ->
+    ?SEQ([?APPLY(add_range_timer, [R]) || R <- Ranges]).
+      
+%% INIT_NODE_TIMERS (Internal call)
+%% --------------------------------------------------
+init_node_timers_callouts(_, [Nodes]) ->
+    ?SEQ([?APPLY(insert, [N]) || N <- Nodes]).
 
 %% INSERTION
 %% --------------------------------------------------
@@ -97,8 +112,9 @@ insert_callouts(_S, [Node]) ->
     case Member of
         true -> ?RET(already_member);
         false ->
-            ?MATCH(Neighbours, ?CALLOUT(dht_routing_table, members, [Node, rt_ref], [])),
-            case Neighbours of
+            ?MATCH(Neighbours, ?CALLOUT(dht_routing_table, members, [Node, rt_ref], list(dht_eqc:peer()))),
+            ?MATCH(Inactive, ?APPLY(inactive, [Neighbours])),
+            case Inactive of
                [] ->
                  ?MATCH(R, ?APPLY(adjoin, [Node])),
                  ?RET(R);
@@ -152,6 +168,25 @@ try_insert_callouts(_S, [Node]) ->
     ?MATCH(R, ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref], bool())),
     ?RET(R).
 
+%% INACTIVE
+%% --------------------------------------------------
+inactive(Nodes) ->
+    eqc_lib:bind(?DRIVER,
+      fun(T) ->
+        {ok, dht_routing:inactive(Nodes, nodes, T), T}
+      end).
+      
+inactive_pre(S) -> initialized(S).
+
+inactive_args(_S) ->
+    [list(dht_eqc:peer())].
+    
+inactive_callouts(_S, [Nodes]) ->
+    ?SEQ([
+      ?SEQ(
+        ?CALLOUT(dht_time, monotonic_time, [], T),
+        ?CALLOUT(dht_time, convert_time_unit([?WILDCARD, native, milli_seconds], T)
+      ) || _N <- Nodes]).
 
 %% REMOVAL (Internal call)
 %% --------------------------------------------------
@@ -184,6 +219,19 @@ advance_time_args(_S) ->
 
 advance_time_next(#state { time = T } = State, _, [A]) -> State#state { time = T+A }.
 advance_time_return(_S, [_]) -> ok.
+
+%% ADDING/REMOVING Range timers (model book-keeping)
+%% --------------------------------------------------
+add_range_timer_callouts(#state { tref = C, time = T }, [_Range]) ->
+    ?CALLOUT(dht_time, monotonic_time, [], T),
+    ?CALLOUT(dht_time, convert_time_unit, [?WILDCARD, native, milli_seconds], T),
+    ?CALLOUT(dht_time, send_after, [?WILDCARD, ?WILDCARD, ?WILDCARD], C).
+
+add_range_timer_next(#state { tref = C, range_timers = RT } = State, _, [Range]) ->
+    State#state { tref = C+1, range_timers = RT ++ [{C, Range}] }.
+
+del_range_timer_next(#state { range_timers = RT } = State, _, [TRef]) ->
+    State#state { range_timers = lists:keydelete(TRef, 1, RT) }.
 
 %% PROPERTY
 %% --------------------------------------------------

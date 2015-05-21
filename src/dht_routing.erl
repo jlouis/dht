@@ -181,8 +181,8 @@ neighbors(ID, K, #routing { table = Tbl, nodes = NT }) ->
     Filter = fun(Node) -> not timeout(Node, ?NODE_TIMEOUT, NT) end,
     dht_routing_table:closest_to(ID, Filter, K, Tbl).
 
-inactive(Nodes, nodes, #routing { nodes = Timing }) ->
-    [N || N <- Nodes, timed_out(N, Timing)].
+inactive(Nodes, nodes, #routing { nodes = Timers }) ->
+    [N || N <- Nodes, node_timed_out(N, Timers)].
     
 %% INTERNAL FUNCTIONS
 %% ------------------------------------------------------
@@ -206,16 +206,12 @@ init_range_timers(Now, Tbl) ->
     end,
     lists:foldl(F, #{}, Ranges).
 
-active(Nodes, nodes, #routing { nodes = Timing }) ->
-    [N || N <- Nodes, not timed_out(N, Timing)].
+active(Nodes, nodes, #routing { nodes = Timers }) ->
+    [N || N <- Nodes, not node_timed_out(N, Timers)].
 
-timed_out(Item, {Timeout, Timers}) ->
+node_timed_out(Item, Timers) ->
     {LastActive, _} = maps:get(Item, Timers),
-    ms_since(LastActive) > Timeout.
-
-ms_since(Time) ->
-    Point = dht_time:monotonic_time(),
-    dht_time:convert_time_unit(Point - Time, native, milli_seconds).
+    ms_since(LastActive) > ?NODE_TIMEOUT.
 
 timer_delete(Item, Timers) ->
     {_, TRef} = maps:get(Item, Timers),
@@ -247,6 +243,10 @@ range_timer_from(Time, _BTimeout, LeastRecent, Timeout, Range)
 node_timer_from(Time, Timeout, Node) ->
     Msg = {inactive_node, Node},
     timer_from(Time, Timeout, Msg).
+
+ms_since(Time) ->
+    Point = dht_time:monotonic_time(),
+    dht_time:convert_time_unit(Point - Time, native, milli_seconds).
 
 ms_between(Time, Timeout) ->
     case Timeout - ms_since(Time) of
