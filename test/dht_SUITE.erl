@@ -27,7 +27,8 @@ end_per_testcase(_Case, _Config) ->
 
 dht_group() -> [{eqc, [shuffle], [
 	check_routing_table_seq,
-	check_protocol_encoding
+	check_protocol_encoding,
+	check_routing_system_seq
     ]}].
 
 groups() ->
@@ -48,3 +49,6 @@ check_routing_table_seq(_Config) ->
 
 check_protocol_encoding(_Config) ->
     ?quickcheck((dht_proto_eqc:prop_iso_packet())).
+
+check_routing_system_seq(_Config) ->
+    ?quickcheck((dht_routing_eqc:prop_routing_correct())).

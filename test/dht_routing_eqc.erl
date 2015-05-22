@@ -442,6 +442,25 @@ range_timer_state_callouts(#state { ranges = RS } = S, [Range]) ->
             end
     end.
 
+%% REFRESH_NODE
+%% --------------------------------------------------
+
+%% Refreshing the node bumps the timer. But this code is not doing it yet,
+%% But it should!
+refresh_node(Node) ->
+    eqc_lib:bind(?DRIVER,
+        fun(T) ->
+            R = dht_routing:refresh_node(Node, T),
+            {ok, R, R}
+        end).
+        
+refresh_node_pre(S) -> initialized(S) andalso has_nodes(S).
+
+refresh_node_args(S) -> [rt_node(S)].
+
+refresh_node_callouts(#state { time = T } = S, [Node]) ->
+    ?CALLOUT(dht_time, monotonic_time, [], T).
+
 %% INACTIVE/ACTIVE nodes
 %% --------------------------------------------------
 
@@ -615,6 +634,7 @@ prop_routing_correct() ->
       end))).
 
 initialized(#state { init = I }) -> I.
+has_nodes(#state { nodes = Ns }) -> Ns /= [].
 
 %% Given a state and a node, find the last activity point of the node
 find_last_activity(#state { node_timers = NT }, Node) ->
@@ -647,6 +667,8 @@ timer_state(#state { time = T, timers = TS }, TRef) ->
 
 node_timers(#state { node_timers = NTs }, nodes) ->
     [N || {_, N, _} <- NTs].
+
+rt_node(#state { nodes = Ns }) -> elements(Ns).
 
 rt_nodes(#state { nodes = Ns }) ->
     case Ns of
