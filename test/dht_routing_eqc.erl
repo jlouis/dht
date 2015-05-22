@@ -38,6 +38,16 @@
 %%
 %% Computation determines if the timer has triggered yet, or is to trigger later.
 %%
+%% MOCKING THE ROUTING TABLE
+%%
+%% The “Trick” in this model is to mock the routing table. This means that we can do
+%% something which is *not* true to the real routing table: we know exactly what elements
+%% are in the table. The table is a list of nodes and a list of ranges, with no correspondance
+%% to what nodes are in what ranges. Because this piece of the code doesn't rely on that
+%% fact.
+%%
+%% By using a mocked simplified routing table, it is possible to check this module for
+%% correctness without modeling a routing table which is complex in nature.
 -module(dht_routing_eqc).
 -compile(export_all).
 
