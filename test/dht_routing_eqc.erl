@@ -28,6 +28,16 @@
 %% TODO: One consideration could be to add Nodes and Ranges to the initial model state
 %%   as well. This would allow us to better handle queries on what nodes are in there, and
 %%   what we can do with those nodes.
+%%
+%% HOW TIMERS WORK IN THE ROUTING SYSTEM
+%%
+%% The routing system uses a map() to store a mapping from a X => {Active, TRef} where
+%% X is either a Node or a Range, Active is the point in time when the item X was last active,
+%% and TRef is the timer reference for that item. This means that at time point
+%% τ = Active+?NODE_TIMEOUT, we have the timer corresponding to TRef triggering.
+%%
+%% Computation determines if the timer has triggered yet, or is to trigger later.
+%%
 -module(dht_routing_eqc).
 -compile(export_all).
 
@@ -36,21 +46,33 @@
 
 %% We define a name for the tracker that keeps the state of the routing system:
 -define(DRIVER, dht_routing_tracker).
+-define(RANGE_TIMEOUT, 5 * (60*1000)).
 
 -type time() :: integer().
 -type time_ref() :: integer().
 
 -record(state, {
-	init = false :: boolean(),
-	%% init encodes if we have initialized the routing table or not.
-	id :: any(),
-	%% id represents the current ID of the node we are running as
+	%%% MODEL OF ROUTING TABLE
+	%%
+	nodes = [] :: [any()],
+	ranges = [] :: [any()],
+	%% The nodes and ranges models what is currently in the routing table
+	
+	%%% MODEL OF TIMERS
+	%%
 	time :: time(),
 	timers = [] :: [{time(), time_ref()}],
 	tref = 0 :: time_ref(),
 	%% The fields time, timers and tref models time. The idea is that `time' is the
 	%% monotonic time on the system, timers is an (ordered) list of the current timers
 	%% and tref is used to draw unique timer references in the system.
+
+	%%% MODEL OF THE ROUTING SYSTEM
+	%%
+	init = false :: boolean(),
+	%% init encodes if we have initialized the routing table or not.
+	id :: any(),
+	%% id represents the current ID of the node we are running as
 	node_timers = [] :: [{time_ref(), any()}],
 	range_timers = [] :: [{time_ref(), any()}]
 	%% The node_timers and range_timers represent the state of the routing table
@@ -89,7 +111,11 @@ api_spec() ->
 %% INITIAL STATE
 %% --------------------------------------------------
 gen_state() ->
+    Nodes = list(dht_eqc:peer()),
+    Ranges = list(dht_eqc:range()),
     #state {
+      nodes = Nodes,
+      ranges = Ranges,
       init = false,
       id = dht_eqc:id(),
       time = int(),
@@ -104,7 +130,7 @@ gen_state() ->
 %% the routing table may be loaded from disk. When that happens, we have to
 %% re-instate the timers by query of the routing table, and then construct those
 %% timers.
-new(Tbl, _Nodes, _Ranges) ->
+new(Tbl) ->
     eqc_lib:bind(?DRIVER, fun(_T) ->
       {ok, ID, Routing} = dht_routing:new(Tbl),
       {ok, ID, Routing}
@@ -114,19 +140,13 @@ new(Tbl, _Nodes, _Ranges) ->
 %% if it already is.
 new_pre(S) -> not initialized(S).
 
-%% We construct a lists of Nodes we percieve is "in the table" and likewise with
-%% a list of ranges. These are dummy arguments which are used by the callout
-%% system to initialize correctly.
-new_args(_S) ->
-  Nodes = list(dht_eqc:peer()),
-  Ranges = list(dht_eqc:range()),
-  [rt_ref, Nodes, Ranges].
+new_args(_S) -> [rt_ref].
 
 %% When new is called, the system calls out to the routing_table. We feed the
 %% Nodes and Ranges we generated into the system. The assumption is that
 %% these Nodes and Ranges are ones which are initialized via the internal calls
 %% init_range_timers and init_node_timers.
-new_callouts(#state { id = ID, time = T}, [_, Nodes, Ranges]) ->
+new_callouts(#state { id = ID, time = T, nodes = Nodes, ranges = Ranges }, [_]) ->
     ?CALLOUT(dht_time, monotonic_time, [], T),
     ?CALLOUT(dht_routing_table, node_list, [rt_ref], Nodes),
     ?CALLOUT(dht_routing_table, node_id, [rt_ref], ID),
@@ -203,14 +223,12 @@ insert_args(_S) -> [dht_eqc:peer()].
 %% Finally we `adjoin' the Node to the routing table, which is addressed as a separate
 %% internal model transition.
 %%
-%% TODO: This code has to return valid members from the routing table, because 'inactive'
-%% currently fails if it gets something which is not a valid member.
-insert_callouts(_S, [Node]) ->
+insert_callouts(S, [Node]) ->
     ?MATCH(Member, ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref], bool())),
     case Member of
         true -> ?RET(already_member);
         false ->
-            ?MATCH(Neighbours, ?CALLOUT(dht_routing_table, members, [Node, rt_ref], list(dht_eqc:peer()))),
+            ?MATCH(Neighbours, ?CALLOUT(dht_routing_table, members, [Node, rt_ref], rt_nodes(S))),
             ?MATCH(Inactive, ?APPLY(inactive, [Neighbours])),
             case Inactive of
                [] -> ?EMPTY;
@@ -233,8 +251,9 @@ is_member_args(_S) -> [dht_eqc:peer()].
     
 %% This is simply a forward to the underlying routing table, so it should return whatever
 %% The RT returns.
-is_member_callouts(_S, [Node]) ->
-    ?MATCH(R, ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref], bool())),
+is_member_callouts(#state { nodes = Ns }, [Node]) ->
+    ?MATCH(R, ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref],
+        lists:member(Node, Ns))),
     ?RET(R).
 
 %% RANGE_MEMBERS
@@ -251,8 +270,8 @@ range_members_args(_S) -> [dht_eqc:peer()].
     
 %% This is simply a forward to the underlying routing table, so it should return whatever
 %% The RT returns.
-range_members_callouts(_S, [Node]) ->
-    ?MATCH(R, ?CALLOUT(dht_routing_table, members, [Node, rt_ref], [dht_eqc:peer()])),
+range_members_callouts(S, [Node]) ->
+    ?MATCH(R, ?CALLOUT(dht_routing_table, members, [Node, rt_ref], [rt_nodes(S)])),
     ?RET(R).
 
 %% CAN_INSERT
@@ -287,6 +306,7 @@ can_insert_callouts(_S, [Node]) ->
 %% should. Rather than just deleting the node from the RT, we let it linger.
 %%
 %% But the filter function here, finds the inactive nodes.
+%%
 inactive(Nodes) ->
     eqc_lib:bind(?DRIVER,
       fun(T) ->
@@ -295,35 +315,48 @@ inactive(Nodes) ->
       
 inactive_pre(S) -> initialized(S).
 
-inactive_args(State) ->
-    case node_timers(State, nodes) of
-        [] -> [[]];
-        Nodes -> [list(elements(Nodes))]
+inactive_args(S) -> [rt_nodes(S)].
+
+%% Helper, returns an assertion on node presence in the model which
+%% can be grafted onto a callout specification.
+nodes_in_model(_S, []) -> ?EMPTY;
+nodes_in_model(#state { nodes = Ns } = S, [N|Rest]) ->
+    case lists:member(N, Ns) of
+        true -> nodes_in_model(S, Rest);
+        false -> ?FAIL({not_a_node, N})
     end.
 
 %% The call checks the time for each node it is given
-inactive_callouts(_S, [Nodes]) ->
+inactive_callouts(S, [Nodes]) ->
+  nodes_in_model(S, Nodes),
   ?SEQ([ ?APPLY(time_check, [N]) || N <- Nodes]).
 
 %% Calling inactive with a set of nodes Ns, will return those nodes which are
 %%
 %% * Present
-%% * Has a Timeout Point *before* the current time
+%% * Their timer has already triggered
 %%
 %% These nodes are the ones which are "timed out" in the sense of the notion
 %% used here.
+%%
+%% To compute this, request the last point of activity and add the range timeout
+%% in order to see if the current time is beyond that. If affirmative, then the timer
+%% has triggered.
 inactive_return(#state { time = T } = State, [Nodes]) ->
     F = fun(N) ->
-        case find_timeout(State, N) of
+        case find_last_activity(State, N) of
             not_found -> false;
-            {ok, P} -> P =< T
+            {ok, P} -> (P+?RANGE_TIMEOUT) =< T
         end
     end,
     lists:filter(F, Nodes).
 
+%% TIME_CHECK (Internal call)
+%% --------------------------------------------------
 %% time_check is an internal call for checking time for a given timeout
+
 time_check_callouts(#state { time = T } = State, [Node]) ->
-    case find_timeout(State, Node) of
+    case find_last_activity(State, Node) of
         not_found -> ?RET(not_found);
         {ok, P} ->
             Timestamp = P - T,
@@ -338,6 +371,9 @@ time_check_callouts(#state { time = T } = State, [Node]) ->
 remove_callouts(_S, [Node]) ->
     ?CALLOUT(dht_routing_table, delete, [Node, rt_ref], rt_ref),
     ?RET(ok).
+
+remove_next(#state { nodes = Nodes } = State, _, [Node]) ->
+    State#state { nodes = Nodes -- [Node] }.
 
 %% ADJOIN (Internal call)
 %% --------------------------------------------------
@@ -357,7 +393,7 @@ adjoin_callouts(#state { time = T }, [Node]) ->
             ?RET(ok)
     end.
     
-%% ADVANCING TIME
+%% ADVANCING TIME (Internal call)
 %% --------------------------------------------------
 
 %% Time is part of the model state, and is represented as milli_seconds,
@@ -393,8 +429,8 @@ add_range_timer_next(
 	#state { time = T, timers = TS, tref = C, range_timers = RT } = State, _, [Range]) ->
     State#state {
         tref = C+1,
-        range_timers = RT ++ [{C, Range}],
-        timers = orddict:store(T, C, TS)
+        range_timers = RT ++ [{C, Range, T}],
+        timers = orddict:store(T+?RANGE_TIMEOUT, C, TS)
     }.
 
 %% PROPERTY
@@ -427,14 +463,28 @@ prop_routing_correct() ->
 
 initialized(#state { init = I }) -> I.
 
-%% Given a state and a node, find the timeout point of that node, if any
-find_timeout(#state { node_timers = NT, timers = TS }, Node) ->
+%% Given a state and a node, find the last activity point of the node
+find_last_activity(#state { node_timers = NT }, Node) ->
     case lists:keyfind(Node, 2, NT) of
         false -> not_found;
-        {TRef, Node} ->
-            {P, TRef} = lists:keyfind(TRef, 2, TS),
-            {ok, P}
+        {_TRef, Node, P} -> {ok, P}
     end.
 
 node_timers(#state { node_timers = NTs }, nodes) ->
     [N || {_, N} <- NTs].
+
+rt_nodes(#state { nodes = Ns }) ->
+    case Ns of
+        [] -> [];
+        _ -> list(elements(Ns))
+    end.
+    
+dedup(Xs) ->
+    dedup(Xs, #{}).
+    
+dedup([], _) -> [];
+dedup([X | Xs], M) ->
+    case maps:get(X, M, false) of
+        true -> dedup(Xs, M);
+        false -> [X | dedup(Xs, M#{ X => true })]
+    end.
