@@ -56,7 +56,8 @@
 
 %% We define a name for the tracker that keeps the state of the routing system:
 -define(DRIVER, dht_routing_tracker).
--define(RANGE_TIMEOUT, 5 * (60*1000)).
+-define(NODE_TIMEOUT, 1000).
+-define(RANGE_TIMEOUT, 500).
 
 -type time() :: integer().
 -type time_ref() :: integer().
@@ -99,22 +100,25 @@ api_spec() ->
         #api_module {
           name = dht_time,
           functions = [
-            #api_fun { name = monotonic_time, arity = 0 },
             #api_fun { name = convert_time_unit, arity = 3 },
+            #api_fun { name = monotonic_time, arity = 0 },
+            #api_fun { name = read_timer, arity = 1 },
+            #api_fun { name = send_after, arity = 3 },
             #api_fun { name = system_time, arity = 0 },
-            #api_fun { name = timestamp, arity = 0 },
-            #api_fun { name = send_after, arity = 3 }
+            #api_fun { name = timestamp, arity = 0 }
           ]},
         #api_module {
           name = dht_routing_table,
           functions = [
-            #api_fun { name = ranges, arity = 1 },
-            #api_fun { name = node_list, arity = 1 },
-            #api_fun { name = node_id, arity = 1 },
-            #api_fun { name = is_member, arity = 2 },
-            #api_fun { name = members, arity = 2 },
+            #api_fun { name = closest_to, arity = 4 },
+            #api_fun { name = delete, arity = 2 },
             #api_fun { name = insert, arity = 2 },
-            #api_fun { name = delete, arity = 2 }
+            #api_fun { name = is_member, arity = 2 },
+            #api_fun { name = is_range, arity = 2 },
+            #api_fun { name = members, arity = 2 },
+            #api_fun { name = node_id, arity = 1 },
+            #api_fun { name = node_list, arity = 1 },
+            #api_fun { name = ranges, arity = 1 }
           ]}
        ]}.
 
@@ -168,28 +172,54 @@ new_callouts(#state { id = ID, time = T, nodes = Nodes, ranges = Ranges }, [_]) 
 %% Track that we initialized the system
 new_next(State, _, _) -> State#state { init = true }.
 
-%% INIT_RANGE_TIMERS (Internal call)
+%% CAN_INSERT
 %% --------------------------------------------------
 
-%% Initialization of range timers follows the same general structure:
-%% we successively add a new range timer to the state.
-init_range_timers_callouts(#state { }, [Ranges]) ->
-    ?SEQ([?APPLY(add_range_timer, [R]) || R <- Ranges]).
-      
-%% INIT_NODE_TIMERS (Internal call)
+%% We can query the routing table and ask it if we can insert a given node.
+%% This is done by inserting the node and then asking for membership, but
+%% not persisting the state of doing so. Hence, there is no state transition
+%% possible when doing this.
+can_insert(Node) ->
+    eqc_lib:bind(?DRIVER, fun(T) -> {ok, dht_routing:can_insert(Node, T), T} end).
+    
+can_insert_pre(S) -> initialized(S).
+
+can_insert_args(_S) ->
+    [dht_eqc:peer()].
+    
+%% The result of doing a `can_insert' is the result of the membership test on the
+%% underlying routing table. So the expected return is whatever the routing table
+%% returns back to us.
+can_insert_callouts(_S, [Node]) ->
+    ?CALLOUT(dht_routing_table, insert, [Node, rt_ref], rt_ref),
+    ?MATCH(R, ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref], bool())),
+    ?RET(R).
+
+%% INACTIVE
 %% --------------------------------------------------
 
-%% Node timer initialization is equivalent to insertion of the nodes
-%% one by one.
+%% Inactive is a filter. It returns those nodes in a list which are currently
+%% Inactive nodes. That is, they have timed out. This can happen because
+%% Nodes come and go, and we failed to refresh the given node when we
+%% should. Rather than just deleting the node from the RT, we let it linger.
 %%
-%% TODO: Hmm, but they are already members before doing this, so they
-%% will all say they are members! This means something is wrong, because
-%% if they are already, this will be a no-op, and no timer will be added. Figure
-%% out what is wrong here and fix it.
-init_node_timers_callouts(_, [Nodes]) ->
-    ?SEQ([?APPLY(insert, [N]) || N <- Nodes]).
+%% But the filter function here, finds the inactive nodes.
+%%
+inactive(Nodes) ->
+    eqc_lib:bind(?DRIVER,
+      fun(T) ->
+        {ok, dht_routing:inactive(Nodes, nodes, T), T}
+      end).
+      
+inactive_pre(S) -> initialized(S).
 
-%% INSERTION
+inactive_args(S) -> [rt_nodes(S)].
+
+%% The call checks the time for each node it is given
+inactive_callouts(_S, [Nodes]) ->
+  ?APPLY(inactive_nodes, [Nodes]).
+
+%% INSERT
 %% --------------------------------------------------
 
 %% Inserting a node into the routing table can have several outcomes:
@@ -266,6 +296,81 @@ is_member_callouts(#state { nodes = Ns }, [Node]) ->
         lists:member(Node, Ns))),
     ?RET(R).
 
+%% NEIGHBORS
+%% --------------------------------------------------
+
+%% Neighbours returns the K nodes which are closest to a given node in
+%% the routing table. We just verify that the call is correct with respect to
+%% the system.
+neighbors(ID, K) ->
+    eqc_lib:bind(?DRIVER,
+      fun(T) ->
+          {ok, dht_routing:neighbors(ID, K, T), T}
+      end).
+      
+neighbors_pre(S) -> initialized(S).
+
+neighbors_args(_S) -> [dht_eqc:id(), nat()].
+
+neighbors_callouts(S, [ID, K]) ->
+    ?MATCH(R,
+      ?CALLOUT(dht_routing_table, closest_to, [ID, ?WILDCARD, K, rt_ref],
+    	  rt_nodes(S))),
+    ?RET(R).
+
+%% NODE_LIST
+%% --------------------------------------------------
+%%
+%% Node list is a proxy forward to the node_list call of the routing table
+
+node_list() ->
+    eqc_lib:bind(?DRIVER, fun(T) -> {ok, dht_routing:node_list(T), T} end).
+    
+node_list_pre(S) -> initialized(S).
+	
+node_list_args(_S) -> [].
+
+node_list_callouts(S, []) ->
+    ?MATCH(R,
+        ?CALLOUT(dht_routing_table, node_list, [rt_ref],
+            rt_nodes(S))),
+    ?RET(R).
+    
+%% NODE_TIMER_STATE
+%% --------------------------------------------------
+%%
+
+%% The call to the node_timer_state is a query on the internal timer state of
+%% the system. It returns different values depending on the internal timer state
+%% in the system
+node_timer_state(Node) ->
+    eqc_lib:bind(?DRIVER,
+      fun(T) ->
+          {ok, dht_routing:node_timer_state(Node, T), T}
+      end).
+      
+node_timer_state_pre(S) -> initialized(S).
+
+node_timer_state_args(_S) -> [dht_eqc:peer()].
+
+node_timer_state_callouts(#state { nodes = Ns } = S, [Node]) ->
+    ?MATCH(R,
+        ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref],
+            lists:member(Node, Ns))),
+    case R of
+        false -> ?RET(not_member);
+        true ->
+            {ok, TRef} = timer_ref(S, Node, node),
+            Timeout = timer_timeout(S, TRef),
+            ?MATCH(Timer,
+                ?CALLOUT(dht_time, read_timer, [TRef], timer_state(S, TRef))),
+            case Timer of
+                false -> ?RET(canceled);
+                true when Timeout -> ?RET(timeout);
+                true when (not Timeout) -> ?RET(ok)
+            end
+    end.
+
 %% RANGE_MEMBERS
 %% --------------------------------------------------
 
@@ -284,62 +389,65 @@ range_members_callouts(S, [Node]) ->
     ?MATCH(R, ?CALLOUT(dht_routing_table, members, [Node, rt_ref], [rt_nodes(S)])),
     ?RET(R).
 
-%% CAN_INSERT
+%% RANGE_STATE
 %% --------------------------------------------------
-
-%% We can query the routing table and ask it if we can insert a given node.
-%% This is done by inserting the node and then asking for membership, but
-%% not persisting the state of doing so. Hence, there is no state transition
-%% possible when doing this.
-can_insert(Node) ->
-    eqc_lib:bind(?DRIVER, fun(T) -> {ok, dht_routing:can_insert(Node, T), T} end).
+%%
+range_state(Range) ->
+    eqc_lib:bind(?DRIVER, fun(T) -> {ok, dht_routing:range_state(Range, T), T} end).
     
-can_insert_pre(S) -> initialized(S).
+range_state_pre(S) -> initialized(S).
 
-can_insert_args(_S) ->
-    [dht_eqc:peer()].
-    
-%% The result of doing a `can_insert' is the result of the membership test on the
-%% underlying routing table. So the expected return is whatever the routing table
-%% returns back to us.
-can_insert_callouts(_S, [Node]) ->
-    ?CALLOUT(dht_routing_table, insert, [Node, rt_ref], rt_ref),
-    ?MATCH(R, ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref], bool())),
-    ?RET(R).
+range_state_args(_S) -> [dht_eqc:range()].
 
-%% INACTIVE
+range_state_callouts(S, [Range]) ->
+    ?MATCH(Members,
+        ?CALLOUT(dht_routing_table, members, [Range, rt_ref], rt_nodes(S))),
+    ?MATCH(Active, ?APPLY(active_nodes, [Members])),
+    ?MATCH(Inactive, ?APPLY(inactive_nodes, [Members])),
+    ?RET(#{ active => Active, inactive => Inactive}).
+
+%% RANGE_TIMER_STATE
 %% --------------------------------------------------
+%%
 
-%% Inactive is a filter. It returns those nodes in a list which are currently
-%% Inactive nodes. That is, they have timed out. This can happen because
-%% Nodes come and go, and we failed to refresh the given node when we
-%% should. Rather than just deleting the node from the RT, we let it linger.
-%%
-%% But the filter function here, finds the inactive nodes.
-%%
-inactive(Nodes) ->
+%% The call to the range_timer_state is a query on the internal timer state of
+%% the system. It returns different values depending on the internal timer state
+%% in the system. The call is more or less equivalent to the state of node timers,
+%% but queries the other timer map().
+range_timer_state(Range) ->
     eqc_lib:bind(?DRIVER,
       fun(T) ->
-        {ok, dht_routing:inactive(Nodes, nodes, T), T}
+          {ok, dht_routing:range_timer_state(Range, T), T}
       end).
       
-inactive_pre(S) -> initialized(S).
+range_timer_state_pre(S) -> initialized(S).
 
-inactive_args(S) -> [rt_nodes(S)].
+range_timer_state_args(_S) -> [dht_eqc:range()].
 
-%% Helper, returns an assertion on node presence in the model which
-%% can be grafted onto a callout specification.
-nodes_in_model(_S, []) -> ?EMPTY;
-nodes_in_model(#state { nodes = Ns } = S, [N|Rest]) ->
-    case lists:member(N, Ns) of
-        true -> nodes_in_model(S, Rest);
-        false -> ?FAIL({not_a_node, N})
+range_timer_state_callouts(#state { ranges = RS } = S, [Range]) ->
+    ?MATCH(R,
+        ?CALLOUT(dht_routing_table, is_range, [Range, rt_ref],
+            lists:member(Range, RS))),
+    case R of
+        false -> ?RET(not_member);
+        true ->
+            {ok, TRef} = timer_ref(S, Range, range),
+            Timeout = timer_timeout(S, TRef),
+            ?MATCH(Timer,
+                ?CALLOUT(dht_time, read_timer, [TRef], timer_state(S, TRef))),
+            case Timer of
+                false -> ?RET(canceled);
+                true when Timeout -> ?RET(timeout);
+                true when (not Timeout) -> ?RET(ok)
+            end
     end.
 
-%% The call checks the time for each node it is given
-inactive_callouts(S, [Nodes]) ->
-  nodes_in_model(S, Nodes),
-  ?SEQ([ ?APPLY(time_check, [N]) || N <- Nodes]).
+%% INACTIVE/ACTIVE nodes
+%% --------------------------------------------------
+
+%% Compute the active/inactive nodes as callout specifications. This
+%% Allows us to specify what nodes are currently active and/or inactive
+%% which is needed in several calls.
 
 %% Calling inactive with a set of nodes Ns, will return those nodes which are
 %%
@@ -352,14 +460,49 @@ inactive_callouts(S, [Nodes]) ->
 %% To compute this, request the last point of activity and add the range timeout
 %% in order to see if the current time is beyond that. If affirmative, then the timer
 %% has triggered.
-inactive_return(#state { time = T } = State, [Nodes]) ->
+inactive_nodes_callouts(#state { time = T } = S, [Nodes]) ->
     F = fun(N) ->
-        case find_last_activity(State, N) of
+        case find_last_activity(S, N) of
             not_found -> false;
             {ok, P} -> (P+?RANGE_TIMEOUT) =< T
         end
     end,
-    lists:filter(F, Nodes).
+    assert_nodes_in_model(S, Nodes),
+    ?SEQ([ ?APPLY(time_check, [N]) || N <- Nodes]),
+    ?RET(lists:filter(F, Nodes)).
+    
+%% Active nodes are those which are not inactive, but still present in the node table.
+active_nodes_callouts(#state { time = T } = S, [Nodes]) ->
+    F = fun(N) ->
+        case find_last_activity(S, N) of
+            not_found -> false;
+            {ok, P} -> (P+?NODE_TIMEOUT) > T
+        end
+    end,
+    assert_nodes_in_model(S, Nodes),
+    ?SEQ([ ?APPLY(time_check, [N]) || N <- Nodes]),
+    ?RET(lists:filter(F, Nodes)).
+
+%% INIT_RANGE_TIMERS (Internal call)
+%% --------------------------------------------------
+
+%% Initialization of range timers follows the same general structure:
+%% we successively add a new range timer to the state.
+init_range_timers_callouts(#state { }, [Ranges]) ->
+    ?SEQ([?APPLY(add_range_timer, [R]) || R <- Ranges]).
+      
+%% INIT_NODE_TIMERS (Internal call)
+%% --------------------------------------------------
+
+%% Node timer initialization is equivalent to insertion of the nodes
+%% one by one.
+%%
+%% TODO: Hmm, but they are already members before doing this, so they
+%% will all say they are members! This means something is wrong, because
+%% if they are already, this will be a no-op, and no timer will be added. Figure
+%% out what is wrong here and fix it.
+init_node_timers_callouts(_, [Nodes]) ->
+    ?SEQ([?APPLY(insert, [N]) || N <- Nodes]).
 
 %% TIME_CHECK (Internal call)
 %% --------------------------------------------------
@@ -480,8 +623,30 @@ find_last_activity(#state { node_timers = NT }, Node) ->
         {_TRef, Node, P} -> {ok, P}
     end.
 
+timer_ref(#state { range_timers = RT }, R, range) ->
+    timer_find(R, RT);
+timer_ref(#state { node_timers = NT }, N, node) ->
+    timer_find(N, NT).
+    
+timer_find(E, Es) ->
+    case lists:keyfind(E, 2, Es) of
+        false -> not_found;
+        {TRef, E, _} -> {ok, TRef}
+    end.
+
+timer_timeout(#state { timers = TS, time = T }, TRef) ->
+    {P, _} = lists:keyfind(TRef, 2, TS),
+    P >= T.
+
+timer_state(#state { time = T, timers = TS }, TRef) ->
+    case lists:keyfind(TRef, 2, TS) of
+        false -> false;
+        {P, _} when P > T -> P - T;
+        {P, _} when P =< T -> false % Already triggered
+    end.
+
 node_timers(#state { node_timers = NTs }, nodes) ->
-    [N || {_, N} <- NTs].
+    [N || {_, N, _} <- NTs].
 
 rt_nodes(#state { nodes = Ns }) ->
     case Ns of
@@ -497,4 +662,13 @@ dedup([X | Xs], M) ->
     case maps:get(X, M, false) of
         true -> dedup(Xs, M);
         false -> [X | dedup(Xs, M#{ X => true })]
+    end.
+
+%% Helper, returns an assertion on node presence in the model which
+%% can be grafted onto a callout specification.
+assert_nodes_in_model(_S, []) -> ?EMPTY;
+assert_nodes_in_model(#state { nodes = Ns } = S, [N|Rest]) ->
+    case lists:member(N, Ns) of
+        true -> assert_nodes_in_model(S, Rest);
+        false -> ?FAIL({not_a_node, N})
     end.

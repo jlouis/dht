@@ -154,8 +154,8 @@ refresh_range(Range, Timepoint,
     %% Insert the new data
     Routing#routing { ranges = NewRT}.
 
-node_timer_state(Node, #routing { table = Tbl, nodes = NT}) ->
-    case dht_routing_table:is_member(Node, Tbl) of
+node_timer_state(Node, #routing { nodes = NT} = S) ->
+    case is_member(Node, S) of
         false -> not_member;
         true -> timer_state(Node, ?NODE_TIMEOUT, NT)
     end.
@@ -168,10 +168,9 @@ range_timer_state(Range, #routing { table = Tbl, ranges = RT}) ->
 
 range_state(Range, #routing { table = Tbl } = Routing) ->
     Members = dht_routing_table:members(Range, Tbl),
-    #{
-      active => active(Members, nodes, Routing),
-      inactive => inactive(Members, nodes, Routing)
-    }.
+    Active = active(Members, nodes, Routing),
+    Inactive = inactive(Members, nodes, Routing),
+    #{ active => Active, inactive => Inactive }.
 
 export(#routing { table = Tbl }) -> Tbl.
 
@@ -189,7 +188,7 @@ inactive(Nodes, nodes, #routing { nodes = Timers }) ->
 
 timer_state(X, Timeout, Table) ->
     {_, TRef} = maps:get(X, Table),
-    case erlang:read_timer(TRef) == false of
+    case dht_time:read_timer(TRef) == false of
        true -> canceled;
        false ->
            case timeout(X, Timeout, Table) of

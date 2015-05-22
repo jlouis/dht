@@ -252,6 +252,7 @@ bind(Name, Fun) ->
     receive
       {state, S} ->
         case Fun(S) of
+          {ok, R, S} -> R; % Optimize the case where there is no change
           {ok, R, N} ->
             Name ! {set_state, N},
             R
