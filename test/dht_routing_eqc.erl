@@ -445,8 +445,9 @@ range_timer_state_callouts(#state { ranges = RS } = S, [Range]) ->
 %% REFRESH_NODE
 %% --------------------------------------------------
 
-%% Refreshing the node bumps the timer. But this code is not doing it yet,
-%% But it should!
+%% Refreshing a node means that the node had activity. In turn, its timer
+%% structure should be refreshed when this happens. The transition is that
+%% we remove the old timer and install a new timer at a future point in time.
 refresh_node(Node) ->
     eqc_lib:bind(?DRIVER,
         fun(T) ->
@@ -458,10 +459,53 @@ refresh_node_pre(S) -> initialized(S) andalso has_nodes(S).
 
 refresh_node_args(S) -> [rt_node(S)].
 
-refresh_node_callouts(#state { time = T } = S, [Node]) ->
-    ?CALLOUT(dht_time, monotonic_time, [], T).
+refresh_node_callouts(S, [Node]) ->
+    {ok, Activity} = find_last_activity(S, Node),
+    ?APPLY(remove_node_timer, [Node]),
+    ?APPLY(add_node_timer, [Node, Activity]).
 
-%% INACTIVE/ACTIVE nodes
+%% REFRESH_RANGE_BY_NODE
+%% --------------------------------------------------
+
+refresh_range_by_node(Node) ->
+    eqc_lib:bind(?DRIVER,
+      fun(T) ->
+        R = dht_routing:refresh_range_by_node(Node, T),
+        {ok, R, R}
+      end).
+      
+refresh_range_by_node_pre(S) -> initialized(S) andalso has_nodes(S).
+
+refresh_range_by_node_args(S) -> [rt_node(S)].
+
+refresh_range_by_node_callouts(_S, [{ID, _, _}]) ->
+    ?APPLY(refresh_range_by_node, [ID]).
+    
+%% REFRESH_RANGE
+%% --------------------------------------------------
+
+refresh_range(Range) ->
+    eqc_lib:bind(?DRIVER,
+      fun(T) ->
+        R = dht_routing:refresh_range(Range, T),
+        {ok, R, R}
+      end).
+      
+refresh_range_pre(S) -> initialized(S) andalso has_nodes(S).
+
+refresh_range_args(_S) -> [dht_eqc:range()].
+
+refresh_range_callouts(_S, [Range]) ->
+    ?MATCH(Oldest, ?APPLY(oldest_member, [Range])),
+    ?APPLY(remove_range_timer, [Range]),
+    ?APPLY(add_range_timer_at, [Range, Oldest]).
+
+oldest_member_callouts(S, [Range]) ->
+    ?MATCH(Members,
+        ?CALLOUT(dht_routing_table, members, [Range, rt_ref], rt_nodes(S))),
+    ?RET(find_oldest(S, Members, ranges)).
+
+%% INACTIVE/ACTIVE nodes (Internal call)
 %% --------------------------------------------------
 
 %% Compute the active/inactive nodes as callout specifications. This
@@ -584,16 +628,31 @@ advance_time_args(_S) -> ?LET(K, nat(), [K+1]).
 advance_time_next(#state { time = T } = State, _, [A]) -> State#state { time = T+A }.
 advance_time_return(_S, [_]) -> ok.
 
-%% ADDING/REMOVING Range timers (model book-keeping)
+%% ADDING/REMOVING Timers (model book-keeping)
 %% --------------------------------------------------
 
 %% Adding a range is an operation we can describe as a callout sequence as
 %% well as a state transition. The callouts are calls to the timing structure, first
 %% to compute the timer delay, and then to insert the timer into the Erlang Runtime
+%%
+%% There are two ways to add range timers. One way adds a range timer based on
+%% monotonic time, and what "now" is. The other solution adds a range timer "at"
+%% A given point in time.
+%%
+%% TODO: The time unit returned here is incorrect!
+%% TODO: The concept of adding a timer at a given time T, e.g., Tref@T, is not fleshed
+%%   out yet. It is necessary to do correctly to handle the model.
+
 add_range_timer_callouts(#state { tref = C, time = T }, [_Range]) ->
     ?CALLOUT(dht_time, monotonic_time, [], T),
     ?CALLOUT(dht_time, convert_time_unit, [?WILDCARD, native, milli_seconds], T),
     ?CALLOUT(dht_time, send_after, [?WILDCARD, ?WILDCARD, ?WILDCARD], C).
+
+add_range_timer_at_callouts(#state { tref = C, time = T }, [_Range, _At]) ->
+    ?CALLOUT(dht_time, monotonic_time, [], T),
+    ?CALLOUT(dht_time, convert_time_unit, [?WILDCARD, native, milli_seconds], T),
+    ?CALLOUT(dht_time, send_after, [?WILDCARD, ?WILDCARD, ?WILDCARD], C).
+    
 
 %% Adding a range timer transitions the system by keeping track of the timer state
 %% and the fact that a range timer was added.
@@ -604,6 +663,43 @@ add_range_timer_next(
         range_timers = RT ++ [{C, Range, T}],
         timers = orddict:store(T+?RANGE_TIMEOUT, C, TS)
     }.
+
+add_range_timer_at_next(
+	#state { timers = TS, tref = C, range_timers = RT } = State, _, [Range, At]) ->
+    State#state {
+        tref = C+1,
+        range_timers = RT ++ [{C, Range, At}],
+        timers = orddict:store(At+?RANGE_TIMEOUT, C, TS)
+    }.
+
+%% When updating node timers, we have the option of overriding the last activity point
+%% of that node. The last activity point is passed as an extra parameter in this call.
+%%
+%% TODO: The time unit returned here is incorrect!
+add_node_timer_callouts(#state { tref = C, time = T}, [_Node, _Activity]) ->
+    ?CALLOUT(dht_time, monotonic_time, [], T),
+    ?CALLOUT(dht_time, convert_time_unit, [?WILDCARD, native, milli_seconds], T),
+    ?CALLOUT(dht_time, send_after, [?WILDCARD, ?WILDCARD, ?WILDCARD], C).
+    
+%% TODO: The add_node_timer transition is probably very wrong currently.
+add_node_timer_next(
+	#state { time = T, timers = TS, tref = C, node_timers = NT } = State, _, [Node, Activity]) ->
+    State#state {
+        tref = C+1,
+        node_timers = NT ++ [{C, Node, Activity}],
+        timers = orddict:store(T+?NODE_TIMEOUT, C, TS)
+    }.
+    
+%% Removing a node/range timer from the model state is akin to deleting that state
+%% from the list of node timers.
+%%
+%% TODO: Maybe we should also kill the timer itself, but the code is not currently
+%% doing so.
+remove_node_timer_next(#state { node_timers = NT } = State, _, [Node]) ->
+    State#state { node_timers = lists:keydelete(Node, 2, NT) }.
+    
+remove_range_timer_next(#state { range_timers = RT } = State, _, [Range]) ->
+    State#state { range_timers = lists:keydelete(Range, 2, RT) }.
 
 %% PROPERTY
 %% --------------------------------------------------
@@ -641,6 +737,12 @@ find_last_activity(#state { node_timers = NT }, Node) ->
     case lists:keyfind(Node, 2, NT) of
         false -> not_found;
         {_TRef, Node, P} -> {ok, P}
+    end.
+
+find_oldest(#state { range_timers = RT }, Members, ranges) ->
+    Xs = [lists:keyfind(M, 2, RT) || M <- Members],
+    case lists:keysort(3, Xs) of
+          [{_, _, T} | _] -> T
     end.
 
 timer_ref(#state { range_timers = RT }, R, range) ->

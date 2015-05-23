@@ -370,12 +370,12 @@ handle_info({inactive_bucket, Range}, #state{ routing = Routing } = State) ->
         ok -> Routing;
         not_member -> Routing;
         canceled ->
-            dht_routing:refresh_range(Range, dht_time:monotonic_time(), Routing);
+            dht_routing:refresh_range(Range, Routing);
         timeout ->
             #{ inactive := Inactive, active := Active } =
               dht_routing:range_state(Range, Routing),
             spawn(?MODULE, refresh, [Range, Inactive, Active]),
-            dht_routing:refresh_range(Range, dht_time:monotonic_time(), Routing)
+            dht_routing:refresh_range(Range, Routing)
     end,
     {noreply, State#state { routing = R }};
 handle_info({stop, Caller}, #state{} = State) ->

@@ -26,7 +26,7 @@
 	range_state/2,
 	range_timer_state/2,
 	refresh_node/2,
-	refresh_range/3,
+	refresh_range/2,
 	refresh_range_by_node/2
 ]).
 
@@ -113,7 +113,7 @@ fold_update_ranges(Ops, Now,
         ({add, R}, TM) ->
             Members = dht_routing_table:members(R, Tbl),
             Recent = timer_oldest(Members, NT),
-            TRef = range_timer_from(Now, ?RANGE_TIMEOUT, Recent, NT, R),
+            TRef = range_timer_from(Now, Recent, R),
             timer_add(R, Now, TRef, TM)
     end,
     Routing#routing { ranges = lists:foldl(F, RT, Ops) }.
@@ -138,18 +138,19 @@ refresh_range_by_node({ID, _, _}, #routing { table = Tbl, ranges = RT } = Routin
     {RActive, _} = maps:get(Range, RT),
     refresh_range(Range, RActive, Routing).
 
-refresh_range(Range, Timepoint,
-	#routing {
-	    table = Tbl,
-	    nodes = NT,
-	    ranges = RT} = Routing) ->
-    %% Find oldest member in the range
+refresh_range(Range, Routing) ->
+    refresh_range(Range, dht_time:monotonic_time(), Routing).
+
+oldest_member(Range, #routing { table = Tbl, nodes = NT }) ->
     Members = dht_routing_table:members(Range, Tbl),
-    LRecent = timer_oldest(Members, NT),
-    
+    timer_oldest(Members, NT).
+
+refresh_range(Range, Timepoint, #routing { ranges = RT } = Routing) ->
+    MostRecent = oldest_member(Range, Routing),
+
     %% Update the range timer to the oldest member
     TmpR = maps:remove(Range, RT),
-    RTRef = range_timer_from(Timepoint, ?RANGE_TIMEOUT, LRecent, ?NODE_TIMEOUT, Range),
+    RTRef = range_timer_from(Timepoint, MostRecent, Range),
     NewRT = timer_add(Range, Timepoint, RTRef, TmpR),
     %% Insert the new data
     Routing#routing { ranges = NewRT}.
@@ -200,7 +201,7 @@ timer_state(X, Timeout, Table) ->
 init_range_timers(Now, Tbl) ->
     Ranges = dht_routing_table:ranges(Tbl),
     F = fun(R, Acc) ->
-        TRef = range_timer_from(Now, ?NODE_TIMEOUT, Now, ?RANGE_TIMEOUT, R),
+        TRef = range_timer_from(Now, Now, R),
         timer_add(R, Now, TRef, Acc)
     end,
     lists:foldl(F, #{}, Ranges).
@@ -233,11 +234,11 @@ timer_from(Time, Timeout, Msg) ->
 %% can't be replaced, a bucket refresh should be performed
 %% at most every N seconds, based on when the bucket was last
 %% marked as active, instead of _constantly_.
-range_timer_from(Time, BTimeout, LeastRecent, _, Range) when LeastRecent < Time ->
-    timer_from(Time, BTimeout, {inactive_range, Range});
-range_timer_from(Time, _BTimeout, LeastRecent, Timeout, Range)
+range_timer_from(Time, LeastRecent, Range) when LeastRecent < Time ->
+    timer_from(Time, ?RANGE_TIMEOUT, {inactive_range, Range});
+range_timer_from(Time, LeastRecent, Range)
 	when LeastRecent >= Time ->
-    timer_from(LeastRecent, 2*Timeout, {inactive_range, Range}).
+    timer_from(LeastRecent, 2*?NODE_TIMEOUT, {inactive_range, Range}).
 
 node_timer_from(Time, Timeout, Node) ->
     Msg = {inactive_node, Node},
