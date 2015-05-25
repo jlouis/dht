@@ -588,6 +588,10 @@ init_nodes_callouts(_, [_Nodes]) ->
     ?CALLOUT(dht_time, convert_time_unit, [?NODE_TIMEOUT, milli_seconds, native],
           ?NODE_TIMEOUT).
 
+init_nodes_next(#state { time = T } = S, _, [Nodes]) ->
+    NodeTimers = [{N, T-?NODE_TIMEOUT} || N <- lists:reverse(Nodes)],
+    S#state { node_timers = NodeTimers }.
+
 %% TIME_CHECK (Internal call)
 %% --------------------------------------------------
 %% time_check is an internal call for checking time for a given timeout
