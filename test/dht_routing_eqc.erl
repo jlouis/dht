@@ -259,7 +259,7 @@ insert_pre(S) -> initialized(S).
 
 %% Any peer is eligible for insertion at any time. There are no limits on how and when
 %% you can do this insertion.
-insert_args(_S) -> [dht_eqc:peer()].
+%% insert_args(_S) -> [dht_eqc:peer()].
     
 
 %% Insertion splits into several possible rules based on the state of the routing table
@@ -416,7 +416,7 @@ range_state(Range) ->
     
 range_state_pre(S) -> initialized(S).
 
-range_state_args(_S) -> [dht_eqc:range()].
+%% range_state_args(_S) -> [dht_eqc:range()].
 
 range_state_callouts(S, [Range]) ->
     ?MATCH(Members,
@@ -476,7 +476,7 @@ refresh_node(Node) ->
         
 refresh_node_pre(S) -> initialized(S) andalso has_nodes(S).
 
-refresh_node_args(S) -> [rt_node(S)].
+%% refresh_node_args(S) -> [rt_node(S)].
 
 refresh_node_callouts(S, [Node]) ->
     {ok, Activity} = find_last_activity(S, Node),
@@ -495,7 +495,7 @@ refresh_range_by_node(Node) ->
       
 refresh_range_by_node_pre(S) -> initialized(S) andalso has_nodes(S).
 
-refresh_range_by_node_args(S) -> [rt_node(S)].
+%% refresh_range_by_node_args(S) -> [rt_node(S)].
 
 refresh_range_by_node_callouts(_S, [{ID, _, _}]) ->
     ?APPLY(refresh_range_by_node, [ID]).
@@ -512,7 +512,7 @@ refresh_range(Range) ->
       
 refresh_range_pre(S) -> initialized(S) andalso has_nodes(S).
 
-refresh_range_args(_S) -> [dht_eqc:range()].
+%% refresh_range_args(_S) -> [dht_eqc:range()].
 
 refresh_range_callouts(_S, [Range]) ->
     ?MATCH(Oldest, ?APPLY(oldest_member, [Range])),
@@ -755,9 +755,9 @@ has_nodes(#state { nodes = Ns }) -> Ns /= [].
 
 %% Given a state and a node, find the last activity point of the node
 find_last_activity(#state { node_timers = NT }, Node) ->
-    case lists:keyfind(Node, 2, NT) of
+    case lists:keyfind(Node, 1, NT) of
         false -> not_found;
-        {_TRef, Node, P} -> {ok, P}
+        {Node, P} -> {ok, P}
     end.
 
 find_oldest(#state { range_timers = RT }, Members, ranges) ->
@@ -813,7 +813,7 @@ dedup([X | Xs], M) ->
 %% can be grafted onto a callout specification.
 assert_nodes_in_model(_S, []) -> ?EMPTY;
 assert_nodes_in_model(#state { nodes = Ns } = S, [N|Rest]) ->
-    case lists:member(N, Ns) of
+    case lists:keymember(N, 1, Ns) of
         true -> assert_nodes_in_model(S, Rest);
         false -> ?FAIL({not_a_node, N})
     end.
