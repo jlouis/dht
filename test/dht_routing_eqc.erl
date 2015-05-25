@@ -600,9 +600,9 @@ time_check_callouts(#state { time = T } = State, [Node]) ->
     case find_last_activity(State, Node) of
         not_found -> ?RET(not_found);
         {ok, P} ->
-            Timestamp = P - T,
+            Timestamp = T - P,
             ?CALLOUT(dht_time, monotonic_time, [], T),
-            ?CALLOUT(dht_time, convert_time_unit, [Timestamp, native, milliseconds], Timestamp)
+            ?CALLOUT(dht_time, convert_time_unit, [Timestamp, native, milli_seconds], Timestamp)
     end.
     
 %% REMOVAL (Internal call)
