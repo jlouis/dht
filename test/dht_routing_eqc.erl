@@ -94,7 +94,7 @@
 	%% init encodes if we have initialized the routing table or not.
 	id :: any(),
 	%% id represents the current ID of the node we are running as
-	node_timers = [] :: [{time_ref(), any()}],
+	node_timers = [] :: [{dht:peer(), integer(), non_neg_integer()}],
 	range_timers = [] :: [{time_ref(), any()}]
 	%% The node_timers and range_timers represent the state of the routing table
 	%% we can do this, due to the invariant that every time the routing table has an
@@ -589,7 +589,7 @@ init_nodes_callouts(_, [_Nodes]) ->
           ?NODE_TIMEOUT).
 
 init_nodes_next(#state { time = T } = S, _, [Nodes]) ->
-    NodeTimers = [{N, T-?NODE_TIMEOUT} || N <- lists:reverse(Nodes)],
+    NodeTimers = [{N, T-?NODE_TIMEOUT, 0} || N <- lists:reverse(Nodes)],
     S#state { node_timers = NodeTimers }.
 
 %% TIME_CHECK (Internal call)
@@ -702,6 +702,7 @@ add_range_timer_at_next(
 %%
 %% TODO: The time unit returned here is incorrect!
 add_node_timer_callouts(#state { tref = C, time = T}, [_Node, _Activity]) ->
+    ?FAIL(called_node_timer_next),
     ?CALLOUT(dht_time, monotonic_time, [], T),
     ?CALLOUT(dht_time, convert_time_unit, [?WILDCARD, native, milli_seconds], T),
     ?CALLOUT(dht_time, send_after, [?WILDCARD, ?WILDCARD, ?WILDCARD], C).
@@ -711,7 +712,7 @@ add_node_timer_next(
 	#state { time = T, timers = TS, tref = C, node_timers = NT } = State, _, [Node, Activity]) ->
     State#state {
         tref = C+1,
-        node_timers = NT ++ [{C, Node, Activity}],
+        node_timers = NT ++ [{Node, Activity, 0}],
         timers = orddict:store(T+?NODE_TIMEOUT, C, TS)
     }.
     
@@ -761,7 +762,7 @@ has_nodes(#state { nodes = Ns }) -> Ns /= [].
 find_last_activity(#state { node_timers = NT }, Node) ->
     case lists:keyfind(Node, 1, NT) of
         false -> not_found;
-        {Node, P} -> {ok, P}
+        {Node, P, _C} -> {ok, P}
     end.
 
 find_oldest(#state { range_timers = RT }, Members, ranges) ->
@@ -793,7 +794,7 @@ timer_state(#state { time = T, timers = TS }, TRef) ->
     end.
 
 node_timers(#state { node_timers = NTs }, nodes) ->
-    [N || {_, N, _} <- NTs].
+    [N || {N, _, _} <- NTs].
 
 rt_node(#state { nodes = Ns }) -> elements(Ns).
 
