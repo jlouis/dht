@@ -8,7 +8,7 @@
 %%
 %% The module also provides a number of query-facilities for the policy module
 %% (dht_state) to query the internal timer state when a timer triggers.
-
+%%
 -module(dht_routing).
 
 -export([new/1]).
@@ -36,8 +36,8 @@
 % server will tolerate a node to be disconnected before it
 % attempts to refresh the bucket.
 %
--define(RANGE_TIMEOUT, 5 * 60 * 1000).
--define(NODE_TIMEOUT, 10 * 60 * 1000).
+-define(RANGE_TIMEOUT, 15 * 60 * 1000).
+-define(NODE_TIMEOUT, 15 * 60 * 1000).
 
 -record(routing, {
     table,
@@ -54,7 +54,7 @@ new(Tbl) ->
     F = fun(Node, S1) -> {_, S2} = insert(Node, S1), S2 end,
     State = #routing {
         table = Tbl,
-        ranges = {?RANGE_TIMEOUT, init_range_timers(Now, Tbl)}
+        ranges = init_range_timers(Now, Tbl)
     },
     {ok, ID, lists:foldl(F, State, Nodes)}.
 
@@ -90,16 +90,17 @@ adjoin(Node, #routing { table = Tbl, nodes = NT } = Routing) ->
         {not_inserted, Routing#routing { table = T }};
       true ->
         %% Update the timers, if they need to change
-        TimerRef = node_timer_from(Now, ?NODE_TIMEOUT, NT),
-        NewState = Routing#routing { nodes = NT#{ Node => {Now, TimerRef} } },
+        TRef = mk_timer(Now, ?NODE_TIMEOUT, {inactive_node, Node}),
+        NewState = Routing#routing { nodes = timer_add(Node, Now, TRef, NT) },
         {ok, update_ranges(Tbl, Now, NewState)}
     end.
 
 update_ranges(OldTbl, Now, #routing { table = NewTbl } = State) ->
     PrevRanges = dht_routing_table:ranges(OldTbl),
     NewRanges = dht_routing_table:ranges(NewTbl),
-    Operations = [{del, R} || R <- ordsets:subtract(PrevRanges, NewRanges)]
-    	++ [{add, R} || R <- ordsets:subtract(NewRanges, PrevRanges)],
+    Operations = lists:append(
+        [{del, R} || R <- ordsets:subtract(PrevRanges, NewRanges)],
+        [{add, R} || R <- ordsets:subtract(NewRanges, PrevRanges)]),
     fold_update_ranges(Operations, Now, State).
     
 fold_update_ranges(Ops, Now,
@@ -113,7 +114,7 @@ fold_update_ranges(Ops, Now,
         ({add, R}, TM) ->
             Members = dht_routing_table:members(R, Tbl),
             Recent = timer_oldest(Members, NT),
-            TRef = range_timer_from(Now, Recent, R),
+            TRef = mk_timer(Recent, ?RANGE_TIMEOUT, {inactive_range, R}),
             timer_add(R, Now, TRef, TM)
     end,
     Routing#routing { ranges = lists:foldl(F, RT, Ops) }.
@@ -127,10 +128,9 @@ remove(Node, #routing { table = Tbl, nodes = NT} = State) ->
     }.
 
 refresh_node(Node, #routing { nodes = NT} = Routing) ->
-    Now = dht_time:monotonic_time(),
-    {LastActive, _} = maps:get(Node, NT),
-    T = maps:remove(Node, NT),
-    TRef = node_timer_from(Now, ?NODE_TIMEOUT, Node),
+    #{ last_activity := LastActive } = maps:get(Node, NT),
+    T = timer_delete(Node, NT),
+    TRef = mk_timer(dht_time:monotonic_time(), ?NODE_TIMEOUT, Node),
     Routing#routing { nodes = timer_add(Node, LastActive, TRef, T)}.
 
 refresh_range_by_node({ID, _, _}, #routing { table = Tbl, ranges = RT } = Routing) ->
@@ -141,16 +141,15 @@ refresh_range_by_node({ID, _, _}, #routing { table = Tbl, ranges = RT } = Routin
 refresh_range(Range, Routing) ->
     refresh_range(Range, dht_time:monotonic_time(), Routing).
 
-oldest_member(Range, #routing { table = Tbl, nodes = NT }) ->
+refresh_range(Range, Timepoint, #routing { ranges = RT, nodes = NT, table = Tbl } = Routing) ->
+    %% Find the oldest member in the range and use that as the last activity
+    %% point for the range.
     Members = dht_routing_table:members(Range, Tbl),
-    timer_oldest(Members, NT).
-
-refresh_range(Range, Timepoint, #routing { ranges = RT } = Routing) ->
-    MostRecent = oldest_member(Range, Routing),
+    MostRecent = timer_oldest(Members, NT),
 
     %% Update the range timer to the oldest member
-    TmpR = maps:remove(Range, RT),
-    RTRef = range_timer_from(Timepoint, MostRecent, Range),
+    TmpR = timer_delete(Range, RT),
+    RTRef = mk_timer(MostRecent, ?RANGE_TIMEOUT, {inactive_range, Range}),
     NewRT = timer_add(Range, Timepoint, RTRef, TmpR),
     %% Insert the new data
     Routing#routing { ranges = NewRT}.
@@ -158,13 +157,13 @@ refresh_range(Range, Timepoint, #routing { ranges = RT } = Routing) ->
 node_timer_state(Node, #routing { nodes = NT} = S) ->
     case is_member(Node, S) of
         false -> not_member;
-        true -> timer_state(Node, ?NODE_TIMEOUT, NT)
+        true -> timer_state({node, Node}, NT)
     end.
 
 range_timer_state(Range, #routing { table = Tbl, ranges = RT}) ->
     case dht_routing_table:is_range(Range, Tbl) of
         false -> not_member;
-        true -> timer_state(Range, ?RANGE_TIMEOUT, RT)
+        true -> timer_state({range, Range}, RT)
     end.
 
 range_state(Range, #routing { table = Tbl } = Routing) ->
@@ -178,83 +177,87 @@ export(#routing { table = Tbl }) -> Tbl.
 node_list(#routing { table = Tbl }) -> dht_routing_table:node_list(Tbl).
 
 neighbors(ID, K, #routing { table = Tbl, nodes = NT }) ->
-    Filter = fun(Node) -> not timeout(Node, ?NODE_TIMEOUT, NT) end,
+    Filter = fun(N) -> timer_state({node, N}, NT) =:= good end,
     dht_routing_table:closest_to(ID, Filter, K, Tbl).
 
 inactive(Nodes, nodes, #routing { nodes = Timers }) ->
-    [N || N <- Nodes, node_timed_out(N, Timers)].
+    [N || N <- Nodes, timer_state({node, N}, Timers) /= good].
     
 %% INTERNAL FUNCTIONS
 %% ------------------------------------------------------
 
-timer_state(X, Timeout, Table) ->
-    {_, TRef} = maps:get(X, Table),
-    case dht_time:read_timer(TRef) == false of
-       true -> canceled;
-       false ->
-           case timeout(X, Timeout, Table) of
-               true -> timeout;
-               false -> ok
-           end
-    end.
-
 init_range_timers(Now, Tbl) ->
     Ranges = dht_routing_table:ranges(Tbl),
     F = fun(R, Acc) ->
-        TRef = range_timer_from(Now, Now, R),
-        timer_add(R, Now, TRef, Acc)
+        Ref = mk_timer(Now, ?RANGE_TIMEOUT, {inactive_range, R}),
+        timer_add(R, Now, Ref, Acc)
     end,
     lists:foldl(F, #{}, Ranges).
 
 active(Nodes, nodes, #routing { nodes = Timers }) ->
-    [N || N <- Nodes, not node_timed_out(N, Timers)].
-
-node_timed_out(Item, Timers) ->
-    {LastActive, _} = maps:get(Item, Timers),
-    ms_since(LastActive) > ?NODE_TIMEOUT.
+    [N || N <- Nodes, timer_state({node, N}, Timers) =:= good].
 
 timer_delete(Item, Timers) ->
-    {_, TRef} = maps:get(Item, Timers),
+    #{ timer_ref := TRef } = V = maps:get(Item, Timers),
     _ = erlang:cancel_timer(TRef),
-    maps:remove(Item, Timers).
+    maps:update(Item, V#{ timer_ref := undefined }, Timers).
 
-timer_add(Item, ATime, TRef, Timers) ->
-    Timers#{ Item => {ATime, TRef} }.
+timer_add(Item, ActivityTime, TRef, Timers) ->
+    Timers#{ Item => #{ last_activity => ActivityTime, timer_ref => TRef, timeout_count => 0 } }.
 
 timer_oldest([], _) -> dht_time:monotonic_time(); % None available
 timer_oldest(Items, Timers) ->
-    lists:min([element(1, maps:get(K, Timers)) || K <- Items]).
+    Activities = [LA || K <- Items, #{ last_activity := LA } = maps:get(K, Timers)],
+    lists:min(Activities).
 
-timer_from(Time, Timeout, Msg) ->
-    Interval = ms_between(Time, Timeout),
-    dht_time:send_after(Interval, self(), Msg).
+%% mk_timer/3 creates a new timer based on starting-point and an interval
+%% Given `Start', the point in time when the timer should start, and an interval,
+%% construct a timer that triggers at the end of the Start+Interval window.
+%%
+%% Start is in native time scale, Interval is in milli_seconds.
+mk_timer(Start, Interval, Msg) ->
+    Age = age(Start),
+    dht_time:send_after(monus(Interval, Age), self(), Msg).
+    
+%% monus/2 is defined on integers in the obvious way (look up the Wikipedia article)
+monus(A, B) when A > B -> A - B;
+monus(A, B) when A =< B-> 0.
 
-%% In the best case, the bucket should time out N seconds
-%% after the first node in the bucket timed out. If that node
-%% can't be replaced, a bucket refresh should be performed
-%% at most every N seconds, based on when the bucket was last
-%% marked as active, instead of _constantly_.
-range_timer_from(Time, LeastRecent, Range) when LeastRecent < Time ->
-    timer_from(Time, ?RANGE_TIMEOUT, {inactive_range, Range});
-range_timer_from(Time, LeastRecent, Range)
-	when LeastRecent >= Time ->
-    timer_from(LeastRecent, 2*?NODE_TIMEOUT, {inactive_range, Range}).
-
-node_timer_from(Time, Timeout, Node) ->
-    Msg = {inactive_node, Node},
-    timer_from(Time, Timeout, Msg).
-
-ms_since(Time) ->
-    Point = dht_time:monotonic_time(),
-    dht_time:convert_time_unit(Point - Time, native, milli_seconds).
-
-ms_between(Time, Timeout) ->
-    case Timeout - ms_since(Time) of
-      MS when MS =< 0 -> Timeout; %% @todo Consider if this should really be 0!
-      MS -> MS
+%% Age returns the time since a point in time T.
+%% The age function is not time-warp resistant.
+age(T) ->
+    Now = dht_time:monotonic_time(),
+    age(T, Now).
+    
+%% Return the age compared to the current point in time
+age(T, Now) when T =< Now -> dht_time:convert_time_unit(Now - T, native, milli_seconds);
+age(T, Now) when T > Now -> exit(time_warp_future).
+            
+%% @doc timer_state/2 returns the state of a timer, based on BitTorrent Enhancement Proposal 5
+%% @end
+-spec timer_state({node, N} | {range, R}, Timers) ->
+    good | {questionable, non_neg_integer()} | bad
+	when
+	  N :: dht:peer(),
+	  R :: dht:range(),
+	  Timers :: maps:map().
+    
+timer_state({node, N}, NTs) ->
+    case maps:get(N, NTs, undefined) of
+        #{ timeout_count := K } when K > 2 -> bad;
+        #{ last_activity := LA } ->
+            Age = age(LA),
+            case Age < ?NODE_TIMEOUT of
+              true -> good;
+              false -> {questionable, Age - ?NODE_TIMEOUT}
+            end;
+        {error, _} -> bad
+    end;
+timer_state({range, R}, RTs) ->
+    #{ last_activity := MR } = maps:get(R, RTs),
+    Age = age(MR),
+    case Age < ?RANGE_TIMEOUT of
+        true -> ok;
+        false -> need_refresh
     end.
-
-timeout(Item, Timeout, TimerTree) ->
-    {LastActive, _} = maps:get(Item, TimerTree),
-    ms_since(LastActive) > Timeout.
 

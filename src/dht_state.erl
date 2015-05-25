@@ -195,8 +195,8 @@ dump_state(Filename) ->
 -spec keepalive(dht:node_t()) -> 'ok'.
 keepalive({ID, IP, Port} = Node) ->
     case ping(IP, Port) of
-	ID -> notify(Node, request_success);
-	pang -> notify(Node, request_timeout)
+	ID -> request_success(Node);
+	pang -> request_timeout(Node)
     end.
 
 %% @doc ping/2 pings an IP/Port pair in order to determine its NodeID
