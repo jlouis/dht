@@ -34,7 +34,6 @@
 	refresh_range_by_node/2
 ]).
 
-
 %
 % The bucket refresh timeout is the amount of time that the
 % server will tolerate a node to be disconnected before it
@@ -55,10 +54,12 @@ new(Tbl) ->
     Now = dht_time:monotonic_time(),
     Nodes = dht_routing_table:node_list(Tbl),
     ID = dht_routing_table:node_id(Tbl),
+    RangeTable = init_range_timers(Now, Tbl),
+    NodeTable = init_nodes(Now, Nodes),
     State = #routing {
         table = Tbl,
-        ranges = init_range_timers(Now, Tbl),
-        nodes = init_nodes(Now, Nodes)
+        ranges = RangeTable,
+        nodes = NodeTable
     },
     {ok, ID, State}.
 
