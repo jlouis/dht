@@ -416,7 +416,7 @@ range_state(Range) ->
     
 range_state_pre(S) -> initialized(S).
 
-%% range_state_args(_S) -> [dht_eqc:range()].
+range_state_args(_S) -> [dht_eqc:range()].
 
 range_state_callouts(S, [Range]) ->
     ?MATCH(Members,
