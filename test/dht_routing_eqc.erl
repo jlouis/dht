@@ -7,47 +7,57 @@
 %% for timers.
 %%
 %% A "routing" construction is a handle to the underlying routing table, together with
-%% timers for the nodes in the RT and the ranges in the RT. The purpose of this module
+%% timing for the nodes in the RT and the ranges in the RT. The purpose of this module
 %% is to provide a high-level view of the routing table, where each operation also tracks
 %% the timing state:
 %%
-%% Ex. Adding a node to a routing table, introduces a new timer for that node, always.
+%% Ex. Adding a node to a routing table, introduces a new timing entry for that node, always.
 %%
 %% To track timing information, without really having a routing table, we mock the table.
 %% The table is always named `rt_ref' and all state of the table is tracked in the model state.
 %% The `dht_time' module is also mocked, and time is tracked in the model state. This allows
 %% us to test the routing/timing code under various assumptions about time and timing.
 %%
-%% One might think that there is a simply relationship between a node in the RT and having a
-%% timer for that node, but this is not true. If a timer triggers, we will generally ping that node
-%% to check if it is still up. But this is temporal and the result of that ping comes later. So you
-%% might have nodes in the RT which has no current timer. Also, dead nodes lingers in the RT
-%% until we find better nodes for that range. Because nodes come and go in the DHT in general,
-%% so remember where there were a node back in the day will help tremendously.
+%% The advantage of the splitting model is that when testing, we can use a much simpler routing
+%% table where every entry is known precisely. This means we can avoid having to model the
+%% routing table in detail, which is unwieldy for a lot of situations. In turn, this model overspecifies
+%% the routing table for the rest of the system, but since the actual routing table is a subset obeying
+%% the same commands, this idea works.
 %%
-%% TODO: One consideration could be to add Nodes and Ranges to the initial model state
-%%   as well. This would allow us to better handle queries on what nodes are in there, and
-%%   what we can do with those nodes.
+%% One might think that there is a simply relationship between a node in the RT and having a
+%% timer for that node, but this is not true. Nodes can be defined to be in one of 3 possible states:
+%%
+%% · Good—we have succesfully communicated with the node recently
+%% · Questionable—we have not communicated with this node recently
+%% · Bad—we have tried communication with the node, but communication has systematically timed
+%%   out.
+%%
+%%
+%% NODES
+%%
+%% We don't track the Node state with a timer. Rather, we note the last succesful point of
+%% communication. This means a simple calculation defines when a node becomes questionable,
+%% and thus needs a refresh. The existence of a refreshing process for the node is the note that
+%% the node should be refreshed, and that process also acts like the timeout for the refresh.
+%%
+%% RANGES
+%%
+%% TODO: Describe ranges
+%%
 %%
 %% HOW TIMERS WORK IN THE ROUTING SYSTEM
 %%
-%% The routing system uses a map() to store a mapping from a X => {Active, TRef} where
-%% X is either a Node or a Range, Active is the point in time when the item X was last active,
-%% and TRef is the timer reference for that item. This means that at time point
-%% τ = Active+?NODE_TIMEOUT, we have the timer corresponding to TRef triggering.
+%% The routing system uses a map() to store a mapping
 %%
-%% Computation determines if the timer has triggered yet, or is to trigger later.
+%%     Node => #{ last_activity => LA, timeout_count => N, or
+%%     Range => #{ last_activity => LA }, where
 %%
-%% MOCKING THE ROUTING TABLE
+%% LA is the point in time when the item Node/Range was last active,
+%% and timeout_count is the number of times that node has timed out.
 %%
-%% The “Trick” in this model is to mock the routing table. This means that we can do
-%% something which is *not* true to the real routing table: we know exactly what elements
-%% are in the table. The table is a list of nodes and a list of ranges, with no correspondance
-%% to what nodes are in what ranges. Because this piece of the code doesn't rely on that
-%% fact.
-%%
-%% By using a mocked simplified routing table, it is possible to check this module for
-%% correctness without modeling a routing table which is complex in nature.
+%% This means that for any point in time τ, we can measure the age(T) = τ-T, and
+%% check if the age is larger than, say, ?NODE_TIMEOUT. This defines when a node is
+%% questionable. The timeout_count defines a bad node, if it grows too large.
 -module(dht_routing_eqc).
 -compile(export_all).
 
@@ -56,8 +66,8 @@
 
 %% We define a name for the tracker that keeps the state of the routing system:
 -define(DRIVER, dht_routing_tracker).
--define(NODE_TIMEOUT, 1000).
--define(RANGE_TIMEOUT, 500).
+-define(NODE_TIMEOUT, 15 * 60 * 1000).
+-define(RANGE_TIMEOUT, 15 * 60 * 1000).
 
 -type time() :: integer().
 -type time_ref() :: integer().
@@ -102,10 +112,7 @@ api_spec() ->
           functions = [
             #api_fun { name = convert_time_unit, arity = 3 },
             #api_fun { name = monotonic_time, arity = 0 },
-            #api_fun { name = read_timer, arity = 1 },
-            #api_fun { name = send_after, arity = 3 },
-            #api_fun { name = system_time, arity = 0 },
-            #api_fun { name = timestamp, arity = 0 }
+            #api_fun { name = send_after, arity = 3 }
           ]},
         #api_module {
           name = dht_routing_table,
@@ -124,18 +131,24 @@ api_spec() ->
 
 %% INITIAL STATE
 %% --------------------------------------------------
+
+%% Generating an initial state requires us to generate the Ranges first, and then generate
+%% Nodes within the ranges. This allows us to answer consistently for a range.
 gen_state() ->
-    Nodes = list(dht_eqc:peer()),
-    Ranges = list(dht_eqc:range()),
-    #state {
-      nodes = Nodes,
-      ranges = Ranges,
-      init = false,
-      id = dht_eqc:id(),
-      time = int(),
-      node_timers = [],
-      range_timers = []
-    }.
+  ?LET(Ranges, list(dht_eqc:range()),
+    ?LET(Nodes, [{list(dht_eqc:peer()), R} || R <- Ranges],
+      begin
+        NodesList = [{N, R} || {Ns, R} <- Nodes, N <- Ns],
+        #state {
+          nodes = NodesList,
+          ranges = Ranges,
+          init = false,
+          id = dht_eqc:id(),
+          time = int(),
+          node_timers = [],
+          range_timers = []
+        }
+      end)).
 
 %% NEW
 %% --------------------------------------------------
@@ -160,13 +173,12 @@ new_args(_S) -> [rt_ref].
 %% Nodes and Ranges we generated into the system. The assumption is that
 %% these Nodes and Ranges are ones which are initialized via the internal calls
 %% init_range_timers and init_node_timers.
-new_callouts(#state { id = ID, time = T, nodes = Nodes, ranges = Ranges }, [_]) ->
+new_callouts(#state { id = ID, time = T, ranges = Ranges } = S, [rt_ref]) ->
     ?CALLOUT(dht_time, monotonic_time, [], T),
-    ?CALLOUT(dht_routing_table, node_list, [rt_ref], Nodes),
+    ?CALLOUT(dht_routing_table, node_list, [rt_ref], current_nodes(S)),
     ?CALLOUT(dht_routing_table, node_id, [rt_ref], ID),
-    ?CALLOUT(dht_routing_table, ranges, [rt_ref], Ranges),
     ?APPLY(init_range_timers, [Ranges]),
-    ?APPLY(init_node_timers, [Nodes]),
+    ?APPLY(init_nodes, [current_nodes(S)]),
     ?RET(ID).
   
 %% Track that we initialized the system
@@ -316,7 +328,14 @@ neighbors_callouts(S, [ID, K]) ->
     ?MATCH(R,
       ?CALLOUT(dht_routing_table, closest_to, [ID, ?WILDCARD, K, rt_ref],
     	  rt_nodes(S))),
-    ?RET(R).
+    case R of
+       L when length(L) == K -> ?RET(L);
+       L ->
+         ?MATCH(Q,
+           ?CALLOUT(dht_routing_table, closest_to, [ID, ?WILDCARD, K-length(L), rt_ref],
+             rt_nodes(S))),
+         ?RET(L ++ Q)
+    end.
 
 %% NODE_LIST
 %% --------------------------------------------------
@@ -551,7 +570,8 @@ active_nodes_callouts(#state { time = T } = S, [Nodes]) ->
 
 %% Initialization of range timers follows the same general structure:
 %% we successively add a new range timer to the state.
-init_range_timers_callouts(#state { }, [Ranges]) ->
+init_range_timers_callouts(#state { ranges = RS }, [Ranges]) ->
+    ?CALLOUT(dht_routing_table, ranges, [rt_ref], RS),
     ?SEQ([?APPLY(add_range_timer, [R]) || R <- Ranges]).
       
 %% INIT_NODE_TIMERS (Internal call)
@@ -564,8 +584,9 @@ init_range_timers_callouts(#state { }, [Ranges]) ->
 %% will all say they are members! This means something is wrong, because
 %% if they are already, this will be a no-op, and no timer will be added. Figure
 %% out what is wrong here and fix it.
-init_node_timers_callouts(_, [Nodes]) ->
-    ?SEQ([?APPLY(insert, [N]) || N <- Nodes]).
+init_nodes_callouts(_, [_Nodes]) ->
+    ?CALLOUT(dht_time, convert_time_unit, [?NODE_TIMEOUT, milli_seconds, native],
+          ?NODE_TIMEOUT).
 
 %% TIME_CHECK (Internal call)
 %% --------------------------------------------------
@@ -772,10 +793,10 @@ node_timers(#state { node_timers = NTs }, nodes) ->
 
 rt_node(#state { nodes = Ns }) -> elements(Ns).
 
-rt_nodes(#state { nodes = Ns }) ->
+rt_nodes(#state { nodes = Ns } = S) ->
     case Ns of
         [] -> [];
-        _ -> list(elements(Ns))
+        _ -> list(elements(current_nodes(S)))
     end.
     
 dedup(Xs) ->
@@ -796,3 +817,6 @@ assert_nodes_in_model(#state { nodes = Ns } = S, [N|Rest]) ->
         true -> assert_nodes_in_model(S, Rest);
         false -> ?FAIL({not_a_node, N})
     end.
+
+current_nodes(#state { nodes = NS }) ->
+    [N || {N, _Range} <- NS].
