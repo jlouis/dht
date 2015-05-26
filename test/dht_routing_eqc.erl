@@ -42,8 +42,7 @@
 %%
 %% RANGES
 %%
-%% TODO: Describe ranges
-%%
+%% TODO: Describe the ranges
 %%
 %% HOW TIMERS WORK IN THE ROUTING SYSTEM
 %%
@@ -58,6 +57,13 @@
 %% This means that for any point in time τ, we can measure the age(T) = τ-T, and
 %% check if the age is larger than, say, ?NODE_TIMEOUT. This defines when a node is
 %% questionable. The timeout_count defines a bad node, if it grows too large.
+%%
+%% The model uses a simple list to model the routing system.
+
+%% TODO—Still missing work in the model:
+%% · insert/2 needs to be enabled in the model.
+%% · range_time_state/2 needs to be modeled correctly, as it is currently being skipped
+
 -module(dht_routing_eqc).
 -compile(export_all).
 
@@ -370,27 +376,55 @@ node_timer_state(Node) ->
           {ok, dht_routing:node_timer_state(Node, T), T}
       end).
       
-node_timer_state_pre(S) -> initialized(S).
+node_timer_state_pre(S) -> initialized(S) andalso has_nodes(S).
 
-node_timer_state_args(_S) -> [dht_eqc:peer()].
+node_timer_state_args(S) -> [elements(current_nodes(S))].
 
-node_timer_state_callouts(#state { nodes = Ns } = S, [Node]) ->
+node_timer_state_callouts(S, [Node]) ->
     ?MATCH(R,
         ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref],
-            lists:member(Node, Ns))),
+            lists:member(Node, current_nodes(S)))),
     case R of
         false -> ?RET(not_member);
         true ->
-            {ok, TRef} = timer_ref(S, Node, node),
-            Timeout = timer_timeout(S, TRef),
-            ?MATCH(Timer,
-                ?CALLOUT(dht_time, read_timer, [TRef], timer_state(S, TRef))),
-            case Timer of
-                false -> ?RET(canceled);
-                true when Timeout -> ?RET(timeout);
-                true when (not Timeout) -> ?RET(ok)
+            ?APPLY(timer_state, [node, Node])
+    end.
+
+timer_state_callouts(#state { node_timers = NT, time = T }, [node, Node]) ->
+    case lists:keyfind(Node, 1, NT) of
+        {_, _, Count} when Count > 2 -> ?RET(bad);
+        {_, At, _} ->
+            ?CALLOUT(dht_time, monotonic_time, [], T),
+            Age = T - At,
+            ?CALLOUT(dht_time, convert_time_unit, [Age, native, milli_seconds], Age),
+            case Age < ?NODE_TIMEOUT of
+                true -> ?RET(good);
+                false -> ?RET({questionable, Age - ?NODE_TIMEOUT})
             end
     end.
+
+%% NODE_TIMEOUT
+%% --------------------------------------------------
+
+%% The node_timeout/2 call is invoked whenever a node doesn't respond within the allotted
+%% time. The policy is, that the nodes ends up with a bad state once it has increased its timer
+%% enough times.
+node_timeout(Node) ->
+    eqc_lib:bind(?DRIVER,
+      fun(T) ->
+        {ok, ok, dht_routing:node_timeout(Node, T)}
+      end).
+      
+node_timeout_pre(S) -> initialized(S) andalso has_nodes(S).
+
+node_timeout_args(S) -> [elements(current_nodes(S))].
+
+node_timeout_callouts(_S, [_Node]) ->
+    ?RET(ok).
+
+node_timeout_next(#state { node_timers = NT } = S, _, [Node]) ->
+    {Node, LA, Count} = lists:keyfind(Node, 1, NT),
+    S#state { node_timers = lists:keyreplace(Node, 1, NT, {Node, LA, Count+1}) }.
 
 %% RANGE_MEMBERS
 %% --------------------------------------------------
@@ -505,7 +539,8 @@ refresh_range_by_node_callouts(S, [{ID, _, _} = Node]) ->
     ?MATCH(Range,
         ?CALLOUT(dht_routing_table, range, [ID, rt_ref], range_by_node(S, Node))),
     Activity = find_range_activity(S, Range),
-    ?APPLY(refresh_range, [Range, Activity]).
+    ?APPLY(refresh_range, [Range, Activity]),
+    ?RET(ok).
     
 %% REFRESH_RANGE
 %% --------------------------------------------------
@@ -514,19 +549,20 @@ refresh_range(Range) ->
     eqc_lib:bind(?DRIVER,
       fun(T) ->
         R = dht_routing:refresh_range(Range, T),
-        {ok, R, R}
+        {ok, ok, R}
       end).
       
 refresh_range_pre(S) -> initialized(S) andalso has_nodes(S).
 
-%% refresh_range_args(_S) -> [dht_eqc:range()].
+refresh_range_args(S) -> [rt_range(S)].
 
 refresh_range_callouts(S, [Range]) ->
     ?MATCH(Oldest, ?APPLY(range_last_activity, [Range])),
     refresh_range_callouts(S, [Range, Oldest]);
 refresh_range_callouts(_S, [Range, Timestamp]) ->
     ?APPLY(remove_range_timer, [Range]),
-    ?APPLY(add_range_timer_at, [Range, Timestamp]).
+    ?APPLY(add_range_timer_at, [Range, Timestamp]),
+    ?RET(ok).
 
 range_last_activity_callouts(#state { time = T } = S, [Range]) ->
     ?MATCH(Members,
@@ -694,12 +730,12 @@ add_range_timer_callouts(#state { tref = C, time = T }, [_Range]) ->
     ?CALLOUT(dht_time, convert_time_unit, [?WILDCARD, native, milli_seconds], T),
     ?CALLOUT(dht_time, send_after, [?WILDCARD, ?WILDCARD, ?WILDCARD], C).
 
-add_range_timer_at_callouts(#state { tref = C, time = T }, [_Range, _At]) ->
+add_range_timer_at_callouts(#state { tref = C, time = T }, [_Range, At]) ->
     ?CALLOUT(dht_time, monotonic_time, [], T),
-    ?CALLOUT(dht_time, convert_time_unit, [0, native, milli_seconds], T),
-    ?CALLOUT(dht_time, send_after, [0, ?WILDCARD, ?WILDCARD], C).
+    Point = T - At,
+    ?CALLOUT(dht_time, convert_time_unit, [Point, native, milli_seconds], Point),
+    ?CALLOUT(dht_time, send_after, [monus(?RANGE_TIMEOUT, Point), ?WILDCARD, ?WILDCARD], C).
     
-
 %% Adding a range timer transitions the system by keeping track of the timer state
 %% and the fact that a range timer was added.
 add_range_timer_next(
@@ -845,6 +881,8 @@ rt_nodes(#state { nodes = Ns } = S) ->
         _ -> list(elements(current_nodes(S)))
     end.
 
+rt_range(S) -> elements(current_ranges(S)).
+
 range_by_node(#state { nodes = Ns }, Node) ->
     {Node, Range} = lists:keyfind(Node, 1, Ns),
     Range.
@@ -873,6 +911,11 @@ assert_nodes_in_model(#state { nodes = Ns } = S, [N|Rest]) ->
         false -> ?FAIL({not_a_node, N})
     end.
 
+current_ranges(#state { ranges = RS }) -> RS.
+
 current_nodes(#state { nodes = NS }) ->
     [N || {N, _Range} <- NS].
+
+monus(A, B) when A > B -> A - B;
+monus(A, B) when A =< B -> 0.
 

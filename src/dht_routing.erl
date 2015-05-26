@@ -232,8 +232,8 @@ range_timer_add(Item, ActivityTime, TRef, Timers) ->
 
 timer_oldest([], _) -> dht_time:monotonic_time(); % None available
 timer_oldest(Items, Timers) ->
-    Activities = [LA || K <- Items, #{ last_activity := LA } = maps:get(K, Timers)],
-    lists:min(Activities).
+    Activities = [maps:get(K, Timers) || K <- Items],
+    lists:min([A || #{ last_activity := A } <- Activities]).
 
 %% monus/2 is defined on integers in the obvious way (look up the Wikipedia article)
 monus(A, B) when A > B -> A - B;
@@ -246,8 +246,10 @@ age(T) ->
     age(T, Now).
     
 %% Return the age compared to the current point in time
-age(T, Now) when T =< Now -> dht_time:convert_time_unit(Now - T, native, milli_seconds);
-age(T, Now) when T > Now -> exit(time_warp_future).
+age(T, Now) when T =< Now ->
+    dht_time:convert_time_unit(Now - T, native, milli_seconds);
+age(T, Now) when T > Now ->
+    exit(time_warp_future).
 
 %% mk_timer/3 creates a new timer based on starting-point and an interval
 %% Given `Start', the point in time when the timer should start, and an interval,
@@ -275,8 +277,7 @@ timer_state({node, N}, NTs) ->
             case Age < ?NODE_TIMEOUT of
               true -> good;
               false -> {questionable, Age - ?NODE_TIMEOUT}
-            end;
-        {error, _} -> bad
+            end
     end;
 timer_state({range, R}, RTs) ->
     #{ last_activity := MR } = maps:get(R, RTs),
