@@ -194,6 +194,9 @@ neighbors(ID, K, #routing { table = Tbl, nodes = NT }) ->
 
 inactive(Nodes, nodes, #routing { nodes = Timers }) ->
     [N || N <- Nodes, timer_state({node, N}, Timers) /= good].
+
+active(Nodes, nodes, #routing { nodes = Timers }) ->
+    [N || N <- Nodes, timer_state({node, N}, Timers) =:= good].
     
 %% INTERNAL FUNCTIONS
 %% ------------------------------------------------------
@@ -217,8 +220,6 @@ init_nodes(Now, Nodes) ->
     F = fun(N) -> {N, #{ last_activity => Now - Timeout, timeout_count => 0 }} end,
     maps:from_list([F(N) || N <- Nodes]).
 
-active(Nodes, nodes, #routing { nodes = Timers }) ->
-    [N || N <- Nodes, timer_state({node, N}, Timers) =:= good].
 
 timer_delete(Item, Timers) ->
     #{ timer_ref := TRef } = V = maps:get(Item, Timers),

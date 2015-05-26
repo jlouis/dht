@@ -196,6 +196,25 @@ new_callouts(#state { id = ID, time = T, ranges = Ranges } = S, [rt_ref]) ->
 %% Track that we initialized the system
 new_next(State, _, _) -> State#state { init = true }.
 
+%% ACTIVE
+%% --------------------------------------------------
+
+active(Nodes) ->
+    eqc_lib:bind(?DRIVER,
+      fun(T) -> {ok, dht_routing:active(Nodes, nodes, T), T}
+    end).
+    
+active_pre(S) -> initialized(S).
+
+active_args(S) -> [rt_nodes(S)].
+
+active_pre(S, [Nodes]) ->
+    Current = current_nodes(S),
+    lists:all(fun(N) -> lists:member(N, Current) end, Nodes).
+
+active_callouts(_S, [Nodes]) ->
+    ?APPLY(active_nodes, [Nodes]).
+
 %% CAN_INSERT
 %% --------------------------------------------------
 
@@ -218,25 +237,6 @@ can_insert_callouts(_S, [Node]) ->
     ?CALLOUT(dht_routing_table, insert, [Node, rt_ref], rt_ref),
     ?MATCH(R, ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref], bool())),
     ?RET(R).
-
-%% ACTIVE
-%% --------------------------------------------------
-
-active(Nodes) ->
-    eqc_lib:bind(?DRIVER,
-      fun(T) -> {ok, dht_routing:active(Nodes, nodes, T), T}
-    end).
-    
-active_pre(S) -> initialized(S).
-
-active_args(S) -> [rt_nodes(S)].
-
-active_pre(S, [Nodes]) ->
-    Current = current_nodes(S),
-    lists:all(fun(N) -> lists:member(N, Current) end, Nodes).
-
-active_callouts(_S, [Nodes]) ->
-    ?APPLY(active_nodes, [Nodes]).
 
 %% INACTIVE
 %% --------------------------------------------------
@@ -418,19 +418,6 @@ node_timer_state_callouts(S, [Node]) ->
             ?APPLY(timer_state, [node, Node])
     end.
 
-timer_state_callouts(#state { node_timers = NT, time = T }, [node, Node]) ->
-    case lists:keyfind(Node, 1, NT) of
-        {_, _, Count} when Count > 2 -> ?RET(bad);
-        {_, At, _} ->
-            ?CALLOUT(dht_time, monotonic_time, [], T),
-            Age = T - At,
-            ?CALLOUT(dht_time, convert_time_unit, [Age, native, milli_seconds], Age),
-            case Age < ?NODE_TIMEOUT of
-                true -> ?RET(good);
-                false -> ?RET({questionable, Age - ?NODE_TIMEOUT})
-            end
-    end.
-
 %% NODE_TIMEOUT
 %% --------------------------------------------------
 
@@ -505,24 +492,21 @@ range_timer_state(Range) ->
       
 range_timer_state_pre(S) -> initialized(S).
 
-range_timer_state_args(_S) -> [dht_eqc:range()].
+range_timer_state_args(S) ->
+    Range =
+      frequency(
+        [{10, rt_range(S)} || has_nodes(S)] ++
+        [{1, dht_eqc:range()}]),
+    [Range].
 
-range_timer_state_callouts(#state { ranges = RS } = S, [Range]) ->
+range_timer_state_callouts(#state { ranges = RS }, [Range]) ->
     ?MATCH(R,
         ?CALLOUT(dht_routing_table, is_range, [Range, rt_ref],
             lists:member(Range, RS))),
     case R of
         false -> ?RET(not_member);
         true ->
-            {ok, TRef} = timer_ref(S, Range, range),
-            Timeout = timer_timeout(S, TRef),
-            ?MATCH(Timer,
-                ?CALLOUT(dht_time, read_timer, [TRef], timer_state(S, TRef))),
-            case Timer of
-                false -> ?RET(canceled);
-                true when Timeout -> ?RET(timeout);
-                true when (not Timeout) -> ?RET(ok)
-            end
+            ?APPLY(timer_state, [range, Range])
     end.
 
 %% REFRESH_NODE
@@ -601,6 +585,32 @@ range_last_activity_callouts(#state { time = T } = S, [Range]) ->
           ?RET(R);
         Min ->
           ?RET(Min)
+    end.
+
+%% TIMER STATE (Internal call)
+%% --------------------------------------------------
+
+%% This call implements an internal call for querying the current state of the timer.
+timer_state_callouts(#state { node_timers = NT, time = T }, [node, Node]) ->
+    case lists:keyfind(Node, 1, NT) of
+        {_, _, Count} when Count > 2 -> ?RET(bad);
+        {_, At, _} ->
+            ?CALLOUT(dht_time, monotonic_time, [], T),
+            Age = T - At,
+            ?CALLOUT(dht_time, convert_time_unit, [Age, native, milli_seconds], Age),
+            case Age < ?NODE_TIMEOUT of
+                true -> ?RET(good);
+                false -> ?RET({questionable, Age - ?NODE_TIMEOUT})
+            end
+    end;
+timer_state_callouts(#state { range_timers = RT, time = T }, [range, Range]) ->
+    {Range, At, _} = lists:keyfind(Range, 1, RT),
+    ?CALLOUT(dht_time, monotonic_time, [], T),
+    Age = T - At,
+    ?CALLOUT(dht_time, convert_time_unit, [Age, native, milli_seconds], Age),
+    case Age < ?RANGE_TIMEOUT of
+        true -> ?RET(ok);
+        false -> ?RET(need_refresh)
     end.
 
 %% INACTIVE/ACTIVE nodes (Internal call)
