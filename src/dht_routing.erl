@@ -134,15 +134,14 @@ refresh_range_by_node({ID, _, _}, #routing { table = Tbl, ranges = RT } = Routin
     refresh_range(Range, RActive, Routing).
 
 refresh_range(Range, Routing) ->
-    refresh_range(Range, dht_time:monotonic_time(), Routing).
-
-refresh_range(Range, Timepoint, #routing { ranges = RT } = Routing) ->
     MostRecent = range_last_activity(Range, Routing),
+    refresh_range(Range, MostRecent, Routing).
 
+refresh_range(Range, MostRecent, #routing { ranges = RT } = Routing) ->
     %% Update the range timer to the oldest member
     TmpR = timer_delete(Range, RT),
     RTRef = mk_timer(MostRecent, ?RANGE_TIMEOUT, {inactive_range, Range}),
-    NewRT = range_timer_add(Range, Timepoint, RTRef, TmpR),
+    NewRT = range_timer_add(Range, MostRecent, RTRef, TmpR),
     %% Insert the new data
     Routing#routing { ranges = NewRT}.
 
@@ -222,14 +221,14 @@ active(Nodes, nodes, #routing { nodes = Timers }) ->
 
 timer_delete(Item, Timers) ->
     #{ timer_ref := TRef } = V = maps:get(Item, Timers),
-    _ = erlang:cancel_timer(TRef),
+    _ = dht_time:cancel_timer(TRef),
     maps:update(Item, V#{ timer_ref := undefined }, Timers).
 
 node_update(Item, Activity, Timers) ->
     Timers#{ Item => #{ last_activity => Activity, timeout_count => 0 }}.
 
 range_timer_add(Item, ActivityTime, TRef, Timers) ->
-    Timers#{ Item => #{ last_activity => ActivityTime, timer_ref => TRef, timeout_count => 0 } }.
+    Timers#{ Item => #{ last_activity => ActivityTime, timer_ref => TRef} }.
 
 timer_oldest([], _) -> dht_time:monotonic_time(); % None available
 timer_oldest(Items, Timers) ->
