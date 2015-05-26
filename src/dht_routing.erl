@@ -18,6 +18,7 @@
 -export([export/1]).
 
 -export([
+	active/3,
 	can_insert/2,
 	inactive/3,
 	insert/2,

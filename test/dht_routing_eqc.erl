@@ -142,8 +142,12 @@ api_spec() ->
 
 %% Generating an initial state requires us to generate the Ranges first, and then generate
 %% Nodes within the ranges. This allows us to answer consistently for a range.
-gen_state() ->
+ranges() ->
   ?LET(Ranges, list(dht_eqc:range()),
+    dedup(Ranges)).
+
+gen_state() ->
+  ?LET(Ranges, ranges(),
     ?LET(Nodes, [{list(dht_eqc:peer()), R} || R <- Ranges],
       begin
         NodesList = [{N, R} || {Ns, R} <- Nodes, N <- Ns],
@@ -215,6 +219,25 @@ can_insert_callouts(_S, [Node]) ->
     ?MATCH(R, ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref], bool())),
     ?RET(R).
 
+%% ACTIVE
+%% --------------------------------------------------
+
+active(Nodes) ->
+    eqc_lib:bind(?DRIVER,
+      fun(T) -> {ok, dht_routing:active(Nodes, nodes, T), T}
+    end).
+    
+active_pre(S) -> initialized(S).
+
+active_args(S) -> [rt_nodes(S)].
+
+active_pre(S, [Nodes]) ->
+    Current = current_nodes(S),
+    lists:all(fun(N) -> lists:member(N, Current) end, Nodes).
+
+active_callouts(_S, [Nodes]) ->
+    ?APPLY(active_nodes, [Nodes]).
+
 %% INACTIVE
 %% --------------------------------------------------
 
@@ -234,6 +257,10 @@ inactive(Nodes) ->
 inactive_pre(S) -> initialized(S).
 
 inactive_args(S) -> [rt_nodes(S)].
+
+inactive_pre(S, [Nodes]) ->
+    Current = current_nodes(S),
+    lists:all(fun(N) -> lists:member(N, Current) end, Nodes).
 
 %% The call checks the time for each node it is given
 inactive_callouts(_S, [Nodes]) ->
@@ -267,8 +294,7 @@ insert_pre(S) -> initialized(S).
 
 %% Any peer is eligible for insertion at any time. There are no limits on how and when
 %% you can do this insertion.
-%% insert_args(_S) -> [dht_eqc:peer()].
-    
+insert_args(_S) -> [dht_eqc:peer()].
 
 %% Insertion splits into several possible rules based on the state of the routing table
 %% with respect to the Node we try to insert:
@@ -284,7 +310,9 @@ insert_pre(S) -> initialized(S).
 %% internal model transition.
 %%
 insert_callouts(S, [Node]) ->
-    ?MATCH(Member, ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref], bool())),
+    ?MATCH(Member,
+        ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref],
+            lists:member(Node, current_nodes(S)) )),
     case Member of
         true -> ?RET(already_member);
         false ->
@@ -457,8 +485,8 @@ range_state_args(_S) -> [dht_eqc:range()].
 range_state_callouts(S, [Range]) ->
     ?MATCH(Members,
         ?CALLOUT(dht_routing_table, members, [Range, rt_ref], rt_nodes(S))),
-    ?MATCH(Active, ?APPLY(active_nodes, [Members])),
-    ?MATCH(Inactive, ?APPLY(inactive_nodes, [Members])),
+    ?MATCH(Active, ?APPLY(active, [Members])),
+    ?MATCH(Inactive, ?APPLY(inactive, [Members])),
     ?RET(#{ active => Active, inactive => Inactive}).
 
 %% RANGE_TIMER_STATE
@@ -665,7 +693,7 @@ remove_callouts(_S, [Node]) ->
     ?RET(ok).
 
 remove_next(#state { nodes = Nodes } = State, _, [Node]) ->
-    State#state { nodes = Nodes -- [Node] }.
+    State#state { nodes = lists:keydelete(Node, 1, Nodes) }.
 
 %% ADJOIN (Internal call)
 %% --------------------------------------------------
