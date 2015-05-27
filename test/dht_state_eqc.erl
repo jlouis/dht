@@ -21,7 +21,12 @@ api_spec() ->
 		  			#api_fun { name = export, arity = 1 },
 		  			#api_fun { name = new, arity = 1 },
 		  			#api_fun { name = node_list, arity = 1},
-		  			#api_fun { name = neighbors, arity = 3 }
+		  			#api_fun { name = neighbors, arity = 3 },
+		  			#api_fun { name = is_member, arity = 2 },
+		  			#api_fun { name = refresh_node, arity = 2 },
+		  			#api_fun { name = node_timer_state, arity = 2 },
+		  			#api_fun { name = remove_node, arity = 2 },
+		  			#api_fun { name = node_timeout, arity = 2 }
 		  		]
 		  	},
 		  	#api_module {
@@ -105,31 +110,6 @@ node_list_callouts(_S, []) ->
     ?MATCH(R, ?CALLOUT(dht_routing, node_list, [rt_ref], list(dht_eqc:peer()))),
     ?RET(R).
 
-%% NOTIFY
-%% ---------------------
-notify(Node, Event) ->
-	dht_state:notify(Node, Event).
-	
-notify_pre(S) -> initialized(S).
-
-%% notify_args(#state { node_list = Nodes }) ->
-%%    [elements(Nodes), elements([request_timeout, request_success, request_from])].
-    
-notify_pre(S, [_, _]) -> initialized(S).
-
-notify_callouts(_S, [Node, request_timeout]) ->
-    ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref], true),
-    ?RET(ok);
-notify_callouts(S, [Node, request_from]) -> notify_callouts(S, [Node, request_success]);
-notify_callouts(_S, [Node, request_success]) ->
-    ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref], true),
-    ?APPLY(cycle_bucket_timers, []),
-    ?RET(ok).
-
-cycle_bucket_timers_callouts(#state { id = ID }, []) ->
-    ?CALLOUT(dht_routing_table, range, [ID, rt_ref], range),
-    ?CALLOUT(dht_routing_table, members, [range, rt_ref], list(dht_eqc:peer())).
-
 %% PING
 %% ---------------------
 ping_pre(#state { init = S }) -> S.
@@ -179,21 +159,58 @@ keepalive_callouts(_S, [{_, IP, Port} = Node]) ->
     ?MATCH(R, ?APPLY(ping, [IP, Port])),
     case R of
         pang -> ?APPLY(request_timeout, [Node]);
-        ID -> ?RET(ok)
+        _ID -> ?RET(ok)
     end.
     
 %% REQUEST_SUCCESS
 %% ----------------
 
-request_success_callouts(_S, [_Node]) ->
-    ?RET(ok).
+request_success(Node) ->
+    dht_state:request_success(Node).
+    
+request_success_pre(S) -> initialized(S).
+
+request_success_args(_S) ->
+    [dht_eqc:peer()].
+    
+request_success_callouts(_S, [Node]) ->
+    ?MATCH(Member,
+      ?CALLOUT(dht_routing, is_member, [Node, rt_ref], bool())),
+    case Member of
+        false -> ?RET(ok);
+        true ->
+          ?CALLOUT(dht_routing, refresh_node, [Node, rt_ref], rt_ref),
+          ?RET(ok)
+    end.
 
 %% REQUEST_TIMEOUT
 %% ----------------
 
-request_timeout_callouts(_S, [_Node]) ->
-    ?RET(ok).
+request_timeout(Node) ->
+    dht_state:request_timeout(Node).
+    
+request_timeout_pre(S) -> initialized(S).
 
+request_timeout_args(_S) ->
+    [dht_eqc:peer()].
+
+request_timeout_callouts(_S, [Node]) ->
+    ?MATCH(Member,
+      ?CALLOUT(dht_routing, is_member, [Node, rt_ref], bool())),
+    case Member of
+        false -> ?RET(ok);
+        true ->
+          ?CALLOUT(dht_routing, node_timeout, [Node, rt_ref], rt_ref),
+          ?MATCH(R, ?CALLOUT(dht_routing, node_timer_state, [Node, rt_ref],
+              oneof([good, bad, {questionable, nat()}]))),
+          case R of
+            good -> ?RET(ok);
+            {questionable, _} -> ?RET(ok);
+            bad ->
+              ?CALLOUT(dht_routing, remove_node, [Node, rt_ref], rt_ref),
+              ?RET(ok)
+          end
+    end.
 
 %% MODEL CLEANUP
 %% ------------------------------

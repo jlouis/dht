@@ -61,7 +61,8 @@
 -export([
 	insert_node/1,
 	insert_nodes/1,
-	notify/2,
+	request_success/1,
+	request_timeout/1,
 	ping/2, ping/3
 ]).
 
@@ -167,20 +168,8 @@ closest_to(NodeID) -> closest_to(NodeID, 8).
 closest_to(NodeID, NumNodes) ->
     call({closest_to, NodeID, NumNodes}).
 
-%% @doc notify/2 notifies the routing table of an event on a given node
-%% Possible events are one of `request_timeout', `request_timeout', or `request_success'.
-%% @end
--spec notify(Node, Event) -> ok
-    when
-      Node :: dht:node_t(),
-      Event :: request_success | request_from | request_timeout.
-notify(Node, request_success) -> request_success(Node);
-notify(Node, request_timeout) -> request_timeout(Node);
-notify(Node, request_from) -> request_from(Node).
-
-request_success(Node) -> call({notify, request_success, Node}).
-request_timeout(Node) -> call({notify, request_timeout, Node}).
-request_from(Node) -> call({notify, request_from, Node}).
+request_success(Node) -> call({request_success, Node}).
+request_timeout(Node) -> call({request_timeout, Node}).
 
 %% @doc dump_state/0 dumps the routing table state to disk
 %% @end
@@ -217,7 +206,7 @@ ping(IP, Port) -> ping(IP, Port, #{}).
 ping(IP, Port, #{ unreachable_check := true }) ->
     ping_(IP, Port, ets:member(?UNREACHABLE_TAB, {IP, Port}));
 ping(IP, Port, #{}) ->
-    case dht_net:ping(IP, Port) of
+    case dht_net:ping({IP, Port}) of
         pang -> pang;
         ID ->
           request_success({ID, IP, Port})
@@ -320,24 +309,26 @@ handle_call({is_interesting, Node}, _From, #state{ routing = Routing } = State) 
 handle_call({closest_to, ID, NumNodes}, _From, #state{routing = Routing } = State) ->
     Neighbors = dht_routing:neighbors(ID, NumNodes, Routing),
     {reply, Neighbors, State};
-handle_call({notify, request_timeout, Node}, _From,
-	        #state{ routing = Routing } = State) ->
+handle_call({request_timeout, Node}, _From, #state{ routing = Routing } = State) ->
     case dht_routing:is_member(Node, Routing) of
         false -> {reply, ok, State};
         true ->
-            R = dht_routing:refresh_node(Node, Routing),
-            {reply, ok, State#state { routing = R }}
+            R = dht_routing:node_timeout(Node, Routing),
+            R2 = case dht_routing:node_timer_state(Node, R) of
+                good -> R;
+                {questionable, _N} -> R;
+                bad ->
+                  dht_routing:remove_node(Node, R)
+            end,
+            {reply, ok, State#state { routing = R2 }}
     end;
-handle_call({notify, request_success, Node}, _From, #state{ routing = Routing } = State) ->
+handle_call({request_success, Node}, _From, #state{ routing = Routing } = State) ->
     case dht_routing:is_member(Node, Routing) of
 	    false -> {reply, ok, State};
 	    true ->
-	        R = dht_routing:refresh_range_by_node(Node,
-	                  dht_routing:refresh_node(Node, Routing)),
+	        R = dht_routing:refresh_node(Node, Routing),
 	        {reply, ok, State#state { routing = R }}
     end;
-handle_call({notify, request_from, Node}, From, State) ->
-    handle_call({notify, request_success, Node}, From, State);
 handle_call(dump_state, From, #state{ state_file = StateFile } = State) ->
     handle_call({dump_state, StateFile}, From, State);
 handle_call({dump_state, StateFile}, _From, #state{ routing = Routing } = State) ->
