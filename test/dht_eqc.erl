@@ -9,12 +9,18 @@ id() ->
     ?LET(<<ID:160>>, binary(20),
         ID).
 
-ip() ->
-    ?LET([B1, B2, B3, B4], vector(4, choose(0,255)),
-      {B1, B2, B3, B4}).
-      
+ip() -> ipv4_address(). %% ipv6 support later :P
+    
+ipv4_address() ->
+    ?LET(L, vector(4, choose(0, 255)),
+        list_to_tuple(L)).
+        
+ipv6_address() ->
+    ?LET(L, vector(8, choose(0, 255)),
+        list_to_tuple(L)).
+
 port() ->
-    choose(0, 65535).
+    choose(0, 1024*64 - 1).
 
 socket() ->
     {ip(), port()}.
