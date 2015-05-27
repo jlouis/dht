@@ -7,8 +7,7 @@
 -record(state,{
 	init = false,
 	time = 0, %% Current notion of where we are time-wise (in ms)
-	id, % The NodeID the node is currently running under
-	node_list % The list of nodes currently installed in the routing table
+	id % The NodeID the node is currently running under
 }).
 
 api_spec() ->
@@ -17,20 +16,11 @@ api_spec() ->
 		modules =
 		  [
 		  	#api_module {
-		  		name = dht_routing_table,
+		  		name = dht_routing,
 		  		functions = [
+		  			#api_fun { name = export, arity = 1 },
 		  			#api_fun { name = new, arity = 1 },
-		  			#api_fun { name = delete, arity = 2 },
-		  			#api_fun { name = insert, arity = 2},
-
-		  			#api_fun { name = closest_to, arity = 4 },
-		  			#api_fun { name = has_bucket, arity = 2},
-		  			#api_fun { name = is_member, arity = 2},
-		  			#api_fun { name = members, arity = 2},
-		  			#api_fun { name = node_id, arity = 1},
-		  			#api_fun { name = node_list, arity = 1},
-		  			#api_fun { name = range, arity = 2},
-		  			#api_fun { name = ranges, arity = 1}		  			
+		  			#api_fun { name = node_list, arity = 1}
 		  		]
 		  	},
 		  	#api_module {
@@ -51,19 +41,6 @@ api_spec() ->
 
 %% GENERATORS
 %% -----------------
-ip_address() ->
-    oneof([ipv4_address(), ipv6_address()]).
-    
-ipv4_address() ->
-    ?LET(L, vector(4, choose(0, 255)),
-        list_to_tuple(L)).
-        
-ipv6_address() ->
-    ?LET(L, vector(8, choose(0, 255)),
-        list_to_tuple(L)).
-
-port_number() ->
-    choose(0, 1024*64 - 1).
 
 %% Commands we are skipping:
 %% 
@@ -74,76 +51,57 @@ port_number() ->
 %% * dump_state/0, dump_state/1, dump_state/2
 %%
 
-%% INITIALIZATION
-start_node_pre(#state { init = I }) -> not I.
+%% INITIAL STATE
+%% -----------------------
 
-start_node(NodeID, _Nodes) ->
-	{ok, Pid} = dht_state:start_link(NodeID, no_state_file, []),
-	unlink(Pid),
-	erlang:is_process_alive(Pid).
-	
-start_node_args(#state { id = ID }) ->
-    Nodes = list(dht_eqc:peer()),
-    [ID, Nodes].
+gen_initial_state() ->
+    ?LET(NodeID, dht_eqc:id(),
+      #state { id = NodeID, init = false }).
 
-ranges([]) -> [];
-ranges([_|_]) -> [{0, 1 bsl 256 - 1}].
+%% START_LINK
+%% -----------------------
 
-start_node_callouts(#state { id = ID, time = TS }, [ID, Nodes]) ->
-    ?CALLOUT(dht_time, monotonic_time, [], TS),
-    ?CALLOUT(dht_routing_table, new, [ID], rt_ref),
-    ?CALLOUT(dht_routing_table, node_list, [rt_ref], Nodes),
-    ?CALLOUT(dht_routing_table, node_id, [rt_ref], ID),
-    ?APPLY(initialize_timers, [ID, Nodes]),
-    ?APPLY(fold_insert_nodes, Nodes),
+start_link(NodeID, Nodes) ->
+    {ok, Pid} = dht_state:start_link(NodeID, no_state_file, Nodes),
+    unlink(Pid),
+    erlang:is_process_alive(Pid).
+    
+start_link_pre(S) -> not initialized(S).
+
+start_link_args(#state { id = ID }) ->
+    BootStrapNodes = [],
+    [ID, BootStrapNodes].
+
+start_link_callouts(#state { id = ID }, [ID, []]) ->
+    ?CALLOUT(dht_routing, new, [?WILDCARD], {ok, ID, rt_ref}),
     ?RET(true).
 
-start_node_next(#state{} = State, _V, [_, Nodes]) ->
-	State#state { init = true, node_list = Nodes }.
-
-initialize_timers_callouts(#state { time = TS }, [_ID, Nodes]) ->
-    Ranges = ranges(Nodes),
-    ?CALLOUT(dht_routing_table, ranges, [rt_ref], Ranges),
-    case Ranges of
-        [] -> ?RET(ok);
-        Rs ->
-          ?SEQ(
-           [?SEQ(
-            ?CALLOUT(dht_time, monotonic_time, [], TS),
-            ?CALLOUT(dht_time, convert_time_unit, [TS, native, milli_seconds], TS)) || _ <- Rs]),
-          ?RET(ok)
-    end.
-    
-fold_insert_nodes_callouts(_S, []) -> ?RET(ok);
-fold_insert_nodes_callouts(_S, [N|Ns]) ->
-    ?SEQ(
-      ?CALLOUT(dht_routing_table, is_member, [N, rt_ref], true),
-      fold_insert_nodes_callouts(_S, Ns)).
-
+%% Once started, we can't start the State system again.
+start_link_next(State, _, _) ->
+    State#state { init = true }.
 
 %% NODE ID
 %% ---------------------
 node_id() ->
 	dht_state:node_id().
 
-node_id_pre(#state { init = Init }) -> Init.
+node_id_pre(S) -> initialized(S).
 	
-node_id_args(_S) ->
-	[].
+node_id_args(_S) -> [].
 	
-node_id_return(#state { id = ID }, []) -> ID.
+node_id_callouts(#state { id = ID }, []) -> ?RET(ID).
 
 %% NODE LIST
 %% ---------------------
 node_list() ->
 	dht_state:node_list().
 	
-node_list_pre(#state { init = Init }) -> Init.
+node_list_pre(S) -> initialized(S).
 
 node_list_args(_S) -> [].
 
 node_list_callouts(_S, []) ->
-    ?MATCH(R, ?CALLOUT(dht_routing_table, node_list, [rt_ref], list(dht_eqc:peer()))),
+    ?MATCH(R, ?CALLOUT(dht_routing, node_list, [rt_ref], list(dht_eqc:peer()))),
     ?RET(R).
 
 %% NOTIFY
@@ -151,13 +109,12 @@ node_list_callouts(_S, []) ->
 notify(Node, Event) ->
 	dht_state:notify(Node, Event).
 	
-notify_pre(#state { init = Init, node_list = Nodes }) -> Init andalso (Nodes /= []).
+notify_pre(S) -> initialized(S).
 
-notify_args(#state { node_list = Nodes }) ->
-    [elements(Nodes), elements([request_timeout, request_success, request_from])].
+%% notify_args(#state { node_list = Nodes }) ->
+%%    [elements(Nodes), elements([request_timeout, request_success, request_from])].
     
-notify_pre(#state { init = Init, node_list = Ns }, [Node, _]) ->
-    Init andalso lists:member(Node, Ns).
+notify_pre(S, [_, _]) -> initialized(S).
 
 notify_callouts(_S, [Node, request_timeout]) ->
     ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref], true),
@@ -179,8 +136,8 @@ ping_pre(#state { init = S }) -> S.
 ping(IP, Port) ->
 	dht_state:ping(IP, Port).
 
-ping_args(_S) ->
-    [ip_address(), port_number()].
+%% ping_args(_S) ->
+%%     [ip_address(), port_number()].
 
 ping_callouts(_S, [IP, Port]) ->
     ?MATCH(R, ?CALLOUT(dht_net, ping, [{IP, Port}], pang)),
@@ -193,8 +150,8 @@ closest_to_pre(#state { init = S }) -> S.
 closest_to(ID, Num) ->
 	dht_state:closest_to(ID, Num).
 	
-closest_to_args(_S) ->
-	[dht_eqc:id(), nat()].
+%% closest_to_args(_S) ->
+%% 	[dht_eqc:id(), nat()].
 	
 closest_to_callouts(_S, [ID, Num]) ->
     ?MATCH(NN, ?CALLOUT(
@@ -210,8 +167,8 @@ keepalive_pre(#state { init = S }) -> S.
 keepalive(Node) ->
 	dht_state:keepalive(Node).
 	
-keepalive_args(_S) ->
-	[dht_eqc:peer()].
+%% keepalive_args(_S) ->
+%%	[dht_eqc:peer()].
 	
 keepalive_callouts(_S, [{_, IP, Port} = Node]) ->
     ?APPLY(ping, [IP, Port]),
@@ -221,18 +178,13 @@ keepalive_callouts(_S, [{_, IP, Port} = Node]) ->
 %% MODEL CLEANUP
 %% ------------------------------
 
-cleanup() ->
-	process_flag(trap_exit, true),
+reset() ->
 	case whereis(dht_state) of
 	    undefined -> ok;
-	    Pid ->
-	        Pid ! {stop, self()},
-	        receive
-	            stopped -> ok
-	        end,
+	    Pid when is_pid(Pid) ->
+	        exit(Pid, kill),
 	        timer:sleep(1)
 	end,
-	process_flag(trap_exit, false),
 	ok.
 
 %% PROPERTY
@@ -240,23 +192,23 @@ cleanup() ->
 postcondition_common(S, Call, Res) ->
     eq(Res, return_value(S, Call)).
 
-gen_initial_state() ->
-    ?LET(NodeID, dht_eqc:id(),
-      #state { id = NodeID, init = false }).
-
 prop_state_correct() ->
     ?SETUP(fun() ->
         eqc_mocking:start_mocking(api_spec()),
-        fun() -> ok end
+        fun() -> eqc_mocking:stop_mocking(), ok end
     end,
     ?FORALL(StartState, gen_initial_state(),
     ?FORALL(Cmds, commands(?MODULE, StartState),
-    ?TRAPEXIT(
         begin
+            ok = reset(),
             {H, S, R} = run_commands(?MODULE, Cmds),
-            ok = cleanup(),
             pretty_commands(?MODULE, Cmds, {H, S, R},
                 collect(eqc_lib:summary('Length'), length(Cmds),
                 aggregate(command_names(Cmds),
                   R == ok)))
-        end)))).
+        end))).
+
+%% INTERNAL MODEL HELPERS
+%% -----------------------
+
+initialized(#state { init = I }) -> I.

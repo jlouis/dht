@@ -42,7 +42,10 @@
 %%
 %% RANGES
 %%
-%% TODO: Describe the ranges
+%% Ranges are tracked with a timer. We represent such timers as integers in our model and
+%% inject them into the SUT. By mocking timer calls, through dht_time, we are able to handle
+%% the callouts correctly. In principle, we don't do anything with these timers in this module,
+%% but I'm not sure for how long that assumption is going to hold once we start all over.
 %%
 %% HOW TIMERS WORK IN THE ROUTING SYSTEM
 %%
@@ -146,13 +149,20 @@ ranges() ->
   ?LET(Ranges, list(dht_eqc:range()),
     dedup(Ranges)).
 
+dedup_nodes([{N, R} | Rest]) ->
+    case lists:keymember(N, 1, Rest) of
+        true -> dedup_nodes([{N, R} | lists:keydelete(N, 1, Rest)]);
+        false -> [{N, R} | dedup_nodes(Rest)]
+    end;
+dedup_nodes([]) -> [].
+
 gen_state() ->
   ?LET(Ranges, ranges(),
     ?LET(Nodes, [{list(dht_eqc:peer()), R} || R <- Ranges],
       begin
         NodesList = [{N, R} || {Ns, R} <- Nodes, N <- Ns],
         #state {
-          nodes = NodesList,
+          nodes = dedup_nodes(NodesList),
           ranges = Ranges,
           init = false,
           id = dht_eqc:id(),
