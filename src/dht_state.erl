@@ -195,7 +195,7 @@ dump_state(Filename) ->
 -spec keepalive(dht:node_t()) -> 'ok'.
 keepalive({ID, IP, Port} = Node) ->
     case ping(IP, Port) of
-	ID -> request_success(Node);
+	ID -> ok;
 	pang -> request_timeout(Node)
     end.
 
@@ -206,15 +206,22 @@ keepalive({ID, IP, Port} = Node) ->
 ping(IP, Port) -> ping(IP, Port, #{}).
 
 %% @doc ping/3 pings an IP/Port pair with options for filtering excess pings
-%% If you set unreachable_check := true, then the table of unreachable pings is first consulted as a local
-%% cache. This speeds up pings and avoids pinging nodes which are often down.
+%% If you set unreachable_check := true, then the table of unreachable pings is first
+%% consulted as a local cache. This speeds up pings and avoids pinging nodes which
+%% are often down.
+%%
+%% Blocks the caller until the ping responds or times out.
 %% @end
 -spec ping(inet:ip_address(), inet:port_number(), #{ atom() => boolean() }) -> pang | dht:node_id() | {error, Reason}
   when Reason :: atom().
 ping(IP, Port, #{ unreachable_check := true }) ->
     ping_(IP, Port, ets:member(?UNREACHABLE_TAB, {IP, Port}));
 ping(IP, Port, #{}) ->
-    dht_net:ping({IP, Port}).
+    case dht_net:ping(IP, Port) of
+        pang -> pang;
+        ID ->
+          request_success({ID, IP, Port})
+    end.
     
 %% internal helper for ping/3
 ping_(_IP, _Port, true) -> pang;

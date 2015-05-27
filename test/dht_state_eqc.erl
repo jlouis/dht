@@ -20,7 +20,8 @@ api_spec() ->
 		  		functions = [
 		  			#api_fun { name = export, arity = 1 },
 		  			#api_fun { name = new, arity = 1 },
-		  			#api_fun { name = node_list, arity = 1}
+		  			#api_fun { name = node_list, arity = 1},
+		  			#api_fun { name = neighbors, arity = 3 }
 		  		]
 		  	},
 		  	#api_module {
@@ -134,46 +135,65 @@ cycle_bucket_timers_callouts(#state { id = ID }, []) ->
 ping_pre(#state { init = S }) -> S.
 
 ping(IP, Port) ->
-	dht_state:ping(IP, Port).
+    dht_state:ping(IP, Port).
 
-%% ping_args(_S) ->
-%%     [ip_address(), port_number()].
+ping_args(_S) ->
+    [dht_eqc:ip(), dht_eqc:port()].
 
+%% TODO: also generate valid ping responses.
 ping_callouts(_S, [IP, Port]) ->
-    ?MATCH(R, ?CALLOUT(dht_net, ping, [{IP, Port}], pang)),
-    ?RET(R).
+    ?MATCH(R, ?CALLOUT(dht_net, ping, [{IP, Port}], oneof([pang]))),
+    case R of
+        pang -> ?RET(pang);
+        ID ->
+            ?APPLY(request_success, [{ID, IP, Port}]),
+            ?RET(ID)
+    end.
 
 %% CLOSEST TO
 %% ------------------------
 closest_to_pre(#state { init = S }) -> S.
 
 closest_to(ID, Num) ->
-	dht_state:closest_to(ID, Num).
+    dht_state:closest_to(ID, Num).
 	
-%% closest_to_args(_S) ->
-%% 	[dht_eqc:id(), nat()].
+closest_to_args(_S) ->
+    [dht_eqc:id(), nat()].
 	
 closest_to_callouts(_S, [ID, Num]) ->
-    ?MATCH(NN, ?CALLOUT(
-                      dht_routing_table,
-                      closest_to, [ID, ?WILDCARD, Num, ?WILDCARD],
-                      list(dht_eqc:peer()))),
-    ?RET(NN).
+    ?MATCH(Ns, ?CALLOUT(dht_routing, neighbors, [ID, Num, rt_ref],
+        list(dht_eqc:peer()))),
+    ?RET(Ns).
 
 %% KEEPALIVE
 %% ---------------------------
 keepalive_pre(#state { init = S }) -> S.
 
 keepalive(Node) ->
-	dht_state:keepalive(Node).
+    dht_state:keepalive(Node).
 	
-%% keepalive_args(_S) ->
-%%	[dht_eqc:peer()].
+keepalive_args(_S) ->
+    [dht_eqc:peer()].
 	
 keepalive_callouts(_S, [{_, IP, Port} = Node]) ->
-    ?APPLY(ping, [IP, Port]),
-    ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref], false),
+    ?MATCH(R, ?APPLY(ping, [IP, Port])),
+    case R of
+        pang -> ?APPLY(request_timeout, [Node]);
+        ID -> ?RET(ok)
+    end.
+    
+%% REQUEST_SUCCESS
+%% ----------------
+
+request_success_callouts(_S, [_Node]) ->
     ?RET(ok).
+
+%% REQUEST_TIMEOUT
+%% ----------------
+
+request_timeout_callouts(_S, [_Node]) ->
+    ?RET(ok).
+
 
 %% MODEL CLEANUP
 %% ------------------------------
