@@ -12,7 +12,7 @@
 %% Global TODO:
 %%
 %% · Rework the EQC model, since it is now in tatters.
--module(dht_routing).
+-module(dht_routing_meta).
 
 -export([new/1]).
 -export([export/1]).

@@ -67,7 +67,7 @@
 %% · insert/2 needs to be enabled in the model.
 %% · range_time_state/2 needs to be modeled correctly, as it is currently being skipped
 
--module(dht_routing_eqc).
+-module(dht_routing_meta_eqc).
 -compile(export_all).
 
 -include_lib("eqc/include/eqc.hrl").
@@ -181,7 +181,7 @@ gen_state() ->
 %% timers.
 new(Tbl) ->
     eqc_lib:bind(?DRIVER, fun(_T) ->
-      {ok, ID, Routing} = dht_routing:new(Tbl),
+      {ok, ID, Routing} = dht_routing_meta:new(Tbl),
       {ok, ID, Routing}
     end).
 
@@ -211,7 +211,7 @@ new_next(State, _, _) -> State#state { init = true }.
 
 active(Nodes) ->
     eqc_lib:bind(?DRIVER,
-      fun(T) -> {ok, dht_routing:active(Nodes, nodes, T), T}
+      fun(T) -> {ok, dht_routing_meta:active(Nodes, nodes, T), T}
     end).
     
 active_pre(S) -> initialized(S).
@@ -233,7 +233,7 @@ active_callouts(_S, [Nodes]) ->
 %% not persisting the state of doing so. Hence, there is no state transition
 %% possible when doing this.
 can_insert(Node) ->
-    eqc_lib:bind(?DRIVER, fun(T) -> {ok, dht_routing:can_insert(Node, T), T} end).
+    eqc_lib:bind(?DRIVER, fun(T) -> {ok, dht_routing_meta:can_insert(Node, T), T} end).
     
 can_insert_pre(S) -> initialized(S).
 
@@ -261,7 +261,7 @@ can_insert_callouts(_S, [Node]) ->
 inactive(Nodes) ->
     eqc_lib:bind(?DRIVER,
       fun(T) ->
-        {ok, dht_routing:inactive(Nodes, nodes, T), T}
+        {ok, dht_routing_meta:inactive(Nodes, nodes, T), T}
       end).
       
 inactive_pre(S) -> initialized(S).
@@ -295,7 +295,7 @@ inactive_callouts(_S, [Nodes]) ->
 insert(Node) ->
     eqc_lib:bind(?DRIVER,
       fun(T) ->
-          {R, S} = dht_routing:insert(Node, T),
+          {R, S} = dht_routing_meta:insert(Node, T),
           {ok, R, S}
       end).
 
@@ -341,7 +341,7 @@ insert_callouts(S, [Node]) ->
 
 %% Ask if a given node is a member of the Routing Table.
 is_member(Node) ->
-    eqc_lib:bind(?DRIVER, fun(T) -> {ok, dht_routing:is_member(Node, T), T} end).
+    eqc_lib:bind(?DRIVER, fun(T) -> {ok, dht_routing_meta:is_member(Node, T), T} end).
 
 is_member_pre(S) -> initialized(S).
 
@@ -363,7 +363,7 @@ is_member_callouts(#state { nodes = Ns }, [Node]) ->
 neighbors(ID, K) ->
     eqc_lib:bind(?DRIVER,
       fun(T) ->
-          {ok, dht_routing:neighbors(ID, K, T), T}
+          {ok, dht_routing_meta:neighbors(ID, K, T), T}
       end).
       
 neighbors_pre(S) -> initialized(S).
@@ -389,7 +389,7 @@ neighbors_callouts(S, [ID, K]) ->
 %% Node list is a proxy forward to the node_list call of the routing table
 
 node_list() ->
-    eqc_lib:bind(?DRIVER, fun(T) -> {ok, dht_routing:node_list(T), T} end).
+    eqc_lib:bind(?DRIVER, fun(T) -> {ok, dht_routing_meta:node_list(T), T} end).
     
 node_list_pre(S) -> initialized(S).
 	
@@ -411,7 +411,7 @@ node_list_callouts(S, []) ->
 node_timer_state(Node) ->
     eqc_lib:bind(?DRIVER,
       fun(T) ->
-          {ok, dht_routing:node_timer_state(Node, T), T}
+          {ok, dht_routing_meta:node_timer_state(Node, T), T}
       end).
       
 node_timer_state_pre(S) -> initialized(S) andalso has_nodes(S).
@@ -437,7 +437,7 @@ node_timer_state_callouts(S, [Node]) ->
 node_timeout(Node) ->
     eqc_lib:bind(?DRIVER,
       fun(T) ->
-        {ok, ok, dht_routing:node_timeout(Node, T)}
+        {ok, ok, dht_routing_meta:node_timeout(Node, T)}
       end).
       
 node_timeout_pre(S) -> initialized(S) andalso has_nodes(S).
@@ -457,7 +457,7 @@ node_timeout_next(#state { node_timers = NT } = S, _, [Node]) ->
 %% Returns the members of given node range.
 %%
 range_members(Node) ->
-    eqc_lib:bind(?DRIVER, fun(T) -> {ok, dht_routing:range_members(Node, T), T} end).
+    eqc_lib:bind(?DRIVER, fun(T) -> {ok, dht_routing_meta:range_members(Node, T), T} end).
 
 range_members_pre(S) -> initialized(S).
 
@@ -473,7 +473,7 @@ range_members_callouts(S, [Node]) ->
 %% --------------------------------------------------
 %%
 range_state(Range) ->
-    eqc_lib:bind(?DRIVER, fun(T) -> {ok, dht_routing:range_state(Range, T), T} end).
+    eqc_lib:bind(?DRIVER, fun(T) -> {ok, dht_routing_meta:range_state(Range, T), T} end).
     
 range_state_pre(S) -> initialized(S).
 
@@ -497,7 +497,7 @@ range_state_callouts(S, [Range]) ->
 range_timer_state(Range) ->
     eqc_lib:bind(?DRIVER,
       fun(T) ->
-          {ok, dht_routing:range_timer_state(Range, T), T}
+          {ok, dht_routing_meta:range_timer_state(Range, T), T}
       end).
       
 range_timer_state_pre(S) -> initialized(S).
@@ -528,7 +528,7 @@ range_timer_state_callouts(#state { ranges = RS }, [Range]) ->
 refresh_node(Node) ->
     eqc_lib:bind(?DRIVER,
         fun(T) ->
-            R = dht_routing:refresh_node(Node, T),
+            R = dht_routing_meta:refresh_node(Node, T),
             {ok, ok, R}
         end).
         
@@ -549,7 +549,7 @@ refresh_node_next(#state { node_timers = NTs, time = T } = S, _, [Node]) ->
 refresh_range_by_node(Node) ->
     eqc_lib:bind(?DRIVER,
       fun(T) ->
-        R = dht_routing:refresh_range_by_node(Node, T),
+        R = dht_routing_meta:refresh_range_by_node(Node, T),
         {ok, ok, R}
       end).
       
@@ -570,7 +570,7 @@ refresh_range_by_node_callouts(S, [{ID, _, _} = Node]) ->
 refresh_range(Range) ->
     eqc_lib:bind(?DRIVER,
       fun(T) ->
-        R = dht_routing:refresh_range(Range, T),
+        R = dht_routing_meta:refresh_range(Range, T),
         {ok, ok, R}
       end).
       

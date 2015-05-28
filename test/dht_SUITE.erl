@@ -51,4 +51,4 @@ check_protocol_encoding(_Config) ->
     ?quickcheck((dht_proto_eqc:prop_iso_packet())).
 
 check_routing_system_seq(_Config) ->
-    ?quickcheck((dht_routing_eqc:prop_routing_correct())).
+    ?quickcheck((dht_routing_meta_eqc:prop_routing_correct())).

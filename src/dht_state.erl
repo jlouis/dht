@@ -158,27 +158,25 @@ node_list() -> call(node_list).
   when
       Node :: dht:node_t() | {inet:ip_address(), inet:port_number()},
       Reason :: atom().
-insert_node({IP, Port}) ->
-	case ping(IP, Port) of
-	    pang -> {error, timeout};
-	    {ok, ID} -> call({insert_node, {ID, IP, Port}})
-	end;
-insert_node(Node) ->
-	insert_node_interesting(Node, is_interesting(Node)).
+insert_node({IP, Port}) -> insert_node({unknown, IP, Port});
+insert_node({unknown, IP, Port}) -> insert_node({unknown, IP, Port}, interesting);
+insert_node(Node) -> insert_node(Node, node_state(Node)).
 
-insert_node_interesting({_, _, _}, false) -> false;
-insert_node_interesting({ID, IP, Port}, true) ->
+insert_node(Node, not_interesting) -> {not_interesting, Node};
+insert_node({ID, IP, Port}, interesting) ->
 	case ping(IP, Port) of
 		pang -> {error, timeout};
 		{ok, ID} ->
-			call({insert_node, {ID, IP, Port}});
-		_WrongID ->
+		    call({insert_node, {ID, IP, Port}});
+		{ok, OtherID} when ID == unknown ->
+		    %% Learn the ID of the peer
+		    call({insert_node, {OtherID, IP, Port}});
+		{ok, _OtherID} ->
 			{error, inconsistent_id}
 	end.
 
 request_success(Node) -> call({request_success, Node}).
 request_timeout(Node) -> call({request_timeout, Node}).
-
 
 %% @doc ping/2 pings an IP/Port pair in order to determine its NodeID
 %%
@@ -198,12 +196,12 @@ ping(IP, Port) ->
 %% INTERNAL API
 %% -------------------------------------------------------------------
 
-%% @doc is_interesting/1 returns true if a node can enter the routing table, false otherwise
+%% @doc node_state/1 returns true if a node can enter the routing table, false otherwise
 %% Check if node would fit into the routing table. This function is used by the insert_node
 %% function to avoid issuing ping-queries to every node sending this node a query
 %% @end
--spec is_interesting(dht:node_t()) -> boolean().
-is_interesting({_, _, _} = Node) -> call({is_interesting, Node}).
+-spec node_state(dht:node_t()) -> boolean().
+node_state({_, _, _} = Node) -> call({node_state, Node}).
 
 %% @private
 %% @doc insert_nodes/1 inserts a list of nodes into the routing table asynchronously
@@ -277,56 +275,56 @@ init([RequestedNodeID, StateFile, BootstrapNodes]) ->
     %% @todo, consider just folding over these as well rather than a background insert.
     insert_nodes(BootstrapNodes),
     
-    {ok, ID, Routing} = dht_routing:new(RoutingTbl),
+    {ok, ID, Routing} = dht_routing_meta:new(RoutingTbl),
     {ok, #state { node_id = ID, routing = Routing}}.
 
 %% @private
 handle_call({insert_node, Node}, _From, #state { routing = Routing } = State) ->
-    case dht_routing:insert(Node, Routing) of
+    case dht_routing_meta:insert(Node, Routing) of
       {ok, R} -> {reply, true, State#state { routing = R }};
       {already_member, R} -> {reply, false, State#state { routing = R }};
       {not_inserted, R} -> {reply, false, State#state { routing = R }}
     end;
-handle_call({is_interesting, Node}, _From, #state{ routing = Routing } = State) ->
-    case dht_routing:is_member(Node, Routing) of
-        true -> {reply, false, State}; % Already a member, the ID is not interesting
+handle_call({node_state, Node}, _From, #state{ routing = Routing } = State) ->
+    case dht_routing_meta:is_member(Node, Routing) of
+        true -> {reply, {not_interesting, Node}, State};
         false ->
-            RangeMembers = dht_routing:range_members(Node, Routing),
-            Inactive = dht_routing:inactive(RangeMembers, nodes, Routing) /= [],
+            RangeMembers = dht_routing_meta:range_members(Node, Routing),
+            Inactive = dht_routing_meta:inactive(RangeMembers, nodes, Routing) /= [],
             case Inactive orelse (length(RangeMembers) < ?K) of
                 true -> {reply, true, State}; % either inactivity or there is too few members
                 false ->
-                    {reply, dht_routing:can_insert(Node, Routing), State}
+                    {reply, dht_routing_meta:can_insert(Node, Routing), State}
             end
     end;
 handle_call({closest_to, ID, NumNodes}, _From, #state{routing = Routing } = State) ->
-    Neighbors = dht_routing:neighbors(ID, NumNodes, Routing),
+    Neighbors = dht_routing_meta:neighbors(ID, NumNodes, Routing),
     {reply, Neighbors, State};
 handle_call({request_timeout, Node}, _From, #state{ routing = Routing } = State) ->
-    case dht_routing:is_member(Node, Routing) of
+    case dht_routing_meta:is_member(Node, Routing) of
         false -> {reply, ok, State};
         true ->
-            R = dht_routing:node_timeout(Node, Routing),
-            R2 = case dht_routing:node_timer_state(Node, R) of
+            R = dht_routing_meta:node_timeout(Node, Routing),
+            R2 = case dht_routing_meta:node_timer_state(Node, R) of
                 good -> R;
                 {questionable, _N} -> R;
                 bad ->
-                  dht_routing:remove_node(Node, R)
+                  dht_routing_meta:remove_node(Node, R)
             end,
             {reply, ok, State#state { routing = R2 }}
     end;
 handle_call({request_success, Node}, _From, #state{ routing = Routing } = State) ->
-    case dht_routing:is_member(Node, Routing) of
+    case dht_routing_meta:is_member(Node, Routing) of
 	    false -> {reply, ok, State};
 	    true ->
-	        R = dht_routing:refresh_node(Node, Routing),
+	        R = dht_routing_meta:refresh_node(Node, Routing),
 	        {reply, ok, State#state { routing = R }}
     end;
 handle_call(dump_state, From, #state{ state_file = StateFile } = State) ->
     handle_call({dump_state, StateFile}, From, State);
 handle_call({dump_state, StateFile}, _From, #state{ routing = Routing } = State) ->
     try
-        Tbl = dht_routing:export(Routing),
+        Tbl = dht_routing_meta:export(Routing),
         dump_state(StateFile, Tbl),
         {reply, ok, State}
     catch
@@ -334,7 +332,7 @@ handle_call({dump_state, StateFile}, _From, #state{ routing = Routing } = State)
         {reply, {error, {dump_state_failed, Class, Err}}, State}
     end;
 handle_call(node_list, _From, #state { routing = Routing } = State) ->
-    {reply, dht_routing:node_list(Routing), State};
+    {reply, dht_routing_meta:node_list(Routing), State};
 handle_call(node_id, _From, #state{ node_id = Self } = State) ->
     {reply, Self, State}.
 
@@ -346,27 +344,27 @@ handle_cast(_, State) ->
 %% The timers {inactive_node, Node} and {inactive_range, Range} is set by the
 %% dht_routing module
 handle_info({inactive_node, Node}, #state { routing = Routing } = State) ->
-    case dht_routing:node_timer_state(Node, Routing) of
+    case dht_routing_meta:node_timer_state(Node, Routing) of
         ok -> {noreply, State};
         not_member -> {noreply, State};
         canceled ->
-            R = dht_routing:refresh_node(Node, Routing),
+            R = dht_routing_meta:refresh_node(Node, Routing),
             {noreply, State#state { routing = R }};
         timeout ->
             spawn(?MODULE, refresh_node, [Node]),
             {noreply, State}
     end;
 handle_info({inactive_bucket, Range}, #state{ routing = Routing } = State) ->
-    R = case dht_routing:range_timer_state(Range, Routing) of
+    R = case dht_routing_meta:range_timer_state(Range, Routing) of
         ok -> Routing;
         not_member -> Routing;
         canceled ->
-            dht_routing:refresh_range(Range, Routing);
+            dht_routing_meta:refresh_range(Range, Routing);
         timeout ->
             #{ inactive := Inactive, active := Active } =
-              dht_routing:range_state(Range, Routing),
+              dht_routing_meta:range_state(Range, Routing),
             spawn(?MODULE, refresh_range, [Range, Inactive, Active]),
-            dht_routing:refresh_range(Range, Routing)
+            dht_routing_meta:refresh_range(Range, Routing)
     end,
     {noreply, State#state { routing = R }};
 handle_info({stop, Caller}, #state{} = State) ->
@@ -375,7 +373,7 @@ handle_info({stop, Caller}, #state{} = State) ->
 
 %% @private
 terminate(_, #state{ routing = Routing, state_file=StateFile}) ->
-	dump_state(StateFile, dht_routing:export(Routing)).
+	dump_state(StateFile, dht_routing_meta:export(Routing)).
 
 %% @private
 code_change(_, State, _) ->

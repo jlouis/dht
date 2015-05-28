@@ -1,3 +1,11 @@
+%% @doc EQC Model for the system state
+%% The high-level entry-point for the DHT state. This model implements the public
+%% interface for the dht_state gen_server which contains the routing table of the DHT
+%%
+%% The high-level view is relatively simple to define since most of the advanced parts
+%% pertaining to routing has already been handled in dht_routing_meta and its corresponding
+%% EQC model.
+%% @end
 -module(dht_state_eqc).
 -compile(export_all).
 
@@ -10,23 +18,28 @@
 	id % The NodeID the node is currently running under
 }).
 
+-define(K, 8).
+
 api_spec() ->
 	#api_spec {
 		language = erlang,
 		modules =
 		  [
 		  	#api_module {
-		  		name = dht_routing,
+		  		name = dht_routing_meta,
 		  		functions = [
+		  			#api_fun { name = can_insert, arity = 2 },
 		  			#api_fun { name = export, arity = 1 },
+		  			#api_fun { name = inactive, arity = 3 },
+		  			#api_fun { name = is_member, arity = 2 },
+		  			#api_fun { name = neighbors, arity = 3 },
 		  			#api_fun { name = new, arity = 1 },
 		  			#api_fun { name = node_list, arity = 1},
-		  			#api_fun { name = neighbors, arity = 3 },
-		  			#api_fun { name = is_member, arity = 2 },
-		  			#api_fun { name = refresh_node, arity = 2 },
+		  			#api_fun { name = node_timeout, arity = 2 },
 		  			#api_fun { name = node_timer_state, arity = 2 },
-		  			#api_fun { name = remove_node, arity = 2 },
-		  			#api_fun { name = node_timeout, arity = 2 }
+		  			#api_fun { name = range_members, arity = 2 },
+		  			#api_fun { name = refresh_node, arity = 2 },
+		  			#api_fun { name = remove_node, arity = 2 }
 		  		]
 		  	},
 		  	#api_module {
@@ -79,7 +92,7 @@ start_link_args(#state { id = ID }) ->
     [ID, BootStrapNodes].
 
 start_link_callouts(#state { id = ID }, [ID, []]) ->
-    ?CALLOUT(dht_routing, new, [?WILDCARD], {ok, ID, rt_ref}),
+    ?CALLOUT(dht_routing_meta, new, [?WILDCARD], {ok, ID, rt_ref}),
     ?RET(true).
 
 %% Once started, we can't start the State system again.
@@ -97,7 +110,7 @@ closest_to_args(_S) ->
     [dht_eqc:id(), nat()].
 	
 closest_to_callouts(_S, [ID, Num]) ->
-    ?MATCH(Ns, ?CALLOUT(dht_routing, neighbors, [ID, Num, rt_ref],
+    ?MATCH(Ns, ?CALLOUT(dht_routing_meta, neighbors, [ID, Num, rt_ref],
         list(dht_eqc:peer()))),
     ?RET(Ns).
 
@@ -122,8 +135,43 @@ node_list_pre(S) -> initialized(S).
 node_list_args(_S) -> [].
 
 node_list_callouts(_S, []) ->
-    ?MATCH(R, ?CALLOUT(dht_routing, node_list, [rt_ref], list(dht_eqc:peer()))),
+    ?MATCH(R, ?CALLOUT(dht_routing_meta, node_list, [rt_ref], list(dht_eqc:peer()))),
     ?RET(R).
+
+%% INSERT
+%% ---------------------
+insert_node({IP, Port}) ->
+    dht_state:insert_node({IP, Port});
+insert_node({_, _, _} = Node) ->
+    dht_state:insert_node(Node).
+    
+insert_node_pre(S) -> initialized(S).
+
+insert_node_args(_S) ->
+    N = ?LET({_ID, IP, Port} = N, dht_eqc:peer(), oneof([ {unknown, IP, Port}, N ])),
+    [N].
+
+insert_node_callouts(_S, [{unknown, IP, Port}]) ->
+    ?MATCH(PingRes, ?APPLY(ping, [IP, Port])),
+    case PingRes of
+      pang -> ?RET({error, timeout});
+      {ok, ID} ->
+        ?APPLY(insert_node_gs, [ID, IP, Port])
+    end;
+insert_node_callouts(_S, [{ID, IP, Port} = Node]) ->
+    ?MATCH(NodeState, ?APPLY(node_state, [Node])),
+    case NodeState of
+      {not_interesting, Node} -> ?RET({not_interesting, Node});
+      interesting ->
+        ?MATCH(PingRes, ?APPLY(ping, [IP, Port])),
+        case PingRes of
+          pang -> ?RET({error, timeout});
+          {ok, ID} ->
+            ?APPLY(insert_node_gs, [ID, IP, Port]);
+          {ok, _OtherID} ->
+            ?RET({error, inconsistent_id})
+        end
+    end.
 
 %% PING
 %% ---------------------
@@ -175,11 +223,11 @@ request_success_args(_S) ->
     
 request_success_callouts(_S, [Node]) ->
     ?MATCH(Member,
-      ?CALLOUT(dht_routing, is_member, [Node, rt_ref], bool())),
+      ?CALLOUT(dht_routing_meta, is_member, [Node, rt_ref], bool())),
     case Member of
         false -> ?RET(ok);
         true ->
-          ?CALLOUT(dht_routing, refresh_node, [Node, rt_ref], rt_ref),
+          ?CALLOUT(dht_routing_meta, refresh_node, [Node, rt_ref], rt_ref),
           ?RET(ok)
     end.
 
@@ -196,20 +244,51 @@ request_timeout_args(_S) ->
 
 request_timeout_callouts(_S, [Node]) ->
     ?MATCH(Member,
-      ?CALLOUT(dht_routing, is_member, [Node, rt_ref], bool())),
+      ?CALLOUT(dht_routing_meta, is_member, [Node, rt_ref], bool())),
     case Member of
         false -> ?RET(ok);
         true ->
-          ?CALLOUT(dht_routing, node_timeout, [Node, rt_ref], rt_ref),
-          ?MATCH(R, ?CALLOUT(dht_routing, node_timer_state, [Node, rt_ref],
+          ?CALLOUT(dht_routing_meta, node_timeout, [Node, rt_ref], rt_ref),
+          ?MATCH(R, ?CALLOUT(dht_routing_meta, node_timer_state, [Node, rt_ref],
               oneof([good, bad, {questionable, nat()}]))),
           case R of
             good -> ?RET(ok);
             {questionable, _} -> ?RET(ok);
             bad ->
-              ?CALLOUT(dht_routing, remove_node, [Node, rt_ref], rt_ref),
+              ?CALLOUT(dht_routing_meta, remove_node, [Node, rt_ref], rt_ref),
               ?RET(ok)
           end
+    end.
+
+%% NODE_STATE (Internal call)
+%% ------------------------------
+
+node_state_callouts(_S, [Node]) ->
+    ?MATCH(Member, ?CALLOUT(dht_routing_meta, is_member, [Node, rt_ref], bool())),
+    case Member of
+        true ->
+          ?RET({not_interesting, Node});
+        false ->
+          ?MATCH(RangeMembers, ?CALLOUT(dht_routing_meta, range_members, [Node, rt_ref],
+              list(dht_eqc:peer()))),
+          ?MATCH(Inactive, ?CALLOUT(dht_routing_meta, inactive, [RangeMembers, nodes, rt_ref],
+              oneof([[], [x]]))),
+          case (Inactive /= []) orelse ( length(RangeMembers) < ?K ) of
+            true -> ?RET(interesting);
+            false -> ?CALLOUT(dht_routing_meta, can_insert, [Node, rt_ref], bool())	
+          end
+    end.
+
+%% INSERT_NODE (GenServer Internal Call)
+%% --------------------------------
+
+insert_node_gs_callouts(_S, [Node]) ->
+    ?MATCH(Insert, ?CALLOUT(dht_routing, insert, [Node, rt_ref],
+      oneof([{already_member, rt_ref}, {ok, rt_ref}, {not_inserted, rt_ref}]))),
+    case Insert of
+      {ok, rt_ref} -> ?RET(true);
+      {already_member, rt_ref} -> ?RET(false);
+      {not_inserted, rt_ref} -> ?RET(false)
     end.
 
 %% MODEL CLEANUP
