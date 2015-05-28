@@ -86,6 +86,21 @@ start_link_callouts(#state { id = ID }, [ID, []]) ->
 start_link_next(State, _, _) ->
     State#state { init = true }.
 
+%% CLOSEST TO
+%% ------------------------
+closest_to_pre(#state { init = S }) -> S.
+
+closest_to(ID, Num) ->
+    dht_state:closest_to(ID, Num).
+	
+closest_to_args(_S) ->
+    [dht_eqc:id(), nat()].
+	
+closest_to_callouts(_S, [ID, Num]) ->
+    ?MATCH(Ns, ?CALLOUT(dht_routing, neighbors, [ID, Num, rt_ref],
+        list(dht_eqc:peer()))),
+    ?RET(Ns).
+
 %% NODE ID
 %% ---------------------
 node_id() ->
@@ -127,39 +142,24 @@ ping_callouts(_S, [IP, Port]) ->
         pang -> ?RET(pang);
         ID ->
             ?APPLY(request_success, [{ID, IP, Port}]),
-            ?RET(ID)
+            ?RET({ok, ID})
     end.
 
-%% CLOSEST TO
-%% ------------------------
-closest_to_pre(#state { init = S }) -> S.
-
-closest_to(ID, Num) ->
-    dht_state:closest_to(ID, Num).
-	
-closest_to_args(_S) ->
-    [dht_eqc:id(), nat()].
-	
-closest_to_callouts(_S, [ID, Num]) ->
-    ?MATCH(Ns, ?CALLOUT(dht_routing, neighbors, [ID, Num, rt_ref],
-        list(dht_eqc:peer()))),
-    ?RET(Ns).
-
-%% KEEPALIVE
+%% REFRESH_NODE
 %% ---------------------------
-keepalive_pre(#state { init = S }) -> S.
+refresh_node_pre(#state { init = S }) -> S.
 
-keepalive(Node) ->
-    dht_state:keepalive(Node).
+refresh_node(Node) ->
+    dht_state:refresh_node(Node).
 	
-keepalive_args(_S) ->
+refresh_node_args(_S) ->
     [dht_eqc:peer()].
 	
-keepalive_callouts(_S, [{_, IP, Port} = Node]) ->
+refresh_node_callouts(_S, [{_, IP, Port} = Node]) ->
     ?MATCH(R, ?APPLY(ping, [IP, Port])),
     case R of
         pang -> ?APPLY(request_timeout, [Node]);
-        _ID -> ?RET(ok)
+        {ok, _ID} -> ?RET(ok)
     end.
     
 %% REQUEST_SUCCESS

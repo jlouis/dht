@@ -53,26 +53,29 @@
 %% Lifetime
 -export([
 	start_link/2, start_link/3,
-	load_state/2,
-	dump_state/0, dump_state/1, dump_state/2
+	dump_state/0, dump_state/1
+]).
+
+%% Query
+-export([
+	closest_to/1, closest_to/2,
+	node_id/0,
+	node_list/0
 ]).
 
 %% Manipulation
 -export([
 	insert_node/1,
-	insert_nodes/1,
+	ping/2,
 	request_success/1,
-	request_timeout/1,
-	ping/2, ping/3
+	request_timeout/1
+
 ]).
 
-%% Query
+%% Internal API
 -export([
-	 closest_to/1, closest_to/2,
-	 keepalive/1,
-	 node_id/0,
-	 node_list/0,
-	 refresh/3
+	refresh_node/1,
+	refresh_range/3
 ]).
 
 -export([init/1,
@@ -84,8 +87,6 @@
 
 -define(K, 8).
 -define(in_range(Dist, Min, Max), ((Dist >= Min) andalso (Dist < Max))).
--define(MAX_UNREACHABLE, 128).
--define(UNREACHABLE_TAB, dht_state_unreachable).
 
 -record(state, {
     node_id :: dht:node_id(), % ID of this node
@@ -93,9 +94,8 @@
     state_file="/tmp/dht_state" :: string() % Path to persistent state
 }).
 
-%% Helper for calling
-call(X) -> gen_server:call(?MODULE, X).
-
+%% LIFETIME MAINTENANCE
+%% ----------------------------------------------------------
 start_link(StateFile, BootstrapNodes) ->
 	start_link(dht_metric:mk(), StateFile, BootstrapNodes).
 	
@@ -103,6 +103,34 @@ start_link(RequestedID, StateFile, BootstrapNodes) ->
     gen_server:start_link({local, ?MODULE},
 			  ?MODULE,
 			  [RequestedID, StateFile, BootstrapNodes], []).
+
+%% @doc dump_state/0 dumps the routing table state to disk
+%% @end
+dump_state() ->
+    call(dump_state).
+
+%% @doc dump_state/1 dumps the routing table state to disk into a given file
+%% @end
+dump_state(Filename) ->
+    call({dump_state, Filename}).
+
+%% PUBLIC API
+%% ----------------------------------------------------------
+%% Helper for calling
+call(X) -> gen_server:call(?MODULE, X).
+
+%% QUERIES 
+%% -----------
+
+%% @equiv closest_to(NodeID, ?K)
+-spec closest_to(dht:node_id()) -> list(dht:node_t()).
+closest_to(NodeID) -> closest_to(NodeID, ?K).
+
+%% @doc closest_to/2 returns the neighborhood around an ID known to the routing table
+%% @end
+-spec closest_to(dht:node_id(), pos_integer()) -> list(dht:node_t()).
+closest_to(NodeID, NumNodes) ->
+    call({closest_to, NodeID, NumNodes}).
 
 %% @doc Return this node id as an integer.
 %% Node ids are generated in a random manner.
@@ -115,11 +143,15 @@ node_id() ->
 -spec node_list() -> [dht:node_t()].
 node_list() -> call(node_list).
 
+%% OPERATIONS WHICH CHANGE STATE
+%% ------------------------------
+
 %%
 %% @doc insert_node/1 inserts a new node according to the options given
 %%
 %% There are two variants of this function:
-%% * If inserting {IP, Port} a ping will first be made to make sure the node is alive and find its ID
+%% * If inserting {IP, Port} a ping will first be made to make sure the node is
+%%   alive and find its ID
 %% * If inserting {ID, IP, Port}, then a ping is first made to make sure the node exists
 %% @end
 -spec insert_node(Node) -> true | false | {error, Reason}
@@ -127,16 +159,16 @@ node_list() -> call(node_list).
       Node :: dht:node_t() | {inet:ip_address(), inet:port_number()},
       Reason :: atom().
 insert_node({IP, Port}) ->
-	case ping(IP, Port, #{ unreachable_check => true}) of
+	case ping(IP, Port) of
 	    pang -> {error, timeout};
-	    ID -> call({insert_node, {ID, IP, Port}})
+	    {ok, ID} -> call({insert_node, {ID, IP, Port}})
 	end;
 insert_node(Node) ->
 	insert_node_interesting(Node, is_interesting(Node)).
 
 insert_node_interesting({_, _, _}, false) -> false;
 insert_node_interesting({ID, IP, Port}, true) ->
-	case ping(IP, Port, #{ unreachable_check => true}) of
+	case ping(IP, Port) of
 		pang -> {error, timeout};
 		{ok, ID} ->
 			call({insert_node, {ID, IP, Port}});
@@ -144,12 +176,27 @@ insert_node_interesting({ID, IP, Port}, true) ->
 			{error, inconsistent_id}
 	end.
 
-%% @doc insert_nodes/1 inserts a list of nodes into the routing table asynchronously
+request_success(Node) -> call({request_success, Node}).
+request_timeout(Node) -> call({request_timeout, Node}).
+
+
+%% @doc ping/2 pings an IP/Port pair in order to determine its NodeID
+%%
+%% Blocks the caller until the ping responds or times out.
 %% @end
--spec insert_nodes([dht:node_t()]) -> ok.
-insert_nodes(NodeInfos) ->
-    [spawn_link(?MODULE, insert_node, [Node]) || Node <- NodeInfos],
-    ok.
+-spec ping(inet:ip_address(), inet:port_number()) ->
+	pang | {ok, dht:node_id()} | {error, Reason}
+  when Reason :: atom().
+ping(IP, Port) ->
+    case dht_net:ping({IP, Port}) of
+        pang -> pang;
+        ID ->
+          ok = request_success({ID, IP, Port}),
+          {ok, ID}
+    end.
+    
+%% INTERNAL API
+%% -------------------------------------------------------------------
 
 %% @doc is_interesting/1 returns true if a node can enter the routing table, false otherwise
 %% Check if node would fit into the routing table. This function is used by the insert_node
@@ -158,72 +205,21 @@ insert_nodes(NodeInfos) ->
 -spec is_interesting(dht:node_t()) -> boolean().
 is_interesting({_, _, _} = Node) -> call({is_interesting, Node}).
 
-%% @equiv closest_to(NodeID, 8)
--spec closest_to(dht:node_id()) -> list(dht:node_t()).
-closest_to(NodeID) -> closest_to(NodeID, 8).
-
-%% @doc closest_to/2 returns the neighborhood around an ID known to the routing table
+%% @private
+%% @doc insert_nodes/1 inserts a list of nodes into the routing table asynchronously
 %% @end
--spec closest_to(dht:node_id(), pos_integer()) -> list(dht:node_t()).
-closest_to(NodeID, NumNodes) ->
-    call({closest_to, NodeID, NumNodes}).
+-spec insert_nodes([dht:node_t()]) -> ok.
+insert_nodes(NodeInfos) ->
+    [spawn_link(?MODULE, insert_node, [Node]) || Node <- NodeInfos],
+    ok.
 
-request_success(Node) -> call({request_success, Node}).
-request_timeout(Node) -> call({request_timeout, Node}).
-
-%% @doc dump_state/0 dumps the routing table state to disk
-%% @end
-dump_state() ->
-    call(dump_state).
-
-%% @doc dump_state/1 dumps the routing table state to disk into a given file
-%% @end
-dump_state(Filename) ->
-    call({dump_state, Filename}).
-
--spec keepalive(dht:node_t()) -> 'ok'.
-keepalive({ID, IP, Port} = Node) ->
+%% @private
+%% @doc refresh_node/1 makes sure a node is still available
+-spec refresh_node(dht:node_t()) -> 'ok'.
+refresh_node({ID, IP, Port} = Node) ->
     case ping(IP, Port) of
 	ID -> ok;
 	pang -> request_timeout(Node)
-    end.
-
-%% @doc ping/2 pings an IP/Port pair in order to determine its NodeID
-%% @end
--spec ping(inet:ip_address(), inet:port_number()) -> pang | dht:node_id() | {error, Reason}
-  when Reason :: atom().
-ping(IP, Port) -> ping(IP, Port, #{}).
-
-%% @doc ping/3 pings an IP/Port pair with options for filtering excess pings
-%% If you set unreachable_check := true, then the table of unreachable pings is first
-%% consulted as a local cache. This speeds up pings and avoids pinging nodes which
-%% are often down.
-%%
-%% Blocks the caller until the ping responds or times out.
-%% @end
--spec ping(inet:ip_address(), inet:port_number(), #{ atom() => boolean() }) -> pang | dht:node_id() | {error, Reason}
-  when Reason :: atom().
-ping(IP, Port, #{ unreachable_check := true }) ->
-    ping_(IP, Port, ets:member(?UNREACHABLE_TAB, {IP, Port}));
-ping(IP, Port, #{}) ->
-    case dht_net:ping({IP, Port}) of
-        pang -> pang;
-        ID ->
-          request_success({ID, IP, Port})
-    end.
-    
-%% internal helper for ping/3
-ping_(_IP, _Port, true) -> pang;
-ping_(IP, Port, false) ->
-    case dht_net:ping({IP, Port}) of
-        pang ->
-            RandNode = random_node_tag(),
-            DelSpec = [{{'_', RandNode}, [], [true]}],
-            ets:select_delete(?UNREACHABLE_TAB, DelSpec),
-            ets:insert(?UNREACHABLE_TAB, {{IP, Port}, RandNode}),
-            pang;
-        NodeID ->
-          NodeID
     end.
 
 %% @doc refresh/3 refreshes a routing table bucket range
@@ -231,40 +227,42 @@ ping_(IP, Port, false) ->
 %% in the bucket until enough nodes that falls within the range of the bucket
 %% has been returned to replace the inactive nodes in the bucket.
 %% @end
--spec refresh(any(), list(dht:node_t()), list(dht:node_t())) -> 'ok'.
-refresh(Range, Inactive, Active) ->
+-spec refresh_range(any(), list(dht:node_t()), list(dht:node_t())) -> 'ok'.
+refresh_range(Range, Inactive, Active) ->
     %% Try to refresh the routing table using the inactive nodes first,
     %% If they turn out to be reachable the problem's solved.
-    do_refresh(Range, Inactive ++ Active, []).
+    refresh_nodes_in_range(Range, Inactive ++ Active, []).
 
-do_refresh(_Range, [], _) -> ok;
-do_refresh(Range, [{ID, _IP, _Port} = Node | T], IDs) ->
-  case do_refresh_find_node(Range, Node) of
-    continue -> do_refresh(Range, T, [ID | IDs]);
+refresh_nodes_in_range(_Range, [], _) -> ok;
+refresh_nodes_in_range(Range, [{ID, _IP, _Port} = Node | T], IDs) ->
+  case refresh_find_node(Range, Node) of
+    continue -> refresh_nodes_in_range(Range, T, [ID | IDs]);
     stop -> ok
   end.
 
-do_refresh_find_node(Range, Node) ->
+refresh_find_node(Range, Node) ->
     case dht_net:find_node(Node) of
         {error, timeout} ->
             continue;
         {_, NearNodes} ->
-            do_refresh_inserts(Range, NearNodes)
+            refresh_neighbors(Range, NearNodes)
     end.
 
-do_refresh_inserts({_, _}, []) -> continue;
-do_refresh_inserts({Min, Max} = Range, [{ID, _, _} = N|T]) when ?in_range(ID, Min, Max) ->
+refresh_neighbors({_, _}, []) -> continue;
+refresh_neighbors({Min, Max} = Range, [{ID, _, _} = N|T]) when ?in_range(ID, Min, Max) ->
     case insert_node(N) of
-      {error, timeout} -> do_refresh_inserts(Range, T);
-      true -> do_refresh_inserts(Range, T);
+      {error, timeout} -> refresh_neighbors(Range, T);
+      true -> refresh_neighbors(Range, T);
       false ->
           insert_nodes(T),
           stop
     end;
-do_refresh_inserts(Range, [N | T]) ->
+refresh_neighbors(Range, [N | T]) ->
     insert_node(N),
-    do_refresh_inserts(Range, T).
+    refresh_neighbors(Range, T).
 
+%% CALLBACKS
+%% -------------------------------------------------------------------
 
 %% @private
 init([RequestedNodeID, StateFile, BootstrapNodes]) ->
@@ -273,11 +271,6 @@ init([RequestedNodeID, StateFile, BootstrapNodes]) ->
     %% @todo lift this restriction. Periodically dump state, but don't do it if an
     %% invariant is broken for some reason
     erlang:process_flag(trap_exit, true),
-
-    %% Initialize the table of unreachable nodes when the server is started.
-    %% The safe_ping and unsafe_ping functions aren't exported outside of
-    %% of this module so they should fail unless the server is not running.
-    _ = ets:new(?UNREACHABLE_TAB, [named_table, public, bag]),
 
     RoutingTbl = load_state(RequestedNodeID, StateFile),
     
@@ -360,7 +353,7 @@ handle_info({inactive_node, Node}, #state { routing = Routing } = State) ->
             R = dht_routing:refresh_node(Node, Routing),
             {noreply, State#state { routing = R }};
         timeout ->
-            spawn(?MODULE, keepalive, [Node]),
+            spawn(?MODULE, refresh_node, [Node]),
             {noreply, State}
     end;
 handle_info({inactive_bucket, Range}, #state{ routing = Routing } = State) ->
@@ -372,7 +365,7 @@ handle_info({inactive_bucket, Range}, #state{ routing = Routing } = State) ->
         timeout ->
             #{ inactive := Inactive, active := Active } =
               dht_routing:range_state(Range, Routing),
-            spawn(?MODULE, refresh, [Range, Inactive, Active]),
+            spawn(?MODULE, refresh_range, [Range, Inactive, Active]),
             dht_routing:refresh_range(Range, Routing)
     end,
     {noreply, State#state { routing = R }};
@@ -391,9 +384,6 @@ code_change(_, State, _) ->
 %%
 %% INTERNAL FUNCTIONS
 %%
-random_node_tag() ->
-    _ = random:seed(erlang:timestamp()),
-    random:uniform(?MAX_UNREACHABLE).
 
 %%
 %% DISK STATE
