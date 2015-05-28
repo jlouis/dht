@@ -216,7 +216,7 @@ insert_nodes(NodeInfos) ->
 -spec refresh_node(dht:node_t()) -> 'ok'.
 refresh_node({ID, IP, Port} = Node) ->
     case ping(IP, Port) of
-	ID -> ok;
+	{ok, ID} -> ok;
 	pang -> request_timeout(Node)
     end.
 
@@ -233,17 +233,15 @@ refresh_range(Range, Inactive, Active) ->
 
 refresh_nodes_in_range(_Range, [], _) -> ok;
 refresh_nodes_in_range(Range, [{ID, _IP, _Port} = Node | T], IDs) ->
-  case refresh_find_node(Range, Node) of
+  case find_node(Range, Node) of
     continue -> refresh_nodes_in_range(Range, T, [ID | IDs]);
     stop -> ok
   end.
 
-refresh_find_node(Range, Node) ->
+find_node(Range, Node) ->
     case dht_net:find_node(Node) of
-        {error, timeout} ->
-            continue;
-        {_, NearNodes} ->
-            refresh_neighbors(Range, NearNodes)
+        {error, timeout} -> continue;
+        {_, NearNodes} -> refresh_neighbors(Range, NearNodes)
     end.
 
 refresh_neighbors({_, _}, []) -> continue;

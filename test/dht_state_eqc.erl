@@ -208,23 +208,6 @@ ping_callouts(_S, [IP, Port]) ->
             ?RET({ok, ID})
     end.
 
-%% REFRESH_NODE
-%% ---------------------------
-refresh_node_pre(#state { init = S }) -> S.
-
-refresh_node(Node) ->
-    dht_state:refresh_node(Node).
-	
-refresh_node_args(_S) ->
-    [dht_eqc:peer()].
-	
-refresh_node_callouts(_S, [{_, IP, Port} = Node]) ->
-    ?MATCH(R, ?APPLY(ping, [IP, Port])),
-    case R of
-        pang -> ?APPLY(request_timeout, [Node]);
-        {ok, _ID} -> ?RET(ok)
-    end.
-    
 %% REQUEST_SUCCESS
 %% ----------------
 
@@ -273,6 +256,23 @@ request_timeout_callouts(_S, [Node]) ->
               ?CALLOUT(dht_routing_meta, remove_node, [Node, rt_ref], rt_ref),
               ?RET(ok)
           end
+    end.
+
+%% REFRESH_NODE
+%% ------------------------------
+
+refresh_node(Node) ->
+    dht_state:refresh_node(Node).
+    
+refresh_node_pre(S) -> initialized(S).
+
+refresh_node_args(_S) -> [dht_eqc:peer()].
+
+refresh_node_callouts(_S, [{_, IP, Port} = Node]) ->
+    ?MATCH(PingRes, ?APPLY(ping, [IP, Port])),
+    case PingRes of
+        pang -> ?APPLY(request_timeout, [Node]);
+        {ok, _ID} -> ?RET(ok)
     end.
 
 %% NODE_STATE (Internal call)
