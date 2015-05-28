@@ -5,6 +5,21 @@
 %% The high-level view is relatively simple to define since most of the advanced parts
 %% pertaining to routing has already been handled in dht_routing_meta and its corresponding
 %% EQC model.
+%%
+%% This model defines the large-scale policy rules of the DHT routing table. It uses dht_routing_meta
+%% and dht_routing_table for the hard work at the low level and just delegates necessary work to
+%% those parts of the code (and their respective models).
+%%
+%% The dht_state code is a gen_server which occasionally spawns functions to handle background
+%% work. Some states are gen_server internal and are marked as such. They refer to callout
+%% specifications which are done inside the gen_server. The code path is usually linear in this
+%% case as well, however.
+%%
+%% TODO:
+%% · Handle node/timer refresh events
+%% · Handle internal invocations of node/timer refresh events
+%% · Improve feature coverage of the model. We can cover far more ground with a little bit
+%%   of work.
 %% @end
 -module(dht_state_eqc).
 -compile(export_all).
