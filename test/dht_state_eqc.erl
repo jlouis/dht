@@ -45,7 +45,7 @@ api_spec() ->
 		  		functions = [
 		  			#api_fun { name = can_insert, arity = 2 },
 		  			#api_fun { name = export, arity = 1 },
-		  			#api_fun { name = inactive, arity = 3 },
+		  			#api_fun { name = inactive, arity = 2 },
 		  			#api_fun { name = is_member, arity = 2 },
 		  			#api_fun { name = neighbors, arity = 3 },
 		  			#api_fun { name = new, arity = 1 },
@@ -171,18 +171,18 @@ insert_node_callouts(_S, [{unknown, IP, Port}]) ->
     case PingRes of
       pang -> ?RET({error, timeout});
       {ok, ID} ->
-        ?APPLY(insert_node_gs, [ID, IP, Port])
+        ?APPLY(insert_node_gs, [{ID, IP, Port}])
     end;
 insert_node_callouts(_S, [{ID, IP, Port} = Node]) ->
     ?MATCH(NodeState, ?APPLY(node_state, [Node])),
     case NodeState of
-      {not_interesting, Node} -> ?RET({not_interesting, Node});
+      not_interesting -> ?RET({not_interesting, Node});
       interesting ->
         ?MATCH(PingRes, ?APPLY(ping, [IP, Port])),
         case PingRes of
           pang -> ?RET({error, timeout});
           {ok, ID} ->
-            ?APPLY(insert_node_gs, [ID, IP, Port]);
+            ?APPLY(insert_node_gs, [{ID, IP, Port}]);
           {ok, _OtherID} ->
             ?RET({error, inconsistent_id})
         end
@@ -282,15 +282,21 @@ node_state_callouts(_S, [Node]) ->
     ?MATCH(Member, ?CALLOUT(dht_routing_meta, is_member, [Node, rt_ref], bool())),
     case Member of
         true ->
-          ?RET({not_interesting, Node});
+          ?RET(not_interesting);
         false ->
           ?MATCH(RangeMembers, ?CALLOUT(dht_routing_meta, range_members, [Node, rt_ref],
               list(dht_eqc:peer()))),
-          ?MATCH(Inactive, ?CALLOUT(dht_routing_meta, inactive, [RangeMembers, nodes, rt_ref],
+          ?MATCH(Inactive, ?CALLOUT(dht_routing_meta, inactive, [RangeMembers, rt_ref],
               oneof([[], [x]]))),
           case (Inactive /= []) orelse ( length(RangeMembers) < ?K ) of
             true -> ?RET(interesting);
-            false -> ?CALLOUT(dht_routing_meta, can_insert, [Node, rt_ref], bool())	
+            false ->
+              ?MATCH(CanInsert,
+                  ?CALLOUT(dht_routing_meta, can_insert, [Node, rt_ref], bool())),
+              case CanInsert of
+                  true -> ?RET(interesting);
+                  false -> ?RET(not_interesting)
+              end
           end
     end.
 

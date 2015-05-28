@@ -287,14 +287,20 @@ handle_call({insert_node, Node}, _From, #state { routing = Routing } = State) ->
     end;
 handle_call({node_state, Node}, _From, #state{ routing = Routing } = State) ->
     case dht_routing_meta:is_member(Node, Routing) of
-        true -> {reply, {not_interesting, Node}, State};
+        true -> {reply, not_interesting, State};
         false ->
             RangeMembers = dht_routing_meta:range_members(Node, Routing),
-            Inactive = dht_routing_meta:inactive(RangeMembers, nodes, Routing) /= [],
-            case Inactive orelse (length(RangeMembers) < ?K) of
-                true -> {reply, true, State}; % either inactivity or there is too few members
+            Inactive = dht_routing_meta:inactive(RangeMembers, Routing),
+            case (Inactive /= []) orelse ( length(RangeMembers) < ?K ) of
+                true ->
+                    %% There is space, or there are inactive nodes, so it is an intersting node
+                    {reply, interesting, State};
                 false ->
-                    {reply, dht_routing_meta:can_insert(Node, Routing), State}
+                    Reply = case dht_routing_meta:can_insert(Node, Routing) of
+                        true -> interesting;
+                        false -> not_interesting
+                    end,
+                    {reply, Reply, State}
             end
     end;
 handle_call({closest_to, ID, NumNodes}, _From, #state{routing = Routing } = State) ->
