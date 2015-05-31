@@ -24,23 +24,31 @@
 %% the routing table for the rest of the system, but since the actual routing table is a subset obeying
 %% the same commands, this idea works.
 %%
-%% One might think that there is a simply relationship between a node in the RT and having a
-%% timer for that node, but this is not true. Nodes can be defined to be in one of 3 possible states:
+%% One might think that there is a simply relationship between a node in the RT and its state,
+%% but this is not true. Nodes can be defined to be in one of 3 possible states:
 %%
-%% · Good—we have succesfully communicated with the node recently
-%% · Questionable—we have not communicated with this node recently
-%% · Bad—we have tried communication with the node, but communication has systematically timed
+%% • Good—we have succesfully communicated with the node recently
+%% • Questionable—we have not communicated with this node recently
+%% • Bad—we have tried communication with the node, but communication has systematically timed
 %%   out.
 %%
+%% so to handle a node correctly, we need to understand the differences in state among the nodes.
 %%
 %% NODES
+%% ======================================================
 %%
 %% We don't track the Node state with a timer. Rather, we note the last succesful point of
 %% communication. This means a simple calculation defines when a node becomes questionable,
-%% and thus needs a refresh. The existence of a refreshing process for the node is the note that
-%% the node should be refreshed, and that process also acts like the timeout for the refresh.
+%% and thus needs a refresh.
+%%
+%% The reason we do it this way, is that all refreshes of nodes are event-driven: The node is
+%% refreshed whenever an event happens:
+%%
+%% • We communicate with the node and the communication is sucessful according to the rules.
+%% • We need to insert a node close to the node that needs refreshing.
 %%
 %% RANGES
+%% ======================================================
 %%
 %% Ranges are tracked with a timer. We represent such timers as integers in our model and
 %% inject them into the SUT. By mocking timer calls, through dht_time, we are able to handle
@@ -52,21 +60,95 @@
 %% The routing system uses a map() to store a mapping
 %%
 %%     Node => #{ last_activity => LA, timeout_count => N, or
-%%     Range => #{ last_activity => LA }, where
+%%     Range => #{ timer => TRef }, where
 %%
-%% LA is the point in time when the item Node/Range was last active,
-%% and timeout_count is the number of times that node has timed out.
+%% LA is the point in time when the item Node was last active,
+%% and timeout_count is the number of times that node has timed out,
+%% and timer is a reference to the timer that was set at that point in time.
 %%
 %% This means that for any point in time τ, we can measure the age(T) = τ-T, and
 %% check if the age is larger than, say, ?NODE_TIMEOUT. This defines when a node is
 %% questionable. The timeout_count defines a bad node, if it grows too large.
 %%
+%% Also, the last_activity is defined as the maximum value among its members for
+%% last activity. This is far easier to reason about than tracking a separate last_activity
+%% value for the range.
+%%
+%% MODEL IMPLEMENTATION:
+%% ======================================================
+%%
 %% The model uses a simple list to model the routing system.
+%%
+%% GENERAL RULES FROM BEP 0005:
+%% ======================================================
+%%
+%% Handling the all–important thing which is the DHTs documentation:
+%% 
+%% Nodes have 3 possible states:
+%% 
+%% -type node_state() :: good | {questionable, integer()} | bad
+%% 
+%% Each node maintains a point in time, last_activity, where it was last communicated with.
+%% 
+%% • If a node replies to one of our queries, last_activity := now();
+%% • If a node sends a query and has at some point replied to a query of ours, last_activity := now()
+%% 
+%% The first rule makes sure that nodes which participate in communication are good. The last rule is used when we know a priori a node is a participant already.
+%% 
+%% If a node fails to respond to a query 3 times, it is marked as bad and this usually means it will eventually be removed from the routing table.
+%% 
+%% Nodes with good state are given priority over nodes with questionable state.
+%% 
+%% Buckets/ranges:
+%% 
+%% Buckets and ranges are split in the obvious pattern.
+%% 
+%% A range can maximally hold K nodes, where K := 8 currently. 
+%% 
+%% Insertion:
+%% 
+%% • Inserting a node into a bucket full of good nodes is a discard
+%% • If inserting into a bucket with bad nodes present, one bad is replaced by the new node.
+%% • If inserting into a bucket with questionable nodes, the oldest questionable node is pinged.
+%% 	If the ping succeeds, we try the next most questionable node and so on.
+%% 	If the ping fails, twice, then the node is replaced by the new good node
+%% 
+%% Range refresh:
+%% 
+%% Ranges has a last_changed property. It is updated on:
+%% 
+%% • Ping which respondds
+%% • Node Added
+%% • Node Replaced
+%% 
+%% If a range has not been updated for 15 minutes, it should be refreshed:
+%% 
+%% • Pick random ID in the range.
+%% • Run FIND_NODE on the random ID
+%% • find_nodes will run insertion, hopefully close the ID you already had
+%% 
+%% Startup:
+%% 
+%% • Inserting the first node
+%% • Or starting up with a routing table thereafter
+%% 
+%% Issue a FIND_NODE request on your own ID until you can't find any closer nodes.
+%% 
 
 %% TODO—Still missing work in the model:
-%% · insert/2 needs to be enabled in the model.
-%% · range_time_state/2 needs to be modeled correctly, as it is currently being skipped
-
+%% • After we started looking at the BEP 0005 spec, we have realized this module needs
+%%    some serious rewriting, as it is currently not doing the right thing.
+%% • Mistake #1: Return {questionable, τ} for a point in time τ rather than returning
+%%    {questionable, Age} for its age. This means we can sort based on questionability.
+%% • Mistake #2: Kill the inactive/active calls, but return a Node and it's node_state() instead.
+%%    This in turn lets the caller decide what to do with the data and we avoid encoding such
+%%    rules in this part of the system. It is far better to return everything and let the caller split
+%%    it apart. Many of the calls in this module goes away once this is done.
+%% • Mistake #3: Refreshing ranges is a much simpler model. We don't need to maintain an
+%%    advanced notion of what range timers are, and when they hit. Rather, we can just run them
+%%    on a safe 15 minute schedule.
+%% • Mistake #4: This module encodes far too much policy. It should be simpler in notion, so
+%%    we avoid having to encode all of these things.
 -module(dht_routing_meta_eqc).
 -compile(export_all).
 
@@ -103,8 +185,8 @@
 	%% init encodes if we have initialized the routing table or not.
 	id :: any(),
 	%% id represents the current ID of the node we are running as
-	node_timers = [] :: [{dht:peer(), integer(), non_neg_integer()}],
-	range_timers = [] :: [{time_ref(), any()}]
+	node_timers = [] :: [{dht:peer(), time(), non_neg_integer()}],
+	range_timers = [] :: [{dht:range(), time_ref()}]
 	%% The node_timers and range_timers represent the state of the routing table
 	%% we can do this, due to the invariant that every time the routing table has an
 	%% entry X, then there is a timer construction for X.
