@@ -14,19 +14,28 @@
 %% · Rework the EQC model, since it is now in tatters.
 -module(dht_routing_meta).
 
+%% Create/Export
 -export([new/1]).
 -export([export/1]).
 
+%% Manipulate the routing table and meta-data
 -export([
 	insert/2,
+	replace/3,
+	remove/2,
+	node_touch/3,
+	node_timeout/2,
+	refresh_range/2
+]).
+
+%% Query the state of the routing table and its meta-data
+-export([
 	is_member/2,
 	neighbors/3,
 	node_list/1,
-	node_timer_state/2,
-	node_timeout/2,
-	range_members/2,
-	refresh_node/2,
-	refresh_range/2
+	node_state/2,
+	%% range_state/2,
+	range_members/2
 ]).
 
 %
@@ -42,6 +51,9 @@
     nodes = #{},
     ranges = #{}
 }).
+
+-type node_state() :: good | {questionable, integer()} | bad.
+-export_type([node_state/0]).
 
 %% API
 %% ------------------------------------------------------
@@ -61,6 +73,17 @@ new(Tbl) ->
 is_member(Node, #routing { table = T }) -> dht_routing_table:is_member(Node, T).
 range_members(Node, #routing { table = T }) -> dht_routing_table:members(Node, T).
 
+%% @doc replace/3 substitutes one questionable node for a new node in the system
+%% @end
+replace(Old, New, #routing { nodes = Ns, table = Tbl } = State) ->
+    {questionable, _} = timer_state(Old, Ns),
+    false = is_member(New, State),
+    Deleted = State#routing {
+        table = dht_routing_table:delete(Old, Tbl),
+        nodes = maps:remove(Old, Ns)
+    },
+    insert(New, Deleted).
+    
 %% @doc insert/2 inserts a new node in the routing table
 %% @end
 insert(Node, #routing { table = Tbl } = State) ->
@@ -68,7 +91,7 @@ insert(Node, #routing { table = Tbl } = State) ->
         true -> {already_member, State};
         false ->
             Neighbours = dht_routing_table:members(Node, Tbl),
-            case inactive(Neighbours, nodes, State) of
+            case [N || {N, TS} <- node_state(Neighbours, State), TS /= good] of
               [] -> adjoin(Node, State);
               [Old | _] ->
                 Removed = remove(Old, State),
@@ -111,13 +134,20 @@ fold_update_ranges(Ops, Now, #routing { ranges = RT } = Routing) ->
 %% @doc remove/2 removes a node from the routing table (and deletes the associated timer structure)
 %% @end
 remove(Node, #routing { table = Tbl, nodes = NT} = State) ->
+    bad = timer_state(Node, NT),
     State#routing {
         table = dht_routing_table:delete(Node, Tbl),
         nodes = maps:remove(Node, NT)
     }.
 
-refresh_node(Node, #routing { nodes = NT} = Routing) ->
-    Routing#routing { nodes = node_update(Node, dht_time:monotonic_time(), NT)}.
+node_touch(Node, #{ reachable := true }, #routing { nodes = NT} = Routing) ->
+    Routing#routing {
+        nodes = node_update({reachable, Node}, dht_time:monotonic_time(), NT)
+    };
+node_touch(Node, #{ reachable := false }, #routing { nodes = NT } = Routing) ->
+    Routing#routing {
+        nodes = node_update({unreachable, Node}, dht_time:monotonic_time(), NT)
+    }.
 
 refresh_range(Range, Routing) ->
     MostRecent = range_last_activity(Range, Routing),
@@ -136,11 +166,9 @@ node_timeout(Node, #routing { nodes = NT } = Routing) ->
     NewState = State#{ timeout_count := TC + 1 },
     Routing#routing { nodes = maps:update(Node, NewState, NT) }.
 
-node_timer_state(Node, #routing { nodes = NT} = S) ->
-    case is_member(Node, S) of
-        false -> not_member;
-        true -> timer_state({node, Node}, NT)
-    end.
+-spec node_state([dht:peer()], #routing{}) -> [{dht:peer(), node_state()}].
+node_state(Nodes, #routing { nodes = NT }) ->
+    [timer_state({node, N}, NT) || N <- Nodes].
 
 export(#routing { table = Tbl }) -> Tbl.
 
@@ -164,9 +192,6 @@ neighbors(ID, K, #routing { table = Tbl, nodes = NT }) ->
         L -> L ++ dht_routing_table:closest_to(
         			ID, QuestionableFilter, K-length(L), Tbl)
     end.
-
-inactive(Nodes, nodes, #routing { nodes = Timers }) ->
-    [N || N <- Nodes, timer_state({node, N}, Timers) /= good].
 
 %% INTERNAL FUNCTIONS
 %% ------------------------------------------------------
@@ -196,8 +221,15 @@ timer_delete(Item, Timers) ->
     _ = dht_time:cancel_timer(TRef),
     maps:update(Item, V#{ timer_ref := undefined }, Timers).
 
-node_update(Item, Activity, Timers) ->
-    Timers#{ Item => #{ last_activity => Activity, timeout_count => 0 }}.
+node_update({reachable, Item}, Activity, Timers) ->
+    Timers#{ Item => #{ last_activity => Activity, timeout_count => 0, reachable => true }};
+node_update({unreachable, Item}, Activity, Timers) ->
+    case maps:get(Item, Timers) of
+        M = #{ reachable := true } ->
+            Timers#{ Item => M#{ last_activity => Activity, timeout_count => 0, reachable := true }};
+        #{ reachable := false } ->
+            Timers
+    end.
 
 range_timer_add(Item, ActivityTime, TRef, Timers) ->
     Timers#{ Item => #{ last_activity => ActivityTime, timer_ref => TRef} }.

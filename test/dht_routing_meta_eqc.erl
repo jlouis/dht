@@ -118,9 +118,9 @@
 %% 
 %% Ranges has a last_changed property. It is updated on:
 %% 
-%% • Ping which respondds
+%% • Ping which responds
 %% • Node Added
-%% • Node Replaced
+%% • Node Replaced (which is an add, really)
 %% 
 %% If a range has not been updated for 15 minutes, it should be refreshed:
 %% 
@@ -141,15 +141,17 @@
 %%    some serious rewriting, as it is currently not doing the right thing.
 %% • Mistake #1: Return {questionable, τ} for a point in time τ rather than returning
 %%    {questionable, Age} for its age. This means we can sort based on questionability.
-%% • Mistake #2: Kill the inactive/active calls, but return a Node and it's node_state() instead.
-%%    This in turn lets the caller decide what to do with the data and we avoid encoding such
-%%    rules in this part of the system. It is far better to return everything and let the caller split
-%%    it apart. Many of the calls in this module goes away once this is done.
 %% • Mistake #3: Refreshing ranges is a much simpler model. We don't need to maintain an
 %%    advanced notion of what range timers are, and when they hit. Rather, we can just run them
 %%    on a safe 15 minute schedule.
 %% • Mistake #4: This module encodes far too much policy. It should be simpler in notion, so
 %%    we avoid having to encode all of these things.
+%% • To implement #3, we can write a function which computes the τ point in time where the
+%%    range was updated, by looking at the newest change to a member in the range.
+%% • The state of a range is given by a simple principle on the age of the last_changed value:
+%%    if it is too old, it needs a refresh and picks a random node to work on.
+%% • Do not set the timer in this module at all! Move it up! Just tell the interval needed for
+%%    the next timer!
 -module(dht_routing_meta_eqc).
 -compile(export_all).
 
