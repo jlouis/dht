@@ -18,9 +18,6 @@
 -export([export/1]).
 
 -export([
-	active/3,
-	can_insert/2,
-	inactive/3,
 	insert/2,
 	is_member/2,
 	neighbors/3,
@@ -28,11 +25,8 @@
 	node_timer_state/2,
 	node_timeout/2,
 	range_members/2,
-	range_state/2,
-	range_timer_state/2,
 	refresh_node/2,
-	refresh_range/2,
-	refresh_range_by_node/2
+	refresh_range/2
 ]).
 
 %
@@ -66,10 +60,6 @@ new(Tbl) ->
 
 is_member(Node, #routing { table = T }) -> dht_routing_table:is_member(Node, T).
 range_members(Node, #routing { table = T }) -> dht_routing_table:members(Node, T).
-
-can_insert(Node, #routing { table = Tbl }) ->
-    Tbl2 = dht_routing_table:insert(Node, Tbl),
-    dht_routing_table:is_member(Node, Tbl2).
 
 %% @doc insert/2 inserts a new node in the routing table
 %% @end
@@ -129,11 +119,6 @@ remove(Node, #routing { table = Tbl, nodes = NT} = State) ->
 refresh_node(Node, #routing { nodes = NT} = Routing) ->
     Routing#routing { nodes = node_update(Node, dht_time:monotonic_time(), NT)}.
 
-refresh_range_by_node({ID, _, _}, #routing { table = Tbl, ranges = RT } = Routing) ->
-    Range = dht_routing_table:range(ID, Tbl),
-    #{ last_activity := RActive } = maps:get(Range, RT),
-    refresh_range(Range, RActive, Routing).
-
 refresh_range(Range, Routing) ->
     MostRecent = range_last_activity(Range, Routing),
     refresh_range(Range, MostRecent, Routing).
@@ -156,18 +141,6 @@ node_timer_state(Node, #routing { nodes = NT} = S) ->
         false -> not_member;
         true -> timer_state({node, Node}, NT)
     end.
-
-range_timer_state(Range, #routing { table = Tbl, ranges = RT}) ->
-    case dht_routing_table:is_range(Range, Tbl) of
-        false -> not_member;
-        true -> timer_state({range, Range}, RT)
-    end.
-
-range_state(Range, #routing { table = Tbl } = Routing) ->
-    Members = dht_routing_table:members(Range, Tbl),
-    Active = active(Members, nodes, Routing),
-    Inactive = inactive(Members, nodes, Routing),
-    #{ active => Active, inactive => Inactive }.
 
 export(#routing { table = Tbl }) -> Tbl.
 
@@ -195,9 +168,6 @@ neighbors(ID, K, #routing { table = Tbl, nodes = NT }) ->
 inactive(Nodes, nodes, #routing { nodes = Timers }) ->
     [N || N <- Nodes, timer_state({node, N}, Timers) /= good].
 
-active(Nodes, nodes, #routing { nodes = Timers }) ->
-    [N || N <- Nodes, timer_state({node, N}, Timers) =:= good].
-    
 %% INTERNAL FUNCTIONS
 %% ------------------------------------------------------
 

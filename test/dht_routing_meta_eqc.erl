@@ -187,7 +187,7 @@
 	%% init encodes if we have initialized the routing table or not.
 	id :: any(),
 	%% id represents the current ID of the node we are running as
-	node_timers = [] :: [{dht:peer(), time(), non_neg_integer()}],
+	node_timers = [] :: [{dht:peer(), time(), non_neg_integer(), boolean()}],
 	range_timers = [] :: [{dht:range(), time_ref()}]
 	%% The node_timers and range_timers represent the state of the routing table
 	%% we can do this, due to the invariant that every time the routing table has an
@@ -332,6 +332,7 @@ insert_callouts(S, [Node]) ->
     case Member of
         true -> ?RET(already_member);
         false ->
+            %% TODO: we could also model this as an assertion so it can't happen.
             ?MATCH(RangeMembers, ?CALLOUT(dht_routing_table, members, [Node, rt_ref], rt_nodes(S))),
             case length(RangeMembers) of
                 ?K -> ?RET(not_inserted);
@@ -787,4 +788,3 @@ current_nodes(#state { nodes = NS }) ->
 
 monus(A, B) when A > B -> A - B;
 monus(A, B) when A =< B -> 0.
-
