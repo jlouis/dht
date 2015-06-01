@@ -9,40 +9,18 @@
 %% 3 modules:
 %%
 %%  * The routing table itself - In dht_routing_table
-%%  * The set of timers for node/range refreshes - In dht_routing
+%%  * The set of timer meta-data for node/range refreshes - In dht_routing_meta
 %%  * The policy rules for what to do - In dht_state (this file)
 %% 
 %% This modules main responsibility is to call out to helper modules
 %% and make sure to maintain consistency of the above three states
 %% we maintain.
 %%
-%% A node is considered disconnected if it does not respond to
-%% a ping query after 10 minutes of inactivity. Inactive nodes
-%% are kept in the routing table but are not propagated to
-%% neighbouring nodes through responses through find_node
-%% and get_peers responses.
-%%
-%% This allows the node to keep the routing table intact
-%% while operating in offline mode. It also allows the node
-%% to operate with a partial routing table without exposing
-%% inconsitencies to neighboring nodes.
-%%
-%% A range is refreshed once the least recently active node
-%% has been inactive for 5 minutes. If a replacement for the
-%% least recently active node can't be replaced, the server
-%% should wait at least 5 minutes before attempting to find
-%% a replacement again.
-%%
-%% The timeouts (expiry times) in this server is managed
-%% using a pair containg the time that a node/range was
-%% last active and a reference to the currently active timer.
-%% (see dht_routing)
-%%
-%% The activity time is used to validate the timeout messages
-%% sent to the server in those cases where the timer was cancelled
-%% inbetween that the timer fired and the server received the timeout
-%% message. The activity time is also used to calculate when
-%% future timeout should occur.
+%% Many of the calls in this module will block for a while if called. The reason is
+%% that the calling process handles network blocking calls for the gen_server
+%% that runs the dht_state routing table. That is, a response from the routing
+%% table may be to execute a network call, and then the caller awaits the
+%% completion of that network call.
 %%
 %% @end
 -module(dht_state).
@@ -67,7 +45,7 @@
 -export([
 	insert_node/1,
 	ping/2,
-	request_success/1,
+	request_success/2,
 	request_timeout/1
 
 ]).
@@ -152,30 +130,34 @@ node_list() -> call(node_list).
 %% There are two variants of this function:
 %% * If inserting {IP, Port} a ping will first be made to make sure the node is
 %%   alive and find its ID
-%% * If inserting {ID, IP, Port}, then a ping is first made to make sure the node exists
+%% * If inserting {ID, IP, Port}, it is assumed it is a valid node.
+%%
+%% The call may block for a while when inserting since the call may need to refresh
+%% a bucket when the insert happens. This in turns means the caller is blocked while
+%% this operation completes.
+%%
 %% @end
 -spec insert_node(Node) -> true | false | {error, Reason}
   when
-      Node :: dht:node_t() | {inet:ip_address(), inet:port_number()},
+      Node :: dht:peer() | {inet:ip_address(), inet:port_number()},
       Reason :: atom().
-insert_node({IP, Port}) -> insert_node({unknown, IP, Port});
-insert_node({unknown, IP, Port}) -> insert_node({unknown, IP, Port}, interesting);
-insert_node(Node) -> insert_node(Node, node_state(Node)).
+insert_node({IP, Port}) ->
+    case ping(IP, Port) of
+        pang -> {error, noreply};
+        {ok, ID} -> insert_node({ID, IP, Port})
+    end;
+insert_node({_ID, _IP, _Port} = Node) ->
+    case call({insert_node, Node}) of
+        ok -> ok;
+        {error, Reason} -> {error, Reason};
+        {verify, QNode} ->
+            %% There is an old questionable node, which needs refreshing. Execute a ping test on
+            %% the node to make sure it is still alive. Then attempt reinsertion.
+            refresh_node(QNode),
+            insert_node(Node)
+    end.
 
-insert_node(Node, not_interesting) -> {not_interesting, Node};
-insert_node({ID, IP, Port}, interesting) ->
-	case ping(IP, Port) of
-		pang -> {error, timeout};
-		{ok, ID} ->
-		    call({insert_node, {ID, IP, Port}});
-		{ok, OtherID} when ID == unknown ->
-		    %% Learn the ID of the peer
-		    call({insert_node, {OtherID, IP, Port}});
-		{ok, _OtherID} ->
-			{error, inconsistent_id}
-	end.
-
-request_success(Node) -> call({request_success, Node}).
+request_success(Node, Opts) -> call({request_success, Node, Opts}).
 request_timeout(Node) -> call({request_timeout, Node}).
 
 %% @doc ping/2 pings an IP/Port pair in order to determine its NodeID
@@ -189,22 +171,16 @@ ping(IP, Port) ->
     case dht_net:ping({IP, Port}) of
         pang -> pang;
         ID ->
-          ok = request_success({ID, IP, Port}),
+          ok = request_success({ID, IP, Port}, #{ reachable => true }),
           {ok, ID}
     end.
     
 %% INTERNAL API
 %% -------------------------------------------------------------------
 
-%% @doc node_state/1 returns true if a node can enter the routing table, false otherwise
-%% Check if node would fit into the routing table. This function is used by the insert_node
-%% function to avoid issuing ping-queries to every node sending this node a query
-%% @end
--spec node_state(dht:node_t()) -> boolean().
-node_state({_, _, _} = Node) -> call({node_state, Node}).
-
 %% @private
 %% @doc insert_nodes/1 inserts a list of nodes into the routing table asynchronously
+%% TODO: Hook the insert_node calls into a supervisor worker structure?
 %% @end
 -spec insert_nodes([dht:node_t()]) -> ok.
 insert_nodes(NodeInfos) ->
@@ -266,7 +242,7 @@ init([RequestedNodeID, StateFile, BootstrapNodes]) ->
     %% of the process.
     %% @todo lift this restriction. Periodically dump state, but don't do it if an
     %% invariant is broken for some reason
-    erlang:process_flag(trap_exit, true),
+    %% erlang:process_flag(trap_exit, true),
 
     RoutingTbl = load_state(RequestedNodeID, StateFile),
     
@@ -278,28 +254,22 @@ init([RequestedNodeID, StateFile, BootstrapNodes]) ->
 
 %% @private
 handle_call({insert_node, Node}, _From, #state { routing = Routing } = State) ->
-    case dht_routing_meta:insert(Node, Routing) of
-      {ok, R} -> {reply, true, State#state { routing = R }};
-      {already_member, R} -> {reply, false, State#state { routing = R }};
-      {not_inserted, R} -> {reply, false, State#state { routing = R }}
-    end;
-handle_call({node_state, Node}, _From, #state{ routing = Routing } = State) ->
-    case dht_routing_meta:is_member(Node, Routing) of
-        true -> {reply, not_interesting, State};
-        false ->
-            RangeMembers = dht_routing_meta:range_members(Node, Routing),
-            Inactive = dht_routing_meta:inactive(RangeMembers, Routing),
-            case (Inactive /= []) orelse ( length(RangeMembers) < ?K ) of
-                true ->
-                    %% There is space, or there are inactive nodes, so it is an intersting node
-                    {reply, interesting, State};
-                false ->
-                    Reply = case dht_routing_meta:can_insert(Node, Routing) of
-                        true -> interesting;
-                        false -> not_interesting
-                    end,
-                    {reply, Reply, State}
-            end
+    Near = dht_routing_meta:range_members(Node, Routing),
+    case analyze_range(dht_routing_meta:node_state(Near, Routing)) of
+      {[], [], Gs} when length(Gs) == ?K ->
+          %% Already enough nodes in that range/bucket
+          {reply, range_full, State};
+      {Bs, Qs, Gs} when length(Gs) + length(Bs) + length(Qs) < ?K ->
+          %% There is room for the new node, insert it
+          {ok, R2} = dht_routing_meta:insert(Node, Routing),
+          {reply, ok, State#state { routing = R2 }};
+      {[Bad | _], _, _} ->
+          %% There is a bad node present, swap the new node for the bad
+          {ok, R2} = dht_routing_meta:replace(Bad, Node, Routing),
+          {reply, ok, State#state { routing = R2 }};
+      {[], [Questionable | _], _} ->
+          %% Ask the caller to verify the questionable node (they are sorted in order of interestingness)
+          {reply, {verify, Questionable}, State}
     end;
 handle_call({closest_to, ID, NumNodes}, _From, #state{routing = Routing } = State) ->
     Neighbors = dht_routing_meta:neighbors(ID, NumNodes, Routing),
@@ -309,19 +279,13 @@ handle_call({request_timeout, Node}, _From, #state{ routing = Routing } = State)
         false -> {reply, ok, State};
         true ->
             R = dht_routing_meta:node_timeout(Node, Routing),
-            R2 = case dht_routing_meta:node_timer_state(Node, R) of
-                good -> R;
-                {questionable, _N} -> R;
-                bad ->
-                  dht_routing_meta:remove_node(Node, R)
-            end,
-            {reply, ok, State#state { routing = R2 }}
+            {reply, ok, State#state { routing = R }}
     end;
-handle_call({request_success, Node}, _From, #state{ routing = Routing } = State) ->
+handle_call({request_success, Node, Opts}, _From, #state{ routing = Routing } = State) ->
     case dht_routing_meta:is_member(Node, Routing) of
 	    false -> {reply, ok, State};
 	    true ->
-	        R = dht_routing_meta:refresh_node(Node, Routing),
+	        R = dht_routing_meta:node_touch(Node, Opts, Routing),
 	        {reply, ok, State#state { routing = R }}
     end;
 handle_call(dump_state, From, #state{ state_file = StateFile } = State) ->
@@ -345,38 +309,24 @@ handle_cast(_, State) ->
     {noreply, State}.
 
 %% @private
-%% The timers {inactive_node, Node} and {inactive_range, Range} is set by the
-%% dht_routing module
-handle_info({inactive_node, Node}, #state { routing = Routing } = State) ->
-    case dht_routing_meta:node_timer_state(Node, Routing) of
-        ok -> {noreply, State};
-        not_member -> {noreply, State};
-        canceled ->
-            R = dht_routing_meta:refresh_node(Node, Routing),
+%% The timer {inactive_range, Range} is set by the dht_routing module
+handle_info({inactive_range, Range}, #state{ routing = Routing } = State) ->
+    case dht_routing_meta:range_state(Range, Routing) of
+        ok ->
+            R = dht_routing_meta:reset_range_timer(Range, #{ force => false}, Routing),
             {noreply, State#state { routing = R }};
-        timeout ->
-            spawn(?MODULE, refresh_node, [Node]),
-            {noreply, State}
+        {needs_refresh, ID} ->
+            R = dht_routing_meta:reset_range_timer(Range, #{ force => true }, Routing),
+            spawn_link(?MODULE, refresh_range, [ID]),
+            {noreply, State#state { routing = R }}
     end;
-handle_info({inactive_bucket, Range}, #state{ routing = Routing } = State) ->
-    R = case dht_routing_meta:range_timer_state(Range, Routing) of
-        ok -> Routing;
-        not_member -> Routing;
-        canceled ->
-            dht_routing_meta:refresh_range(Range, Routing);
-        timeout ->
-            #{ inactive := Inactive, active := Active } =
-              dht_routing_meta:range_state(Range, Routing),
-            spawn(?MODULE, refresh_range, [Range, Inactive, Active]),
-            dht_routing_meta:refresh_range(Range, Routing)
-    end,
-    {noreply, State#state { routing = R }};
 handle_info({stop, Caller}, #state{} = State) ->
 	Caller ! stopped,
 	{stop, normal, State}.
 
 %% @private
-terminate(_, #state{ routing = Routing, state_file=StateFile}) ->
+terminate(Reason, #state{ routing = Routing, state_file=StateFile}) ->
+	error_logger:error_report({exiting, Reason}),
 	dump_state(StateFile, dht_routing_meta:export(Routing)).
 
 %% @private
@@ -386,6 +336,20 @@ code_change(_, State, _) ->
 %%
 %% INTERNAL FUNCTIONS
 %%
+
+%% Given a list of node states, sort them into good, bad, and questionable buckets.
+%% In the case of the questionable nodes, they are sorted oldest first, so the list head
+%% is the one you want to analyze.
+%%
+%% In addition we sort the bad nodes, so there is a specific deterministic order in which
+%% we consume them.
+analyze_range(Nodes) when length(Nodes) =< ?K -> analyze_range(Nodes, [], [], []).
+analyze_range([], Bs, Qs, Gs) ->
+    SortedQs = [N || {N, _} <- lists:keysort(2, Qs)],
+    {lists:sort(Bs), SortedQs, Gs};
+analyze_range([{B, bad} | Next], Bs, Qs, Gs) -> analyze_range(Next, [B | Bs], Qs, Gs);
+analyze_range([{G, good} | Next], Bs, Qs, Gs) -> analyze_range(Next, Bs, Qs, [G | Gs]);
+analyze_range([{_, {questionable, _}} = Q | Next], Bs, Qs, Gs) -> analyze_range(Next, Bs, [Q | Qs], Gs).
 
 %%
 %% DISK STATE

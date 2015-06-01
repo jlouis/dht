@@ -725,7 +725,7 @@ trace(off) ->
 %% Given a time T and a node state tuple, compute the expected node state value
 %% for that tuple.
 node_state_value(_T, false) -> not_member;
-node_state_value(_T, {_, _, Errs, _}) when Errs > 2 -> bad;
+node_state_value(_T, {_, _, Errs, _}) when Errs > 1 -> bad;
 node_state_value(T, {_, Tau, _, _}) when T - Tau < ?NODE_TIMEOUT -> good;
 node_state_value(_, {_, Tau, _, _}) -> {questionable, Tau}.
 
