@@ -184,29 +184,6 @@ insert_node_callouts(_S, [Node]) ->
             ?APPLY(insert_node, [Node])
     end.
 
-%% PING
-%% ---------------------
-
-%% Ping a node, updating the response correctly on a succesful pong message
-%% TODO: Consider if the pang response should error/timeout the node in question.
-ping_pre(#state { init = S }) -> S.
-
-ping(IP, Port) ->
-    dht_state:ping(IP, Port).
-
-ping_args(_S) ->
-    [dht_eqc:ip(), dht_eqc:port()].
-
-%% TODO: also generate valid ping responses.
-ping_callouts(_S, [IP, Port]) ->
-    ?MATCH(R, ?CALLOUT(dht_net, ping, [{IP, Port}], oneof([pang]))),
-    case R of
-        pang -> ?RET(pang);
-        ID ->
-            ?APPLY(request_success, [{ID, IP, Port}]),
-            ?RET({ok, ID})
-    end.
-
 %% REQUEST_SUCCESS
 %% ----------------
 
@@ -262,12 +239,24 @@ refresh_node_pre(S) -> initialized(S).
 
 refresh_node_args(_S) -> [dht_eqc:peer()].
 
-refresh_node_callouts(_S, [{_, IP, Port} = Node]) ->
+refresh_node_callouts(_S, [{ID, IP, Port} = Node]) ->
     ?MATCH(PingRes, ?APPLY(ping, [IP, Port])),
     case PingRes of
-        pang -> ?APPLY(request_timeout, [Node]);
-        {ok, _ID} -> ?RET(ok)
+        pang ->
+            ?APPLY(request_timeout, [Node]);
+        {ok, ID} ->
+            ?APPLY(request_success, [Node, #{ reachable => true }]);
+        {ok, _} ->
+            ?RET(ok)
     end.
+
+%% PING (Internal call to the network stack)
+%% ---------------------
+
+%% Ping a node, updating the response correctly on a succesful pong message
+ping_callouts(_S, [IP, Port]) ->
+    ?MATCH(R, ?CALLOUT(dht_net, ping, [{IP, Port}], oneof([pang, {ok, dht_eqc:id()}]))),
+    ?RET(R).
 
 %% INACTIVE_RANGE (GenServer Message)
 %% --------------------------------

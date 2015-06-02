@@ -44,7 +44,6 @@
 %% Manipulation
 -export([
 	insert_node/1,
-	ping/2,
 	request_success/2,
 	request_timeout/1
 
@@ -118,11 +117,6 @@ closest_to(NodeID, NumNodes) ->
 node_id() ->
     gen_server:call(?MODULE, node_id).
 
-%% @doc node_list/0 returns the list of nodes in the current routing table
-%% @end
--spec node_list() -> [dht:node_t()].
-node_list() -> call(node_list).
-
 %% OPERATIONS WHICH CHANGE STATE
 %% ------------------------------
 
@@ -144,7 +138,7 @@ node_list() -> call(node_list).
       Node :: dht:peer() | {inet:ip_address(), inet:port_number()},
       Reason :: atom().
 insert_node({IP, Port}) ->
-    case ping(IP, Port) of
+    case dht_net:ping({IP, Port}) of
         pang -> {error, noreply};
         {ok, ID} -> insert_node({ID, IP, Port})
     end;
@@ -162,21 +156,6 @@ insert_node({_ID, _IP, _Port} = Node) ->
 request_success(Node, Opts) -> call({request_success, Node, Opts}).
 request_timeout(Node) -> call({request_timeout, Node}).
 
-%% @doc ping/2 pings an IP/Port pair in order to determine its NodeID
-%%
-%% Blocks the caller until the ping responds or times out.
-%% @end
--spec ping(inet:ip_address(), inet:port_number()) ->
-	pang | {ok, dht:node_id()} | {error, Reason}
-  when Reason :: atom().
-ping(IP, Port) ->
-    case dht_net:ping({IP, Port}) of
-        pang -> pang;
-        ID ->
-          ok = request_success({ID, IP, Port}, #{ reachable => true }),
-          {ok, ID}
-    end.
-    
 %% INTERNAL API
 %% -------------------------------------------------------------------
 
@@ -191,11 +170,14 @@ insert_nodes(NodeInfos) ->
 
 %% @private
 %% @doc refresh_node/1 makes sure a node is still available
--spec refresh_node(dht:node_t()) -> 'ok'.
+-spec refresh_node(dht:node_t()) -> ok.
 refresh_node({ID, IP, Port} = Node) ->
-    case ping(IP, Port) of
-	{ok, ID} -> ok;
-	pang -> request_timeout(Node)
+    case dht_net:ping({IP, Port}) of
+	{ok, ID} ->
+	    ok = request_success({ID, IP, Port}, #{ reachable => true });
+	{ok, OtherID} -> ok;
+	pang ->
+	    ok = request_timeout(Node)
     end.
 
 %% @private
