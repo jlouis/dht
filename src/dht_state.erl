@@ -31,14 +31,14 @@
 %% Lifetime
 -export([
 	start_link/2, start_link/3,
-	dump_state/0, dump_state/1
+	dump_state/0, dump_state/1,
+	sync/2
 ]).
 
 %% Query
 -export([
 	closest_to/1, closest_to/2,
-	node_id/0,
-	node_list/0
+	node_id/0
 ]).
 
 %% Manipulation
@@ -53,7 +53,7 @@
 %% Internal API
 -export([
 	refresh_node/1,
-	refresh_range/3
+	refresh_range/1
 ]).
 
 -export([init/1,
@@ -69,6 +69,8 @@
 -record(state, {
     node_id :: dht:node_id(), % ID of this node
     routing = dht_routing_timing:empty(), % Routing table and timing structure
+    monitors = [] :: [reference()],
+    syncers = [] :: [{pid(), reference()}],
     state_file="/tmp/dht_state" :: string() % Path to persistent state
 }).
 
@@ -196,42 +198,21 @@ refresh_node({ID, IP, Port} = Node) ->
 	pang -> request_timeout(Node)
     end.
 
-%% @doc refresh/3 refreshes a routing table bucket range
-%% Refresh the contents of a bucket by issuing find_node queries to each node
-%% in the bucket until enough nodes that falls within the range of the bucket
-%% has been returned to replace the inactive nodes in the bucket.
+%% @private
+%% Sync is used internally to send an event into the dht_state engine and block the caller.
+%% The caller will be unblocked if the event sets and removes monitors.
+sync(Msg, Timeout) ->
+    gen_server:call(?MODULE, {sync, Msg}, Timeout).
+
+%% @doc refresh_range/1 refreshes a range for the system based on its ID
 %% @end
--spec refresh_range(any(), list(dht:node_t()), list(dht:node_t())) -> 'ok'.
-refresh_range(Range, Inactive, Active) ->
-    %% Try to refresh the routing table using the inactive nodes first,
-    %% If they turn out to be reachable the problem's solved.
-    refresh_nodes_in_range(Range, Inactive ++ Active, []).
-
-refresh_nodes_in_range(_Range, [], _) -> ok;
-refresh_nodes_in_range(Range, [{ID, _IP, _Port} = Node | T], IDs) ->
-  case find_node(Range, Node) of
-    continue -> refresh_nodes_in_range(Range, T, [ID | IDs]);
-    stop -> ok
-  end.
-
-find_node(Range, Node) ->
-    case dht_net:find_node(Node) of
-        {error, timeout} -> continue;
-        {_, NearNodes} -> refresh_neighbors(Range, NearNodes)
+-spec refresh_range(dht:id()) -> ok.
+refresh_range(ID) ->
+    case dht_net:find_node(ID) of
+        {error, timeout} -> ok;
+        {_, Nearnodes} ->
+            [insert_node(N) || N <- Nearnodes]
     end.
-
-refresh_neighbors({_, _}, []) -> continue;
-refresh_neighbors({Min, Max} = Range, [{ID, _, _} = N|T]) when ?in_range(ID, Min, Max) ->
-    case insert_node(N) of
-      {error, timeout} -> refresh_neighbors(Range, T);
-      true -> refresh_neighbors(Range, T);
-      false ->
-          insert_nodes(T),
-          stop
-    end;
-refresh_neighbors(Range, [N | T]) ->
-    insert_node(N),
-    refresh_neighbors(Range, T).
 
 %% CALLBACKS
 %% -------------------------------------------------------------------
@@ -302,7 +283,10 @@ handle_call({dump_state, StateFile}, _From, #state{ routing = Routing } = State)
 handle_call(node_list, _From, #state { routing = Routing } = State) ->
     {reply, dht_routing_meta:node_list(Routing), State};
 handle_call(node_id, _From, #state{ node_id = Self } = State) ->
-    {reply, Self, State}.
+    {reply, Self, State};
+handle_call({sync, Msg}, From, #state { syncers = Ss } = State) ->
+    self() ! Msg,
+    {noreply, State#state { syncers = [From | Ss]}}.
 
 %% @private
 handle_cast(_, State) ->
@@ -310,15 +294,25 @@ handle_cast(_, State) ->
 
 %% @private
 %% The timer {inactive_range, Range} is set by the dht_routing module
-handle_info({inactive_range, Range}, #state{ routing = Routing } = State) ->
+handle_info({'DOWN', Ref, process, _, normal}, #state { monitors = Ms, syncers = Ss} = State) ->
+    case Ms -- [Ref] of
+        [] ->
+            [gen_server:reply(From, ok) || From <- Ss],
+            {noreply, State#state { monitors = [], syncers = [] }};
+        NewMons ->
+            {noreply, State#state { monitors = NewMons }}
+    end;
+handle_info({inactive_range, Range}, #state{ routing = Routing, monitors = Ms } = State) ->
     case dht_routing_meta:range_state(Range, Routing) of
+        {error, not_member} ->
+            {noreply, wakeup(State)};
         ok ->
             R = dht_routing_meta:reset_range_timer(Range, #{ force => false}, Routing),
-            {noreply, State#state { routing = R }};
+            {noreply, wakeup(State#state { routing = R })};
         {needs_refresh, ID} ->
             R = dht_routing_meta:reset_range_timer(Range, #{ force => true }, Routing),
-            spawn_link(?MODULE, refresh_range, [ID]),
-            {noreply, State#state { routing = R }}
+            {_, MRef} = spawn_monitor(?MODULE, refresh_range, [ID]),
+            {noreply, State#state { routing = R, monitors = [MRef | Ms] }}
     end;
 handle_info({stop, Caller}, #state{} = State) ->
 	Caller ! stopped,
@@ -368,3 +362,8 @@ load_state(RequestedNodeID, Filename) ->
         {error, enoent} ->
             dht_routing_table:new(RequestedNodeID)
     end.
+
+wakeup(#state { monitors = [], syncers = Ss } = State) ->
+    [gen_server:reply(From, ok) || From <- Ss],
+    State#state { syncers = [] };
+wakeup(State) -> State.
