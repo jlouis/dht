@@ -2,14 +2,14 @@
 %%
 %% This model defines the rules for the DHTs timing state.
 %% 
-%% The system has call chain dht_state → dht_routing → dht_routing_table, where each
+%% The system has call chain dht_state -> dht_routing -> dht_routing_table, where each
 %% stage is responsible for a particular thing. This model, for dht_routing, defines the rules
 %% for timers.
 %%
 %% A "routing" construction is a handle to the underlying routing table, together with
 %% timing for the nodes in the RT and the ranges in the RT. The purpose of this module
 %% is to provide a high-level view of the routing table, where each operation also tracks
-%% the timing state:
+%% the timing state as meta-data:
 %%
 %% Ex. Adding a node to a routing table, introduces a new timing entry for that node, always.
 %%
@@ -24,8 +24,10 @@
 %% the routing table for the rest of the system, but since the actual routing table is a subset obeying
 %% the same commands, this idea works.
 %%
-%% One might think that there is a simply relationship between a node in the RT and its state,
-%% but this is not true. Nodes can be defined to be in one of 3 possible states:
+%% NODES
+%% ======================================================
+%%
+%% Nodes can be defined to be in one of 3 possible states:
 %%
 %% • Good—we have succesfully communicated with the node recently
 %% • Questionable—we have not communicated with this node recently
@@ -33,9 +35,6 @@
 %%   out.
 %%
 %% so to handle a node correctly, we need to understand the differences in state among the nodes.
-%%
-%% NODES
-%% ======================================================
 %%
 %% We don't track the Node state with a timer. Rather, we note the last succesful point of
 %% communication. This means a simple calculation defines when a node becomes questionable,
@@ -55,7 +54,7 @@
 %% the callouts correctly. In principle, we don't do anything with these timers in this module,
 %% but I'm not sure for how long that assumption is going to hold once we start all over.
 %%
-%% HOW TIMERS WORK IN THE ROUTING SYSTEM
+%% HOW TIMING WORK IN THE ROUTING SYSTEM
 %%
 %% The routing system uses a map() to store a mapping
 %%
@@ -83,7 +82,7 @@
 %% GENERAL RULES FROM BEP 0005:
 %% ======================================================
 %%
-%% Handling the all–important thing which is the DHTs documentation:
+%% Handling the all-important thing which is the DHTs documentation:
 %% 
 %% Nodes have 3 possible states:
 %% 
@@ -94,11 +93,14 @@
 %% • If a node replies to one of our queries, last_activity := now();
 %% • If a node sends a query and has at some point replied to a query of ours, last_activity := now()
 %% 
-%% The first rule makes sure that nodes which participate in communication are good. The last rule is used when we know a priori a node is a participant already.
+%% The first rule makes sure that nodes which participate in communication are good.
+%% The last rule is used when we know a priori a node is a participant already.
 %% 
-%% If a node fails to respond to a query 3 times, it is marked as bad and this usually means it will eventually be removed from the routing table.
+%% If a node fails to respond to a query 3 times, it is marked as bad and this usually
+%% means it will eventually be removed from the routing table.
 %% 
 %% Nodes with good state are given priority over nodes with questionable state.
+%% TODO: Verify the above for queries!
 %% 
 %% Buckets/ranges:
 %% 
@@ -141,17 +143,8 @@
 %%    some serious rewriting, as it is currently not doing the right thing.
 %% • Mistake #1: Return {questionable, τ} for a point in time τ rather than returning
 %%    {questionable, Age} for its age. This means we can sort based on questionability.
-%% • Mistake #3: Refreshing ranges is a much simpler model. We don't need to maintain an
-%%    advanced notion of what range timers are, and when they hit. Rather, we can just run them
-%%    on a safe 15 minute schedule.
-%% • Mistake #4: This module encodes far too much policy. It should be simpler in notion, so
-%%    we avoid having to encode all of these things.
-%% • To implement #3, we can write a function which computes the τ point in time where the
-%%    range was updated, by looking at the newest change to a member in the range.
-%% • The state of a range is given by a simple principle on the age of the last_changed value:
-%%    if it is too old, it needs a refresh and picks a random node to work on.
-%% • Do not set the timer in this module at all! Move it up! Just tell the interval needed for
-%%    the next timer!
+%% • How do we assert the return from a range needing refreshing is random? The postcondition
+%%   is obvious here, but it requires us to run a function on the data...
 -module(dht_routing_meta_eqc).
 -compile(export_all).
 
@@ -202,6 +195,11 @@ api_spec() ->
     #api_spec {
       language = erlang,
       modules = [
+        #api_module {
+          name = dht_rand,
+          functions = [
+            #api_fun { name = pic, arity = 1 }
+          ]},
         #api_module {
           name = dht_time,
           functions = [
@@ -508,27 +506,77 @@ refresh_node_next(#state { node_timers = NTs, time = T } = S, _, [Node, #{ reach
         true -> S#state { node_timers = lists:keyreplace(Node, 1, NTs, {Node, T, 0, true}) }
     end.
 
-%% REFRESH_RANGE
+%% RANGE_STATE
 %% --------------------------------------------------
 
-refresh_range(Range) ->
+range_state(Range) ->
     eqc_lib:bind(?DRIVER,
       fun(T) ->
-        R = dht_routing_meta:refresh_range(Range, T),
-        {ok, ok, R}
+          {ok, dht_routing_meta:range_state(Range, T), T}
       end).
       
-refresh_range_pre(S) -> initialized(S) andalso has_nodes(S).
+range_state_pre(S) -> initialized(S).
 
-refresh_range_args(S) -> [rt_range(S)].
+range_state_args(S) ->
+    Range = oneof([
+        rt_range(S),
+        dht_eqc:range()
+    ]),
+    [Range].
+
+range_state_callouts(#state{ time = T, ranges = Rs } = S, [Range]) ->
+    ?MATCH(IsRange, ?CALLOUT(dht_routing_table, is_range, [Range, rt_ref],
+        lists:member(Range, Rs))),
+    case IsRange of
+        false -> ?RET({error, not_member});
+        true ->
+            ?MATCH(Members, ?APPLY(range_members, [Range])),
+            ?CALLOUT(dht_time, monotonic_time, [], T),
+            case last_active(Members, S) of
+               [] -> ?RET(empty);
+               [{M, TS, _, _} | _] ->
+                   ?CALLOUT(dht_time, convert_time_unit, [T - TS, native, milli_seconds], T - TS),
+                   case (T - TS) =< ?RANGE_TIMEOUT of
+                     true -> ?RET(ok);
+                     false ->
+                       IDs = [ID || {ID, _, _} <- Members],
+                       ?MATCH(PickedID, ?CALLOUT(dht_rand, pick, [IDs], rand_pick(IDs))),
+                       ?RET({needs_refresh, PickedID})
+                   end
+            end
+    end.
+                   
+%% RESET_RANGE_TIMER
+%% --------------------------------------------------
+
+%% Resetting the range timer is done whenever the timer has triggered. So there is
+%% a rule which says this can only happen once the timer has triggered.
+%% TODO: Test that this is the case.
+reset_range_timer(Range, Opts) ->
+    eqc_lib:bind(?DRIVER,
+        fun(T) ->
+          R = dht_routing_meta:reset_range_timer(Range, Opts, T),
+          {ok, ok, R}
+        end).
+
+reset_range_timer_pre(S) -> initialized(S) andalso has_ranges(S).
+
+reset_range_timer_args(S) ->
+    [rt_range(S), #{ force => bool() }].
+
+reset_range_timer_callouts(#state { time = T }, [Range, #{ force := true }]) ->
+    ?CALLOUT(dht_time, monotonic_time, [], T),
+    ?APPLY(remove_range_timer, [Range]),
+    ?APPLY(add_range_timer_at, [Range, T]),
+    ?RET(ok);
+reset_range_timer_callouts(_S, [Range, #{ force := false }]) ->
+    ?MATCH(A, ?APPLY(range_last_activity, [Range])),
+    ?APPLY(remove_range_timer, [Range]),
+    ?APPLY(add_range_timer_at, [Range, A]),
+    ?RET(ok).
 
 %% TODO: Assert that the range timer is already gone here, otherwise the call is
 %% not allowed.
-refresh_range_callouts(_S, [Range]) ->
-    ?MATCH(Timestamp, ?APPLY(range_last_activity, [Range])),
-    ?APPLY(add_range_timer_at, [Range, Timestamp]),
-    ?RET(ok).
-
 range_last_activity_callouts(#state { time = T } = S, [Range]) ->
     ?MATCH(Members,
         ?CALLOUT(dht_routing_table, members, [Range, rt_ref], rt_nodes(S))),
@@ -665,6 +713,23 @@ add_range_timer_at_next(#state { timers = TS, tref = C, range_timers = RT } = St
         timers = orddict:store(At+?RANGE_TIMEOUT, C, TS)
     }.
 
+remove_range_timer_callouts(#state { range_timers = RT } = S, [Range]) ->
+    {Range, _, TRef} = lists:keyfind(Range, 1, RT),
+    ?CALLOUT(dht_timer, cancel_timer, [TRef], timer_state(S, TRef)).
+    
+remove_range_timer_next(#state { range_timers = RT, timers = Timers } = State, _, [Range]) ->
+    {Range, _, TRef} = lists:keyfind(Range, 1, RT),
+    State#state {
+        range_timers = lists:keydelete(TRef, 3, RT),
+        timers = lists:keydelete(TRef, 2, Timers)
+    }.
+
+timer_state(#state { time = T, timers = Timers }, TRef) ->
+    case lists:keyfind(TRef, 2, Timers) of
+        false -> false;
+        {P, TRef, _} -> monus(P, T)
+    end.
+
 %% When updating node timers, we have the option of overriding the last activity point
 %% of that node. The last activity point is passed as an extra parameter in this call.
 %%
@@ -731,6 +796,7 @@ node_state_value(_, {_, Tau, _, _}) -> {questionable, Tau}.
 
 initialized(#state { init = I }) -> I.
 has_nodes(#state { nodes = Ns }) -> Ns /= [].
+has_ranges(#state { ranges = Rs }) -> Rs /= [].
 
 %% Given a state and a node, find the last activity point of the node
 find_last_activity(#state { node_timers = NT }, Node) ->
@@ -763,7 +829,7 @@ rt_range(S) -> elements(current_ranges(S)).
 range_by_node(#state { nodes = Ns }, Node) ->
     {Node, Range} = lists:keyfind(Node, 1, Ns),
     Range.
-    
+
 dedup(Xs) ->
     dedup(Xs, #{}).
     
@@ -790,3 +856,11 @@ current_nodes(#state { nodes = NS }) ->
 
 monus(A, B) when A > B -> A - B;
 monus(A, B) when A =< B -> 0.
+
+last_active([], _S) -> [];
+last_active(Members, #state { node_timers = NTs }) ->
+    lists:reverse(
+      lists:keysort(2, [maps:get(M, NTs) || M <- Members])).
+
+rand_pick([]) -> [];
+rand_pick(Elems) -> elements(Elems).

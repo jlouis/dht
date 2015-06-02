@@ -25,7 +25,7 @@
 	remove/2,
 	node_touch/3,
 	node_timeout/2,
-	refresh_range/2
+	reset_range_timer/3
 ]).
 
 %% Query the state of the routing table and its meta-data
@@ -34,8 +34,8 @@
 	neighbors/3,
 	node_list/1,
 	node_state/2,
-	%% range_state/2,
-	range_members/2
+	range_members/2,
+	range_state/2
 ]).
 
 %
@@ -149,17 +149,8 @@ node_touch(Node, #{ reachable := false }, #routing { nodes = NT } = Routing) ->
         nodes = node_update({unreachable, Node}, dht_time:monotonic_time(), NT)
     }.
 
-refresh_range(Range, Routing) ->
-    MostRecent = range_last_activity(Range, Routing),
-    refresh_range(Range, MostRecent, Routing).
-
-refresh_range(Range, MostRecent, #routing { ranges = RT } = Routing) ->
-    %% Update the range timer to the oldest member
-    TmpR = timer_delete(Range, RT),
-    RTRef = mk_timer(MostRecent, ?RANGE_TIMEOUT, {inactive_range, Range}),
-    NewRT = range_timer_add(Range, MostRecent, RTRef, TmpR),
-    %% Insert the new data
-    Routing#routing { ranges = NewRT}.
+-spec node_list(#routing{}) -> [dht:peer()].
+node_list(#routing { table = Tbl }) -> dht_routing_table:node_list(Tbl).
 
 node_timeout(Node, #routing { nodes = NT } = Routing) ->
     #{ timeout_count := TC } = State = maps:get(Node, NT),
@@ -170,9 +161,42 @@ node_timeout(Node, #routing { nodes = NT } = Routing) ->
 node_state(Nodes, #routing { nodes = NT }) ->
     [timer_state({node, N}, NT) || N <- Nodes].
 
+range_state(Range, #routing{ table = Tbl } = Routing) ->
+    case dht_routing_table:is_range(Range, Tbl) of
+        false -> {error, not_member};
+        true ->
+            range_state_members(range_members(Range, Routing), Routing)
+   end.
+   
+range_state_members(Members, Routing) ->
+    T = dht_time:monotonic_time(),
+    case last_activity(Members, Routing) of
+        never -> empty;
+        A when A < T ->
+            Window = dht_time:convert_time_unit(T - A, native, milli_seconds),
+            case Window =< ?RANGE_TIMEOUT of
+                true -> ok;
+                false -> {needs_refresh, dht_rand:pick([ID || {ID, _, _} <- Members])}
+            end
+    end.
+
+reset_range_timer(Range, #{ force := Force }, #routing { ranges = RT } = Routing) ->
+    TS =
+       case Force of
+           false -> range_last_activity(Range, Routing);
+           true -> dht_time:monotonic_time()
+       end,
+
+    %% Update the range timer to the oldest member
+    TmpR = timer_delete(Range, RT),
+    RTRef = mk_timer(TS, ?RANGE_TIMEOUT, {inactive_range, Range}),
+    NewRT = range_timer_add(Range, TS, RTRef, TmpR),
+    
+    Routing#routing { ranges = NewRT }.
+
+
 export(#routing { table = Tbl }) -> Tbl.
 
-node_list(#routing { table = Tbl }) -> dht_routing_table:node_list(Tbl).
 
 %% @doc neighbors/3 returns up to K neighbors around an ID
 %% The search returns a list of nodes, where the nodes toward the head
@@ -201,6 +225,14 @@ neighbors(ID, K, #routing { table = Tbl, nodes = NT }) ->
 range_last_activity(Range, #routing { table = Tbl, nodes = NT }) ->
     Members = dht_routing_table:members(Range, Tbl),
     timer_oldest(Members, NT).
+
+last_activity(Members, #routing { nodes = NTs } ) ->
+    NodeTimers = [maps:get(M, NTs) || M <- Members],
+    Changed = [LA || #{ last_activity := LA } <- NodeTimers],
+    case Changed of
+        [] -> never;
+        Cs -> lists:max(Cs)
+    end.
 
 init_range_timers(Now, Tbl) ->
     Ranges = dht_routing_table:ranges(Tbl),

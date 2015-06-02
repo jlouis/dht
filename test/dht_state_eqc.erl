@@ -286,11 +286,13 @@ inactive_range_args(_S) ->
 %% Analyze the state of the range and let the result guide what happens.
 inactive_range_callouts(_S, [{inactive_range, Range}]) ->
     ?MATCH(RS, ?CALLOUT(dht_routing_meta, range_state, [Range, rt_ref],
-        oneof([{error, not_member}, ok, {needs_refresh, dht_eqc:id()}]))),
+        oneof([{error, not_member}, ok, empty, {needs_refresh, dht_eqc:id()}]))),
     case RS of
         {error, not_member} -> ?EMPTY;
         ok ->
             ?CALLOUT(dht_routing_meta, reset_range_timer, [Range, #{ force => false }, rt_ref], rt_ref);
+        empty ->
+            ?CALLOUT(dht_routing_meta, reset_range_timer, [Range, #{ force => true }, rt_ref], rt_ref);
         {needs_refresh, ID} ->
             ?CALLOUT(dht_routing_meta, reset_range_timer, [Range, #{ force => true }, rt_ref], rt_ref),
             ?APPLY(refresh_range, [ID])
