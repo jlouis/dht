@@ -26,6 +26,7 @@
 -module(dht_state).
 -behaviour(gen_server).
 
+-include("dht_constants.hrl").
 -include_lib("kernel/include/inet.hrl").
 
 %% Lifetime
@@ -61,9 +62,6 @@
 	 handle_info/2,
 	 terminate/2,
 	 code_change/3]).
-
--define(K, 8).
--define(in_range(Dist, Min, Max), ((Dist >= Min) andalso (Dist < Max))).
 
 -record(state, {
     node_id :: dht:node_id(), % ID of this node
