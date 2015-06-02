@@ -298,7 +298,7 @@ inactive_range_callouts(_S, [{inactive_range, Range}]) ->
     case RS of
         {error, not_member} -> ?EMPTY;
         ok ->
-            ?CALLOUT(dht_routing_meta, reset_range_timer, [Range, #{ force => false }, rt_ref], rt_ref)
+            ?CALLOUT(dht_routing_meta, reset_range_timer, [Range, #{ force => false }, rt_ref], rt_ref);
         {needs_refresh, ID} ->
             ?CALLOUT(dht_routing_meta, reset_range_timer, [Range, #{ force => true }, rt_ref], rt_ref),
             ?APPLY(refresh_range, [ID])
