@@ -231,7 +231,8 @@ request_timeout_callouts(_S, [Node]) ->
 %% REFRESH_NODE
 %% ------------------------------
 
-%% TODO: Consider this call, it may be what `ping` should be in the first place!
+%% Try refreshing the knowledge about the node `Node`. Used when inserting new nodes
+%% to refresh already known nodes so they move from being questionable to being good.
 refresh_node(Node) ->
     dht_state:refresh_node(Node).
     
@@ -239,6 +240,8 @@ refresh_node_pre(S) -> initialized(S).
 
 refresh_node_args(_S) -> [dht_eqc:peer()].
 
+%% Note that if the node has the wrong ID, we define the node as being timeouting.
+%% This in turn makes the node bad and it will be replaced in the routing table, eventually.
 refresh_node_callouts(_S, [{ID, IP, Port} = Node]) ->
     ?MATCH(PingRes, ?APPLY(ping, [IP, Port])),
     case PingRes of
@@ -246,8 +249,8 @@ refresh_node_callouts(_S, [{ID, IP, Port} = Node]) ->
             ?APPLY(request_timeout, [Node]);
         {ok, ID} ->
             ?APPLY(request_success, [Node, #{ reachable => true }]);
-        {ok, _} ->
-            ?RET(ok)
+        {ok, _WrongID} ->
+            ?APPLY(request_timeout, [Node])
     end.
 
 %% PING (Internal call to the network stack)

@@ -175,7 +175,8 @@ refresh_node({ID, IP, Port} = Node) ->
     case dht_net:ping({IP, Port}) of
 	{ok, ID} ->
 	    ok = request_success({ID, IP, Port}, #{ reachable => true });
-	{ok, OtherID} -> ok;
+	{ok, _WrongID} ->
+	    ok = request_timeout(Node);
 	pang ->
 	    ok = request_timeout(Node)
     end.
