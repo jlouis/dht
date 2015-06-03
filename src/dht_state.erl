@@ -290,6 +290,9 @@ handle_info({inactive_range, Range}, #state{ routing = Routing, monitors = Ms } 
         ok ->
             R = dht_routing_meta:reset_range_timer(Range, #{ force => false}, Routing),
             {noreply, wakeup(State#state { routing = R })};
+        empty ->
+            R = dht_routing_meta:reset_range_timer(Range, #{ force => true}, Routing),
+            {noreply, wakeup(State#state { routing = R })};
         {needs_refresh, ID} ->
             R = dht_routing_meta:reset_range_timer(Range, #{ force => true }, Routing),
             {_, MRef} = spawn_monitor(?MODULE, refresh_range, [ID]),
