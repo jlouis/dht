@@ -472,7 +472,7 @@ range_members_args(_S) -> [dht_eqc:peer()].
 %% This is simply a forward to the underlying routing table, so it should return whatever
 %% The RT returns.
 range_members_callouts(S, [Node]) ->
-    ?MATCH(R, ?CALLOUT(dht_routing_table, members, [Node, rt_ref], [rt_nodes(S)])),
+    ?MATCH(R, ?CALLOUT(dht_routing_table, members, [Node, rt_ref], rt_nodes(S))),
     ?RET(R).
 
 %% REFRESH_NODE
@@ -533,8 +533,9 @@ range_state_callouts(#state{ time = T, ranges = Rs } = S, [Range]) ->
             ?MATCH(Members, ?APPLY(range_members, [Range])),
             ?CALLOUT(dht_time, monotonic_time, [], T),
             case last_active(Members, S) of
+               {error, Reason} -> ?FAIL({error, Reason});
                [] -> ?RET(empty);
-               [{M, TS, _, _} | _] ->
+               [{_M, TS, _, _} | _] ->
                    ?CALLOUT(dht_time, convert_time_unit, [T - TS, native, milli_seconds], T - TS),
                    case (T - TS) =< ?RANGE_TIMEOUT of
                      true -> ?RET(ok);
@@ -715,7 +716,7 @@ add_range_timer_at_next(#state { timers = TS, tref = C, range_timers = RT } = St
 
 remove_range_timer_callouts(#state { range_timers = RT } = S, [Range]) ->
     {Range, _, TRef} = lists:keyfind(Range, 1, RT),
-    ?CALLOUT(dht_timer, cancel_timer, [TRef], timer_state(S, TRef)).
+    ?CALLOUT(dht_time, cancel_timer, [TRef], timer_state(S, TRef)).
     
 remove_range_timer_next(#state { range_timers = RT, timers = Timers } = State, _, [Range]) ->
     {Range, _, TRef} = lists:keyfind(Range, 1, RT),
@@ -727,7 +728,7 @@ remove_range_timer_next(#state { range_timers = RT, timers = Timers } = State, _
 timer_state(#state { time = T, timers = Timers }, TRef) ->
     case lists:keyfind(TRef, 2, Timers) of
         false -> false;
-        {P, TRef, _} -> monus(P, T)
+        {P, TRef} -> monus(P, T)
     end.
 
 %% When updating node timers, we have the option of overriding the last activity point
@@ -859,8 +860,12 @@ monus(A, B) when A =< B -> 0.
 
 last_active([], _S) -> [];
 last_active(Members, #state { node_timers = NTs }) ->
-    lists:reverse(
-      lists:keysort(2, [maps:get(M, NTs) || M <- Members])).
+    Eligible = [lists:keyfind(M, 1, NTs) || M <- Members],
+    case [E || E <- Eligible, E == false] of
+        [] ->
+            lists:reverse(lists:keysort(2, Eligible));
+        [_|_] -> {error, not_member}
+    end.
 
 rand_pick([]) -> [];
 rand_pick(Elems) -> elements(Elems).
