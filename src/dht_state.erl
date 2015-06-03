@@ -99,9 +99,9 @@ call(X) -> gen_server:call(?MODULE, X).
 %% QUERIES 
 %% -----------
 
-%% @equiv closest_to(NodeID, ?K)
+%% @equiv closest_to(NodeID, ?MAX_RANGE_SZ)
 -spec closest_to(dht:node_id()) -> list(dht:node_t()).
-closest_to(NodeID) -> closest_to(NodeID, ?K).
+closest_to(NodeID) -> closest_to(NodeID, ?MAX_RANGE_SZ).
 
 %% @doc closest_to/2 returns the neighborhood around an ID known to the routing table
 %% @end
@@ -182,7 +182,7 @@ refresh_node({ID, IP, Port} = Node) ->
 
 %% @private
 %% Sync is used internally to send an event into the dht_state engine and block the caller.
-%% The caller will be unblocked if the event sets and removes monitors.
+%% The caller will be unblocked if the event sets and eventually removes monitors.
 sync(Msg, Timeout) ->
     gen_server:call(?MODULE, {sync, Msg}, Timeout).
 
@@ -285,6 +285,8 @@ handle_info({inactive_range, Range}, #state{ routing = Routing, monitors = Ms } 
             {noreply, wakeup(State#state { routing = R })};
         {needs_refresh, ID} ->
             R = dht_routing_meta:reset_range_timer(Range, #{ force => true }, Routing),
+            %% Create a monitor on the process, so we can handle the state of our
+            %% background worker.
             {_, MRef} = spawn_monitor(?MODULE, refresh_range, [ID]),
             {noreply, State#state { routing = R, monitors = [MRef | Ms] }}
     end;
@@ -316,10 +318,10 @@ code_change(_, State, _) ->
 adjoin(Node, Routing) ->
     Near = dht_routing_meta:range_members(Node, Routing),
     case analyze_range(dht_routing_meta:node_state(Near, Routing)) of
-      {[], [], Gs} when length(Gs) == ?K ->
+      {[], [], Gs} when length(Gs) == ?MAX_RANGE_SZ ->
           %% Already enough nodes in that range/bucket
           {range_full, Routing};
-      {Bs, Qs, Gs} when length(Gs) + length(Bs) + length(Qs) < ?K ->
+      {Bs, Qs, Gs} when length(Gs) + length(Bs) + length(Qs) < ?MAX_RANGE_SZ ->
           %% There is room for the new node, insert it
           {ok, _NewRouting} = dht_routing_meta:insert(Node, Routing);
       {[Bad | _], _, _} ->
@@ -336,7 +338,8 @@ adjoin(Node, Routing) ->
 %%
 %% In addition we sort the bad nodes, so there is a specific deterministic order in which
 %% we consume them.
-analyze_range(Nodes) when length(Nodes) =< ?K -> analyze_range(Nodes, [], [], []).
+analyze_range(Nodes) when length(Nodes) =< ?MAX_RANGE_SZ -> analyze_range(Nodes, [], [], []).
+
 analyze_range([], Bs, Qs, Gs) ->
     SortedQs = [N || {N, _} <- lists:keysort(2, Qs)],
     {lists:sort(Bs), SortedQs, Gs};

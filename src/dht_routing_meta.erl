@@ -14,6 +14,8 @@
 %% · Rework the EQC model, since it is now in tatters.
 -module(dht_routing_meta).
 
+-include("dht_constants.hrl").
+
 %% Create/Export
 -export([new/1]).
 -export([export/1]).
@@ -37,14 +39,6 @@
 	range_members/2,
 	range_state/2
 ]).
-
-%
-% The bucket refresh timeout is the amount of time that the
-% server will tolerate a node to be disconnected before it
-% attempts to refresh the bucket.
-%
--define(RANGE_TIMEOUT, 15 * 60 * 1000).
--define(NODE_TIMEOUT, 15 * 60 * 1000).
 
 -record(routing, {
     table,
@@ -73,10 +67,13 @@ new(Tbl) ->
 is_member(Node, #routing { table = T }) -> dht_routing_table:is_member(Node, T).
 range_members(Node, #routing { table = T }) -> dht_routing_table:members(Node, T).
 
-%% @doc replace/3 substitutes one questionable node for a new node in the system
+%% @doc replace/3 substitutes one bad node for a new node
+%% Preconditions:
+%% • The removed node MUST be bad.
+%% • The added node MUST NOT be a member.
 %% @end
 replace(Old, New, #routing { nodes = Ns, table = Tbl } = State) ->
-    {questionable, _} = timer_state(Old, Ns),
+    bad = timer_state(Old, Ns),
     false = is_member(New, State),
     Deleted = State#routing {
         table = dht_routing_table:delete(Old, Tbl),
@@ -85,53 +82,18 @@ replace(Old, New, #routing { nodes = Ns, table = Tbl } = State) ->
     insert(New, Deleted).
     
 %% @doc insert/2 inserts a new node in the routing table
+%% Precondition: The node inserted is not a member
+%% Postcondition: The inserted node is now a member
 %% @end
-insert(Node, #routing { table = Tbl } = State) ->
-    case dht_routing_table:is_member(Node, Tbl) of
-        true -> {already_member, State};
-        false ->
-            Neighbours = dht_routing_table:members(Node, Tbl),
-            case [N || {N, TS} <- node_state(Neighbours, State), TS /= good] of
-              [] -> adjoin(Node, State);
-              [Old | _] ->
-                Removed = remove(Old, State),
-                adjoin(Node, Removed)
-            end
-    end.
-
-%% @doc adjoin/2 adjoins a new node to the routing table
-%% @end
-adjoin(Node, #routing { table = Tbl, nodes = NT } = Routing) ->
+insert(Node, #routing { table = Tbl, nodes = NT } = Routing) ->
     Now = dht_time:monotonic_time(),
     T = dht_routing_table:insert(Node, Tbl),
-    case dht_routing_table:is_member(Node, T) of
-      false ->
-        {not_inserted, Routing#routing { table = T }};
-      true ->
-        %% Update the timers, if they need to change
-        NewState = Routing#routing { nodes = node_update(Node, Now, NT) },
-        {ok, update_ranges(Tbl, Now, NewState)}
-    end.
+    true =  dht_routing_table:is_member(Node, T),
+    %% Update the timers, if they need to change
+    NewState = Routing#routing { nodes = node_update(Node, Now, NT) },
+    {ok, update_ranges(Tbl, Now, NewState)}.
 
-update_ranges(OldTbl, Now, #routing { table = NewTbl } = State) ->
-    PrevRanges = dht_routing_table:ranges(OldTbl),
-    NewRanges = dht_routing_table:ranges(NewTbl),
-    Operations = lists:append(
-        [{del, R} || R <- ordsets:subtract(PrevRanges, NewRanges)],
-        [{add, R} || R <- ordsets:subtract(NewRanges, PrevRanges)]),
-    fold_update_ranges(Operations, Now, State).
-    
-fold_update_ranges(Ops, Now, #routing { ranges = RT } = Routing) ->
-    F = fun
-        ({del, R}, TM) -> timer_delete(R, TM);
-        ({add, R}, TM) ->
-            Recent = range_last_activity(R, Routing),
-            TRef = mk_timer(Recent, ?RANGE_TIMEOUT, {inactive_range, R}),
-            range_timer_add(R, Now, TRef, TM)
-    end,
-    Routing#routing { ranges = lists:foldl(F, RT, Ops) }.
-
-%% @doc remove/2 removes a node from the routing table (and deletes the associated timer structure)
+%% @doc remove/2 removes a node from the routing table
 %% @end
 remove(Node, #routing { table = Tbl, nodes = NT} = State) ->
     bad = timer_state(Node, NT),
@@ -140,24 +102,40 @@ remove(Node, #routing { table = Tbl, nodes = NT} = State) ->
         nodes = maps:remove(Node, NT)
     }.
 
+%% @doc node_touch/3 marks recent communication with a node
+%% We pass `#{ reachable => true/false }' to signify if the touch was part of a reachable
+%% communication. That is, if we know for sure the peer node is reachable.
+%% @end
+-spec node_touch(Node, Opts, Routing) -> Routing
+  when
+    Node :: dht:peer(),
+    Opts :: #{ atom() => boolean() },
+    Routing :: #routing{}.
+
 node_touch(Node, #{ reachable := true }, #routing { nodes = NT} = Routing) ->
-    Routing#routing {
-        nodes = node_update({reachable, Node}, dht_time:monotonic_time(), NT)
-    };
+    Routing#routing { nodes = node_update({reachable, Node}, dht_time:monotonic_time(), NT) };
 node_touch(Node, #{ reachable := false }, #routing { nodes = NT } = Routing) ->
-    Routing#routing {
-        nodes = node_update({unreachable, Node}, dht_time:monotonic_time(), NT)
-    }.
+    Routing#routing { nodes = node_update({unreachable, Node}, dht_time:monotonic_time(), NT) }.
 
--spec node_list(#routing{}) -> [dht:peer()].
-node_list(#routing { table = Tbl }) -> dht_routing_table:node_list(Tbl).
-
+%% @doc node_timeout/2 marks a Node communication as timed out
+%% Tracks the flakiness of a peer. If this is called too many times, then the peer/node
+%% enters the 'bad' state.
+%% @end
 node_timeout(Node, #routing { nodes = NT } = Routing) ->
     #{ timeout_count := TC } = State = maps:get(Node, NT),
     NewState = State#{ timeout_count := TC + 1 },
     Routing#routing { nodes = maps:update(Node, NewState, NT) }.
 
--spec node_state([dht:peer()], #routing{}) -> [{dht:peer(), node_state()}].
+%% @doc node_list/1 returns the currently known nodes in the routing table.
+%% @end
+-spec node_list(#routing{}) -> [dht:peer()].
+node_list(#routing { table = Tbl }) -> dht_routing_table:node_list(Tbl).
+
+%% @doc node_state/2 computes the state of a node list
+%% @end
+-spec node_state([Peer], Routing) -> [{Peer, node_state()}]
+  when Peer :: dht:peer(), Routing :: #routing{}.
+
 node_state(Nodes, #routing { nodes = NT }) ->
     [timer_state({node, N}, NT) || N <- Nodes].
 
@@ -168,18 +146,6 @@ range_state(Range, #routing{ table = Tbl } = Routing) ->
             range_state_members(range_members(Range, Routing), Routing)
    end.
    
-range_state_members(Members, Routing) ->
-    T = dht_time:monotonic_time(),
-    case last_activity(Members, Routing) of
-        never -> empty;
-        A when A < T ->
-            Window = dht_time:convert_time_unit(T - A, native, milli_seconds),
-            case Window =< ?RANGE_TIMEOUT of
-                true -> ok;
-                false -> {needs_refresh, dht_rand:pick([ID || {ID, _, _} <- Members])}
-            end
-    end.
-
 reset_range_timer(Range, #{ force := Force }, #routing { ranges = RT } = Routing) ->
     TS =
        case Force of
@@ -194,9 +160,11 @@ reset_range_timer(Range, #{ force := Force }, #routing { ranges = RT } = Routing
     
     Routing#routing { ranges = NewRT }.
 
-
+%% @doc export/1 returns the underlying routing table as an Erlang term
+%% Note: We DON'T store the timers in between invocations. This decision
+%% effectively makes the DHT system Time Warp capable
+%% @end
 export(#routing { table = Tbl }) -> Tbl.
-
 
 %% @doc neighbors/3 returns up to K neighbors around an ID
 %% The search returns a list of nodes, where the nodes toward the head
@@ -219,6 +187,40 @@ neighbors(ID, K, #routing { table = Tbl, nodes = NT }) ->
 
 %% INTERNAL FUNCTIONS
 %% ------------------------------------------------------
+
+range_state_members(Members, Routing) ->
+    T = dht_time:monotonic_time(),
+    case last_activity(Members, Routing) of
+        never -> empty;
+        A when A < T ->
+            Window = dht_time:convert_time_unit(T - A, native, milli_seconds),
+            case Window =< ?RANGE_TIMEOUT of
+                true -> ok;
+                false -> {needs_refresh, dht_rand:pick([ID || {ID, _, _} <- Members])}
+            end
+    end.
+
+
+%% Insertion may invoke splitting of ranges. If this happens, we need to
+%% update the timers for ranges: The old range gets removed. The new
+%% ranges gets added.
+update_ranges(OldTbl, Now, #routing { ranges = Ranges, table = NewTbl } = State) ->
+    PrevRanges = dht_routing_table:ranges(OldTbl),
+    NewRanges = dht_routing_table:ranges(NewTbl),
+    Operations = lists:append(
+        [{del, R} || R <- ordsets:subtract(PrevRanges, NewRanges)],
+        [{add, R} || R <- ordsets:subtract(NewRanges, PrevRanges)]),
+    State#routing { ranges = fold_ranges(Operations, Now, Ranges) }.
+    
+%% Carry out a sequence of operations over the ranges in a fold.
+fold_ranges([{del, R} | Ops], Now, Ranges) ->
+    fold_ranges(Ops, Now, timer_delete(R, Ranges));
+fold_ranges([{add, R} | Ops], Now, Ranges) ->
+    Recent = range_last_activity(R, Ranges),
+    TRef = mk_timer(Recent, ?RANGE_TIMEOUT, {inactive_range, R}),
+    fold_ranges(Ops, Now, range_timer_add(R, Now, TRef, Ranges));
+fold_ranges([], _Now, Ranges) -> Ranges.
+
 
 %% Find the oldest member in the range and use that as the last activity
 %% point for the range.
