@@ -139,6 +139,15 @@
 %% 
 
 %% TODO—Still missing work in the model:
+%%
+%% Structural model errors:
+%%
+%% • We have to precisely model that ranges are non-overlapping and that nodes
+%%   falls into ranges correctly. Otherwise, it is not possible to precisely map the
+%%   fact that sometimes, you can't add a new node to a range.
+%%
+%% Other mistakes in the current model:
+%%
 %% • After we started looking at the BEP 0005 spec, we have realized this module needs
 %%    some serious rewriting, as it is currently not doing the right thing.
 %% • Mistake #1: Return {questionable, τ} for a point in time τ rather than returning
@@ -335,8 +344,9 @@ insert_callouts(S, [Node]) ->
             %% TODO: we could also model this as an assertion so it can't happen.
             ?MATCH(RangeMembers, ?CALLOUT(dht_routing_table, members, [Node, rt_ref], rt_nodes(S))),
             case length(RangeMembers) of
-                ?K -> ?RET(not_inserted);
-                _ -> ?APPLY(adjoin, [Node])
+                X when X == ?K -> ?RET(not_inserted);
+                X when X =< ?K -> ?APPLY(adjoin, [Node]);
+                X when X > ?K -> ?FAIL(too_many_members_in_rage)
             end
      end.
 
@@ -615,7 +625,7 @@ init_nodes_callouts(_, [_Nodes]) ->
 %% We start out by making every node questionable, so the system will catch up to
 %% the game imediately.
 init_nodes_next(#state { time = T } = S, _, [Nodes]) ->
-    NodeTimers = [{N, T-?NODE_TIMEOUT, 0} || N <- lists:reverse(Nodes)],
+    NodeTimers = [{N, T-?NODE_TIMEOUT, 0, false} || N <- lists:reverse(Nodes)],
     S#state { node_timers = NodeTimers }.
 
 %% REMOVAL (Internal call)
@@ -651,7 +661,7 @@ adjoin_callouts(#state { time = T }, [Node]) ->
     ?MATCH(Member, ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref], bool())),
     case Member of
         false ->
-            ?FAIL(adjoined_node_to_full_table);
+            ?RET(not_inserted);
         true ->
             ?CALLOUT(dht_time, send_after, [T, ?WILDCARD, ?WILDCARD], make_ref()),
             ?CALLOUT(dht_routing_table, ranges, [rt_ref], rt_ref),

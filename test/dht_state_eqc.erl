@@ -178,6 +178,7 @@ insert_node_callouts(_S, [Node]) ->
     ?MATCH(NodeState, ?APPLY(insert_node_gs, [Node])),
     case NodeState of
         ok -> ?RET(ok);
+        already_member -> ?RET(already_member);
         {error, Reason} -> ?RET({error, Reason});
         {verify, QN} ->
             ?APPLY(refresh_node, [QN]),
@@ -351,6 +352,15 @@ analyze_node_state([], _, [Q | _Qs]) -> {questionable, Q}.
 %%		insert_node/1)
 %%
 insert_node_gs_callouts(_S, [Node]) ->
+    ?MATCH(IsMember, ?CALLOUT(dht_routing_meta, is_member, [Node, rt_ref],
+        bool())),
+    case IsMember of
+        true -> ?RET(already_member);
+        false -> ?APPLY(adjoin_node, [Node])
+    end.
+    
+%% Internal helper call for adjoining a new node
+adjoin_node_callouts(_S, [Node]) ->
     ?MATCH(Near, ?CALLOUT(dht_routing_meta, range_members, [Node, rt_ref],
         bucket_members())),
     ?MATCH(NodeState, ?CALLOUT(dht_routing_meta, node_state, [Near, rt_ref],

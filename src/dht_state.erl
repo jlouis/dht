@@ -143,6 +143,7 @@ insert_node({IP, Port}) ->
 insert_node({_ID, _IP, _Port} = Node) ->
     case call({insert_node, Node}) of
         ok -> ok;
+        already_member -> already_member;
         {error, Reason} -> {error, Reason};
         {verify, QNode} ->
             %% There is an old questionable node, which needs refreshing. Execute a ping test on
@@ -215,23 +216,12 @@ init([RequestedNodeID, StateFile, BootstrapNodes]) ->
     {ok, #state { node_id = ID, routing = Routing}}.
 
 %% @private
-handle_call({insert_node, Node}, _From, #state { routing = Routing } = State) ->
-    Near = dht_routing_meta:range_members(Node, Routing),
-    case analyze_range(dht_routing_meta:node_state(Near, Routing)) of
-      {[], [], Gs} when length(Gs) == ?K ->
-          %% Already enough nodes in that range/bucket
-          {reply, range_full, State};
-      {Bs, Qs, Gs} when length(Gs) + length(Bs) + length(Qs) < ?K ->
-          %% There is room for the new node, insert it
-          {ok, R2} = dht_routing_meta:insert(Node, Routing),
-          {reply, ok, State#state { routing = R2 }};
-      {[Bad | _], _, _} ->
-          %% There is a bad node present, swap the new node for the bad
-          {ok, R2} = dht_routing_meta:replace(Bad, Node, Routing),
-          {reply, ok, State#state { routing = R2 }};
-      {[], [Questionable | _], _} ->
-          %% Ask the caller to verify the questionable node (they are sorted in order of interestingness)
-          {reply, {verify, Questionable}, State}
+handle_call({insert_node, Node}, _From, #state { routing = R } = State) ->
+    case dht_routing_meta:is_member(Node, R) of
+        true -> {reply, already_member, State};
+        false ->
+            {Reply, NR} = adjoin(Node, R),
+            {reply, Reply, State#state { routing = NR }}
     end;
 handle_call({closest_to, ID, NumNodes}, _From, #state{routing = Routing } = State) ->
     Neighbors = dht_routing_meta:neighbors(ID, NumNodes, Routing),
@@ -314,6 +304,31 @@ code_change(_, State, _) ->
 %%
 %% INTERNAL FUNCTIONS
 %%
+
+%% adjoin/2 attempts to add a new `Node' to the `Routing'-table.
+%% It either succeeds in doing so, or fails due to one of the many reasons
+%% as to why it can't happen:
+%% • The range is already full of nodes
+%% • There is room for a new node
+%% • We can replace a bad node with the new node
+%% • We fail to adjoin the new node, but can point to a node neighboring node which
+%%    needs verification.
+adjoin(Node, Routing) ->
+    Near = dht_routing_meta:range_members(Node, Routing),
+    case analyze_range(dht_routing_meta:node_state(Near, Routing)) of
+      {[], [], Gs} when length(Gs) == ?K ->
+          %% Already enough nodes in that range/bucket
+          {range_full, Routing};
+      {Bs, Qs, Gs} when length(Gs) + length(Bs) + length(Qs) < ?K ->
+          %% There is room for the new node, insert it
+          {ok, _NewRouting} = dht_routing_meta:insert(Node, Routing);
+      {[Bad | _], _, _} ->
+          %% There is a bad node present, swap the new node for the bad
+          {ok, _NewRouting} = dht_routing_meta:replace(Bad, Node, Routing);
+      {[], [Questionable | _], _} ->
+          %% Ask the caller to verify the questionable node (they are sorted in order of interestingness)
+          {{verify, Questionable}, Routing}
+    end.
 
 %% Given a list of node states, sort them into good, bad, and questionable buckets.
 %% In the case of the questionable nodes, they are sorted oldest first, so the list head
