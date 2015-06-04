@@ -79,6 +79,14 @@
 %%
 %% The model uses a simple list to model the routing system.
 %%
+%% Time
+%% ====
+%% 
+%% The model uses time in milli_seconds rather than the native time resolution
+%% used by the real system. This means time conversion is a no-op when converting
+%% from native time to milli_seconds in the model.
+%%
+%%
 %% GENERAL RULES FROM BEP 0005:
 %% ======================================================
 %%
@@ -172,9 +180,8 @@
 -record(state, {
 	%%% MODEL OF ROUTING TABLE
 	%%
-	nodes = [] :: [any()],
-	ranges = [] :: [any()],
-	%% The nodes and ranges models what is currently in the routing table
+	tree = [] :: [#{ atom() => any() }],
+	%% The tree models ranges and nodes within each range
 	
 	%%% MODEL OF TIMERS
 	%%
@@ -236,30 +243,59 @@ api_spec() ->
 %% INITIAL STATE
 %% --------------------------------------------------
 
-%% Generating an initial state requires us to generate the Ranges first, and then generate
-%% Nodes within the ranges. The rules are:
-%% • Ranges are uniquely defined
-%% • A node falls into exactly one range
-%% We generate this by creating a non-empty list of Ranges, and a list of Nodes where each node is
-%% assigned to a range randomly. An empty range list cannot occur in the system since there is
-%% always a range in the routing table.
+%% Generating an initial state requires us to generate a fake routing table, and then proceed
+%% by using that table. We start out by a generator which can make nodes in a given range.
+%% We can't generate more than 8 nodes in a range, because this is the assumption in the
+%% system.
 
-ranges() ->
-  ?LET(Ranges, list(dht_eqc:range()),
-    dedup(Ranges)).
+%% We limit ourselves to a test case where IDs are not general, but limited to the range 0‥255
+%% which makes understand the numbers easier.
+-define(ID_MIN, 0).
+-define(ID_MAX, 255).
+
+peer() -> peer(?ID_MIN, ?ID_MAX).
+id() -> choose(?ID_MIN, ?ID_MAX).
+range() ->
+    ?LET(R, [choose(?ID_MIN, ?ID_MAX), choose(?ID_MIN, ?ID_MAX)],
+        lists:sort(R)).
+
+peer(Lo, Hi) -> {choose(Lo, Hi), dht_eqc:ip(), dht_eqc:port()}.
+
+nodes(Lo, Hi) ->
+    ?LET(Sz, choose(0, 8),
+      ?LET(IDGen, vector(Sz, choose(Lo, Hi)),
+        [{ID, dht_eqc:ip(), dht_eqc:port()} || ID <- dedup(IDGen)])).
+
+%% A tree is sized over the current generation size:
+routing_tree() ->
+    ?SIZED(Sz, routing_tree(Sz, ?ID_MIN, ?ID_MAX)).
+    
+%% Trees are based on their structure:
+%% • Trees of size 0 generates nodes in the current range.
+%% • Trees where the Lo–Hi distance is short are like size 0 trees.
+%% • Larger trees are either done, or their consist of a split-point in the range
+%%    and then they consist of two trees of smaller sizes.
+routing_tree(0, Lo, Hi) ->
+    [#{ lo => Lo, hi => Hi, nodes => nodes(Lo, Hi) }];
+routing_tree(_N, Lo, Hi) when Hi - Lo < 4 -> routing_tree(0, Lo, Hi);
+routing_tree(N, Lo, Hi) ->
+    frequency([
+        {50, routing_tree(0, Lo, Hi)},
+        {50, ?LAZY(
+            ?LET(Split, choose(Lo+1, Hi-1),
+              ?LETSHRINK([L, R], [routing_tree(N div 2, Lo, Split), routing_tree(N div 2, Split+1, Hi)],
+                L ++ R)))}
+    ]).
 
 gen_state() ->
-  ?LET(Ranges, non_empty(ranges()),
-    ?LET(Nodes, list({dht_eqc:peer(), elements(Ranges)}),
-        #state {
-          nodes = Nodes,
-          ranges = Ranges,
-          init = false,
-          id = dht_eqc:id(),
-          time = int(),
-          node_timers = [],
-          range_timers = []
-        })).
+    #state {
+        tree = routing_tree(),
+        init = false,
+        id = dht_eqc:id(?ID_MIN, ?ID_MAX),
+        time = int(),
+        node_timers = [],
+        range_timers = []
+    }.
 
 %% NEW
 %% --------------------------------------------------
@@ -284,11 +320,11 @@ new_args(_S) -> [rt_ref].
 %% Nodes and Ranges we generated into the system. The assumption is that
 %% these Nodes and Ranges are ones which are initialized via the internal calls
 %% init_range_timers and init_node_timers.
-new_callouts(#state { id = ID, time = T, ranges = Ranges } = S, [rt_ref]) ->
+new_callouts(#state { id = ID, time = T } = S, [rt_ref]) ->
     ?CALLOUT(dht_time, monotonic_time, [], T),
     ?CALLOUT(dht_routing_table, node_list, [rt_ref], current_nodes(S)),
     ?CALLOUT(dht_routing_table, node_id, [rt_ref], ID),
-    ?APPLY(init_range_timers, [Ranges]),
+    ?APPLY(init_range_timers, [current_ranges(S)]),
     ?APPLY(init_nodes, [current_nodes(S)]),
     ?RET(ID).
   
@@ -298,12 +334,14 @@ new_next(State, _, _) -> State#state { init = true }.
 %% INSERT
 %% --------------------------------------------------
 
-%% Inserting a node into the routing table can have several outcomes:
+%% Inserting a node into the routing table has the assumption
+%% that the node we want to insert is new. We will never try to
+%% insert a node into table, which is already there.
 %%
-%% * The node is not inserted, because it is already a member of the routing table
-%%   in the first place.
-%% * The node could be inserted, but we already have enough nodes for its range in
-%%   the routing table.
+%% Furthermore, the call assumes there is space in the range. If not, then the
+%% insert is wrong. The precondition on this call is that the insertion is valid
+%% and will succeed.
+%%
 
 %% Insertion returns `{R, S}' where `S' is the new state and `R' is the response. We
 %% check the response is in accordance with what we think.
@@ -319,36 +357,20 @@ insert_pre(S) -> initialized(S).
 
 %% Any peer is eligible for insertion at any time. There are no limits on how and when
 %% you can do this insertion.
-insert_args(_S) -> [dht_eqc:peer()].
+insert_args(_S) -> [peer()].
 
-%% Insertion splits into several possible rules based on the state of the routing table
-%% with respect to the Node we try to insert:
-%%
-%% First, there is a member-check. Nodes which are already members are ignored and
-%% nothing happens to the routing table.
-%%
-%% For a non-member we obtain its neighbours in the routing table, and figure out
-%% if there are any inactive members. If there are, we remove one member to make sure
-%% there is space in the range.
-%%
-%% Finally we `adjoin' the Node to the routing table, which is addressed as a separate
+insert_args_pre(S, [Peer]) -> initialized(S) andalso (not has_peer(Peer, S)).
+
+%% We `adjoin' the Node to the routing table, which is addressed as a separate
 %% internal model transition.
 %%
-insert_callouts(S, [Node]) ->
-    ?MATCH(Member,
-        ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref],
-            lists:member(Node, current_nodes(S)) )),
-    case Member of
-        true -> ?RET(already_member);
-        false ->
-            %% TODO: we could also model this as an assertion so it can't happen.
-            ?MATCH(RangeMembers, ?CALLOUT(dht_routing_table, members, [Node, rt_ref], rt_nodes(S))),
-            case length(RangeMembers) of
-                X when X == ?K -> ?RET(not_inserted);
-                X when X =< ?K -> ?APPLY(adjoin, [Node]);
-                X when X > ?K -> ?FAIL(too_many_members_in_rage)
-            end
-     end.
+%% TODO: Go through this, it may be wrong.
+insert_callouts(_S, [Node]) ->
+    ?MATCH(R, ?APPLY(adjoin, [Node])),
+    case R of
+        ok -> ?RET(ok);
+        Else -> ?FAIL(Else)
+    end.
 
 %% IS_MEMBER
 %% --------------------------------------------------
@@ -359,13 +381,13 @@ is_member(Node) ->
 
 is_member_pre(S) -> initialized(S).
 
-is_member_args(_S) -> [dht_eqc:peer()].
+is_member_args(_S) -> [peer()].
     
 %% This is simply a forward to the underlying routing table, so it should return whatever
 %% The RT returns.
-is_member_callouts(#state { nodes = Ns }, [Node]) ->
+is_member_callouts(S, [Node]) ->
     ?MATCH(R, ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref],
-        lists:member(Node, Ns))),
+        lists:member(Node, current_nodes(S)))),
     ?RET(R).
 
 %% NEIGHBORS
@@ -382,10 +404,14 @@ neighbors(ID, K) ->
       
 neighbors_pre(S) -> initialized(S).
 
-neighbors_args(_S) -> [dht_eqc:id(), nat()].
+neighbors_args(_S) -> [id(), nat()].
 
 %% Neighbors calls out twice currently, because it has two filter functions it runs in succession.
 %% First it queries for the known good nodes, and then it queries for the questionable nodes.
+%%
+%% Note that we don't care if we return the right nodes here. We are only interested in the
+%% behavior of this call, and assumes that the routing table underneath is doing the right
+%% thing.
 neighbors_callouts(S, [ID, K]) ->
     ?MATCH(GoodNodes,
       ?CALLOUT(dht_routing_table, closest_to, [ID, ?WILDCARD, K, rt_ref],
@@ -412,9 +438,7 @@ node_list_pre(S) -> initialized(S).
 node_list_args(_S) -> [].
 
 node_list_callouts(S, []) ->
-    ?MATCH(R,
-        ?CALLOUT(dht_routing_table, node_list, [rt_ref],
-            rt_nodes(S))),
+    ?MATCH(R, ?CALLOUT(dht_routing_table, node_list, [rt_ref], rt_nodes(S))),
     ?RET(R).
     
 %% NODE_STATE
@@ -458,7 +482,7 @@ node_timeout(Node) ->
       
 node_timeout_pre(S) -> initialized(S) andalso has_nodes(S).
 
-node_timeout_args(S) -> [elements(current_nodes(S))].
+node_timeout_args(S) -> [rt_node(S)].
 
 node_timeout_callouts(_S, [_Node]) ->
     ?RET(ok).
@@ -477,12 +501,12 @@ range_members(Node) ->
 
 range_members_pre(S) -> initialized(S).
 
-range_members_args(_S) -> [dht_eqc:peer()].
+range_members_args(_S) -> [peer()].
     
 %% This is simply a forward to the underlying routing table, so it should return whatever
 %% The RT returns.
-range_members_callouts(S, [Node]) ->
-    ?MATCH(R, ?CALLOUT(dht_routing_table, members, [Node, rt_ref], rt_nodes(S))),
+range_members_callouts(S, [{ID, _, _} = Node]) ->
+    ?MATCH(R, ?CALLOUT(dht_routing_table, members, [Node, rt_ref], nodes_in_range(S, ID))),
     ?RET(R).
 
 %% REFRESH_NODE
@@ -528,21 +552,21 @@ range_state(Range) ->
 range_state_pre(S) -> initialized(S).
 
 range_state_args(S) ->
-    Range = oneof([
-        rt_range(S),
-        dht_eqc:range()
+    Range = frequency([
+        {10, rt_range(S)},
+        {1, range()}
     ]),
     [Range].
 
-range_state_callouts(#state{ time = T, ranges = Rs } = S, [Range]) ->
+range_state_callouts(#state{ time = T } = S, [Range]) ->
     ?MATCH(IsRange, ?CALLOUT(dht_routing_table, is_range, [Range, rt_ref],
-        lists:member(Range, Rs))),
+        lists:member(Range, current_ranges(S)))),
     case IsRange of
         false -> ?RET({error, not_member});
         true ->
             ?MATCH(Members, ?APPLY(range_members, [Range])),
             ?CALLOUT(dht_time, monotonic_time, [], T),
-            case last_active(Members, S) of
+            case last_active(S, Members) of
                {error, Reason} -> ?FAIL({error, Reason});
                [] -> ?RET(empty);
                [{_M, TS, _, _} | _] ->
@@ -562,7 +586,8 @@ range_state_callouts(#state{ time = T, ranges = Rs } = S, [Range]) ->
 
 %% Resetting the range timer is done whenever the timer has triggered. So there is
 %% a rule which says this can only happen once the timer has triggered.
-%% TODO: Test that this is the case.
+%%
+%% NOTE: this is an assumed precondition.
 reset_range_timer(Range, Opts) ->
     eqc_lib:bind(?DRIVER,
         fun(T) ->
@@ -586,12 +611,16 @@ reset_range_timer_callouts(_S, [Range, #{ force := false }]) ->
     ?APPLY(add_range_timer_at, [Range, A]),
     ?RET(ok).
 
+%% RANGE_LAST_ACTIVITY (Internal call)
+%% ---------------------------------------------------------
+%% This call is used internally to figure out when there was last activity
+%% on the range.
 %% TODO: Assert that the range timer is already gone here, otherwise the call is
 %% not allowed.
 range_last_activity_callouts(#state { time = T } = S, [Range]) ->
     ?MATCH(Members,
         ?CALLOUT(dht_routing_table, members, [Range, rt_ref], rt_nodes(S))),
-    case find_oldest(S, Members, ranges) of
+    case last_active(S, Members) of
         undefined ->
           ?MATCH(R, ?CALLOUT(dht_time, monotonic_time, [], T)),
           ?RET(R);
@@ -604,8 +633,8 @@ range_last_activity_callouts(#state { time = T } = S, [Range]) ->
 
 %% Initialization of range timers follows the same general structure:
 %% we successively add a new range timer to the state.
-init_range_timers_callouts(#state { ranges = RS, time = T }, [Ranges]) ->
-    ?CALLOUT(dht_routing_table, ranges, [rt_ref], RS),
+init_range_timers_callouts(#state { time = T } = S, [Ranges]) ->
+    ?CALLOUT(dht_routing_table, ranges, [rt_ref], current_ranges(S)),
     ?SEQ([?APPLY(add_range_timer_at, [R, T]) || R <- Ranges]).
       
 %% INIT_NODE_TIMERS (Internal call)
@@ -638,8 +667,8 @@ remove_callouts(_S, [Node]) ->
     ?CALLOUT(dht_routing_table, delete, [Node, rt_ref], rt_ref),
     ?RET(ok).
 
-remove_next(#state { nodes = Nodes } = State, _, [Node]) ->
-    State#state { nodes = lists:keydelete(Node, 1, Nodes) }.
+remove_next(#state { tree = Tree } = State, _, [Node]) ->
+    State#state { tree = delete_node(Node, Tree) }.
 
 %% REPLACE (Internal call)
 %% --------------------------------------------------
@@ -666,9 +695,32 @@ adjoin_callouts(#state { time = T }, [Node]) ->
             ?CALLOUT(dht_time, send_after, [T, ?WILDCARD, ?WILDCARD], make_ref()),
             ?CALLOUT(dht_routing_table, ranges, [rt_ref], rt_ref),
             ?CALLOUT(dht_routing_table, ranges, [rt_ref], rt_ref),
+            ?APPLY(insert_node, [Node, T]),
             ?RET(ok)
     end.
     
+%% TODO: Split too large ranges!
+insert_node_callouts(S, [Node, T]) ->
+    { #{ nodes := Nodes }, _Rs} = take_range(S, Node),
+    case length(Nodes) of
+        L when L >= ?K -> ?FAIL(range_too_large);
+        _ ->  ?APPLY(add_node_timer, [Node, T])
+    end.
+    
+insert_node_next(S, _, [Node, _T]) ->
+    { #{ nodes := Nodes } = R, Rs} = take_range(S, Node),
+    NR = R#{ nodes := Nodes ++ [Node] },
+    S#state{ tree = Rs ++ [NR] }.
+
+take_range(#state { tree = Tree}, {ID, _, _}) -> take_range(Tree, ID, []).
+
+take_range([R = #{ lo := Lo, hi := Hi} | Rs], ID, Acc) when Lo =< ID, ID =< Hi ->
+    {R, rev_append(Acc, Rs)};
+take_range([R | Rs], ID, Acc) -> take_range(Rs, ID, [R | Acc]).
+
+rev_append([], Ls) -> Ls;
+rev_append([S|Ss], Ls) -> rev_append(Ss, [S|Ls]).
+
 %% ADVANCING TIME (Internal call)
 %% --------------------------------------------------
 
@@ -798,6 +850,78 @@ trace(off) ->
 %% INTERNAL FUNCTIONS FOR MODEL MANIPULATION
 %% --------------------------------------------------
 
+initialized(#state { init = I }) -> I.
+
+
+%% Tree manipulation
+%% --------------------------------
+
+%% Helper, returns an assertion on node presence in the model which
+%% can be grafted onto a callout specification.
+assert_nodes_in_model(State, Nodes) ->
+    CurrentNodes = current_nodes(State),
+    case [N || N <- Nodes, not lists:member(N, CurrentNodes)] of
+        [] -> ?EMPTY;
+        FailedNodes ->
+            ?FAIL({not_member, FailedNodes})
+    end.
+    
+%% Returns current ranges in the tree
+current_ranges(#state { tree = Tree }) ->
+    [{Lo, Hi} || #{ lo := Lo, hi := Hi } <- Tree].
+
+%% Returns current nodes in the tree
+current_nodes(#state { tree = Tree }) ->
+    lists:append([Nodes || #{ nodes := Nodes } <- Tree]).
+
+%% Generators for various routing table specimens
+rt_node(S) -> elements(current_nodes(S)).
+rt_range(S) -> elements(current_ranges(S)).
+
+rt_nodes(S) ->
+    case current_nodes(S) of
+        [] -> [];
+        Ns -> list(elements(Ns))
+    end.
+
+%% Simple precondition checks
+has_nodes(S) -> current_nodes(S) /= [].
+has_ranges(S) -> current_ranges(S) /= [].
+
+%% TODO: Lessen this restriction so peers may have the same ID, but different IP-addresses,
+%% or different IP-addresses, but the same ID.
+has_peer({ID, _, _}, S) ->
+    Nodes = current_nodes(S),
+    lists:keymember(ID, 1, Nodes).
+
+delete_node(_Node, []) -> [];
+delete_node({ID, _, _} = Node, [#{ lo := Lo, hi := Hi, nodes := Nodes } = R | Rs]) when Lo =< ID, ID =< Hi ->
+    NewNodes = Nodes -- [Node],
+    [R#{ nodes := NewNodes } | Rs];
+delete_node(Node, [R | Rs]) ->
+    [R | delete_node(Node, Rs)].
+
+nodes_in_range(#state { tree = Tree }, ID) ->
+    %% This MUST return exactly one target, or the Tree is broken
+    [Ns] = [Nodes || #{ lo := Lo, hi := Hi, nodes := Nodes } <- Tree, Lo =< ID, ID =< Hi],
+    Ns.
+
+%% Timer manipulation
+%% -----------------------------
+
+last_active(_S, []) -> [];
+last_active(#state { node_timers = NTs }, Members) ->
+    Eligible = [lists:keyfind(M, 1, NTs) || M <- Members],
+    case [E || E <- Eligible, E == false] of
+        [] ->
+            lists:reverse(lists:keysort(2, Eligible));
+        [_|_] -> {error, not_member}
+    end.
+
+%% Return the current nodes with timers
+nodes_with_timers(#state { node_timers = NTs }) ->
+    [N || {N, _, _, _} <- NTs].
+
 %% Given a time T and a node state tuple, compute the expected node state value
 %% for that tuple.
 node_state_value(_T, false) -> not_member;
@@ -805,41 +929,14 @@ node_state_value(_T, {_, _, Errs, _}) when Errs > 1 -> bad;
 node_state_value(T, {_, Tau, _, _}) when T - Tau < ?NODE_TIMEOUT -> good;
 node_state_value(_, {_, Tau, _, _}) -> {questionable, Tau}.
 
-initialized(#state { init = I }) -> I.
-has_nodes(#state { nodes = Ns }) -> Ns /= [].
-has_ranges(#state { ranges = Rs }) -> Rs /= [].
+%% Various helpers
+%% --------------------
 
-%% Given a state and a node, find the last activity point of the node
-find_last_activity(#state { node_timers = NT }, Node) ->
-    case lists:keyfind(Node, 1, NT) of
-        false -> not_found;
-        {Node, P, _C, _} -> {ok, P}
-    end.
+monus(A, B) when A > B -> A - B;
+monus(A, B) when A =< B -> 0.
 
-find_oldest(#state { node_timers = NT }, Members, ranges) ->
-    Ks = [lists:keyfind(M, 1, NT) || M <- Members],
-    Xs = [TS || {_, TS, _, _} <- Ks],
-    case Xs of
-        [] -> undefined;
-        L -> lists:min(L)
-    end.
-
-node_timers(#state { node_timers = NTs }, nodes) ->
-    [N || {N, _, _, _} <- NTs].
-
-rt_node(S) -> elements(current_nodes(S)).
-
-rt_nodes(#state { nodes = Ns } = S) ->
-    case Ns of
-        [] -> [];
-        _ -> list(elements(current_nodes(S)))
-    end.
-
-rt_range(S) -> elements(current_ranges(S)).
-
-range_by_node(#state { nodes = Ns }, Node) ->
-    {Node, Range} = lists:keyfind(Node, 1, Ns),
-    Range.
+rand_pick([]) -> [];
+rand_pick(Elems) -> elements(Elems).
 
 dedup(Xs) ->
     dedup(Xs, #{}).
@@ -850,32 +947,3 @@ dedup([X | Xs], M) ->
         true -> dedup(Xs, M);
         false -> [X | dedup(Xs, M#{ X => true })]
     end.
-
-%% Helper, returns an assertion on node presence in the model which
-%% can be grafted onto a callout specification.
-assert_nodes_in_model(_S, []) -> ?EMPTY;
-assert_nodes_in_model(#state { nodes = Ns } = S, [N|Rest]) ->
-    case lists:keymember(N, 1, Ns) of
-        true -> assert_nodes_in_model(S, Rest);
-        false -> ?FAIL({not_a_node, N})
-    end.
-
-current_ranges(#state { ranges = RS }) -> RS.
-
-current_nodes(#state { nodes = NS }) ->
-    [N || {N, _Range} <- NS].
-
-monus(A, B) when A > B -> A - B;
-monus(A, B) when A =< B -> 0.
-
-last_active([], _S) -> [];
-last_active(Members, #state { node_timers = NTs }) ->
-    Eligible = [lists:keyfind(M, 1, NTs) || M <- Members],
-    case [E || E <- Eligible, E == false] of
-        [] ->
-            lists:reverse(lists:keysort(2, Eligible));
-        [_|_] -> {error, not_member}
-    end.
-
-rand_pick([]) -> [];
-rand_pick(Elems) -> elements(Elems).

@@ -5,6 +5,8 @@
 -include_lib("eqc/include/eqc.hrl").
 
 %% Generators
+id(Min, Max) -> choose(Min, Max).
+
 id() ->
     ?LET(<<ID:160>>, binary(20),
         ID).

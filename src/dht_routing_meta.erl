@@ -13,7 +13,6 @@
 %%
 %% · Rework the EQC model, since it is now in tatters.
 -module(dht_routing_meta).
-
 -include("dht_constants.hrl").
 
 %% Create/Export
