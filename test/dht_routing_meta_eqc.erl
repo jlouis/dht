@@ -654,11 +654,11 @@ range_last_activity_callouts(#state { time = T } = S, [Range]) ->
     ?MATCH(Members,
         ?CALLOUT(dht_routing_table, members, [Range, rt_ref], rt_nodes(S))),
     case last_active(S, Members) of
-        undefined ->
+        [] ->
           ?MATCH(R, ?CALLOUT(dht_time, monotonic_time, [], T)),
           ?RET(R);
-        Min ->
-          ?RET(Min)
+        [{_, At, _, _} | _] ->
+          ?RET(At)
     end.
 
 %% INIT_RANGE_TIMERS (Internal call)
