@@ -628,7 +628,7 @@ reset_range_timer(Range, Opts) ->
           {ok, ok, R}
         end).
 
-reset_range_timer_pre(S) -> initialized(S) andalso has_ranges(S).
+reset_range_timer_pre(S) -> initialized(S).
 
 reset_range_timer_args(S) ->
     [rt_range(S), #{ force => bool() }].
@@ -949,7 +949,6 @@ rt_nodes(S) ->
 
 %% Simple precondition checks
 has_nodes(S) -> current_nodes(S) /= [].
-has_ranges(S) -> current_ranges(S) /= [].
 
 %% TODO: Lessen this restriction so peers may have the same ID, but different IP-addresses,
 %% or different IP-addresses, but the same ID.
