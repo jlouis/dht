@@ -963,6 +963,12 @@ delete_node({ID, _, _} = Node, [#{ lo := Lo, hi := Hi, nodes := Nodes } = R | Rs
 delete_node(Node, [R | Rs]) ->
     [R | delete_node(Node, Rs)].
 
+%% You can request nodes in a range by either querying on the range or by the node (ID)
+%% One returns the nodes neighboring the ID or that particular range, which must exist.
+nodes_in_range(#state { tree = Tree }, {L, H}) ->
+    %% This MUST return exactly one target, or the Tree is broken
+    [Ns] = [Nodes || #{ lo := Lo, hi := Hi, nodes := Nodes } <- Tree, Lo == L, Hi == H],
+    Ns;
 nodes_in_range(#state { tree = Tree }, ID) ->
     %% This MUST return exactly one target, or the Tree is broken
     [Ns] = [Nodes || #{ lo := Lo, hi := Hi, nodes := Nodes } <- Tree, Lo =< ID, ID =< Hi],
