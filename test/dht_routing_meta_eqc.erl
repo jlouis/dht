@@ -293,7 +293,7 @@ routing_tree(0, Lo, Hi, Split) ->
         split_yes -> {true, nodes(Lo, Hi, 7)};
         split_no -> {false, nodes(Lo, Hi, 8)}
       end,
-    [#{ lo => Lo, hi => Hi, nodes => nodes(Lo, Hi), split => Splittable }];
+    [#{ lo => Lo, hi => Hi, nodes => Nodes, split => Splittable }];
 routing_tree(_N, Lo, Hi, Split) when Hi - Lo < 4 -> routing_tree(0, Lo, Hi, Split);
 routing_tree(_N, Lo, Hi, split_no) ->
     routing_tree(0, Lo, Hi, split_no);
@@ -729,17 +729,50 @@ adjoin_callouts(#state { time = T }, [Node]) ->
     
 %% TODO: Split too large ranges!
 insert_node_callouts(S, [Node, T]) ->
-    { #{ nodes := Nodes }, _Rs} = take_range(S, Node),
-    case length(Nodes) of
+    { #{ lo := Lo, hi := Hi, nodes := Nodes }, _Rs} = take_range(S, Node),
+    case length(Nodes) +1 of
         L when L >= ?K -> ?FAIL(range_too_large);
-        _ ->  ?APPLY(add_node_timer, [Node, T])
+        L when L == ?K ->
+           ?MATCH_GEN(P, choose(Lo+1, Hi-1)),
+           ?APPLY(split_range, [Node, P]),
+           ?APPLY(add_node_timer, [Node, T]);
+        L when L < ?K -> 
+           ?APPLY(add_node_timer, [Node, T])
     end.
-    
+
 insert_node_next(S, _, [Node, _T]) ->
     { #{ nodes := Nodes } = R, Rs} = take_range(S, Node),
     NR = R#{ nodes := Nodes ++ [Node] },
     S#state{ tree = Rs ++ [NR] }.
 
+in(L, X, H) when L =< X, X =< H -> true;
+in(_, _, _) -> false.
+
+split_range_callouts(#state { time = T } = S, [Node, P]) ->
+    { #{ split := Split, lo := L, hi := H }, _Rs} = take_range(S, Node),
+    case Split of
+        true ->
+            ?APPLY(remove_range_timer, [{L, H}]),
+            ?APPLY(add_range_timer_at, [{L, P}, T]),
+            ?APPLY(add_range_timer_at, [{P+1, H}, T]);
+        false ->
+            ?EMPTY
+    end.
+
+split_range_next(#state { id = Own } = S, _, [Node, P]) ->
+    F = fun({ID, _, _}) -> ID =< P end,
+    { #{ lo := L, hi := H, nodes := Nodes, split := Split }, Rs} = take_range(S, Node),
+    Split = in(L, Own, H),
+    case Split of
+        true ->
+            {LowNodes, HighNodes} = list:partition(F, Nodes),
+            Low = #{ lo => L, hi => P, nodes => LowNodes, split => in(L, Own, P) },
+            High = #{ lo => P+1, hi => H, nodes => HighNodes, split => in(P+1, Own, H) },
+            S#state { tree = Rs ++ [Low, High] };
+        false ->
+            S
+    end.
+    
 take_range(#state { tree = Tree}, {ID, _, _}) -> take_range(Tree, ID, []).
 
 take_range([R = #{ lo := Lo, hi := Hi} | Rs], ID, Acc) when Lo =< ID, ID =< Hi ->
