@@ -268,34 +268,49 @@ nodes(Lo, Hi) ->
 
 %% A tree is sized over the current generation size:
 routing_tree() ->
-    ?SIZED(Sz, routing_tree(Sz, ?ID_MIN, ?ID_MAX)).
+    ?SIZED(Sz, routing_tree(Sz, ?ID_MIN, ?ID_MAX, split_yes)).
     
 %% Trees are based on their structure:
 %% • Trees of size 0 generates nodes in the current range.
 %% • Trees where the Lo–Hi distance is short are like size 0 trees.
 %% • Larger trees are either done, or their consist of a split-point in the range
 %%    and then they consist of two trees of smaller sizes.
-routing_tree(0, Lo, Hi) ->
-    [#{ lo => Lo, hi => Hi, nodes => nodes(Lo, Hi) }];
-routing_tree(_N, Lo, Hi) when Hi - Lo < 4 -> routing_tree(0, Lo, Hi);
-routing_tree(N, Lo, Hi) ->
+routing_tree(0, Lo, Hi, Split) ->
+    Splittable = case Split of
+        split_yes -> true;
+        split_no -> false
+    end,
+    [#{ lo => Lo, hi => Hi, nodes => nodes(Lo, Hi), split => Splittable }];
+routing_tree(_N, Lo, Hi, Split) when Hi - Lo < 4 -> routing_tree(0, Lo, Hi, Split);
+routing_tree(_N, Lo, Hi, split_no) ->
+    routing_tree(0, Lo, Hi, split_no);
+routing_tree(N, Lo, Hi, split_yes) ->
     frequency([
-        {50, routing_tree(0, Lo, Hi)},
+        {50, routing_tree(0, Lo, Hi, split_yes)},
         {50, ?LAZY(
-            ?LET(Split, choose(Lo+1, Hi-1),
-              ?LETSHRINK([L, R], [routing_tree(N div 2, Lo, Split), routing_tree(N div 2, Split+1, Hi)],
+            ?LET({Point, Side}, {choose(Lo+1, Hi-1), elements([l, r])},
+              ?LETSHRINK([L, R], split_tree(N div 2, Lo, Hi, Point, Side),
                 L ++ R)))}
     ]).
 
+split_tree(Sz, Lo, Hi, Point, l) ->
+    [routing_tree(Sz, Lo, Point, split_yes), routing_tree(Sz, Point+1, Hi, split_no)];
+split_tree(Sz, Lo, Hi, Point, r) ->
+    [routing_tree(Sz, Lo, Point, split_no), routing_tree(Sz, Point+1, Hi, split_yes)].
+
+pick_id([#{ lo := L, hi := H, split := true } | _]) -> choose(L, H);
+pick_id([_ | Rs]) -> pick_id(Rs).
+
 gen_state() ->
-    #state {
-        tree = routing_tree(),
+    ?LET(Tree, routing_tree(),
+      #state {
+        tree = Tree,
         init = false,
-        id = dht_eqc:id(?ID_MIN, ?ID_MAX),
+        id = pick_id(Tree),
         time = int(),
         node_timers = [],
         range_timers = []
-    }.
+      }).
 
 %% NEW
 %% --------------------------------------------------
