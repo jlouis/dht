@@ -529,39 +529,44 @@ range_members(Node) ->
 
 range_members_pre(S) -> initialized(S).
 
-range_members_args(_S) -> [peer()].
+range_members_args(S) ->
+    NodeOrRange = oneof([peer(), rt_range(S)]),
+    [NodeOrRange].
     
 %% This is simply a forward to the underlying routing table, so it should return whatever
 %% The RT returns.
+range_members_callouts(S, [{Lo, Hi} = Range]) ->
+    ?MATCH(R, ?CALLOUT(dht_routing_table, members, [Range, rt_ref], nodes_in_range(S, {Lo, Hi}))),
+    ?RET(R);
 range_members_callouts(S, [{ID, _, _} = Node]) ->
     ?MATCH(R, ?CALLOUT(dht_routing_table, members, [Node, rt_ref], nodes_in_range(S, ID))),
     ?RET(R).
 
-%% REFRESH_NODE
+%% NODE_TOUCH
 %% --------------------------------------------------
 
 %% Refreshing a node means that the node had activity. In turn, its timer
 %% structure should be refreshed when this happens. The transition is that
 %% we remove the old timer and install a new timer at a future point in time.
-refresh_node(Node, Opts) ->
+node_touch(Node, Opts) ->
     eqc_lib:bind(?DRIVER,
         fun(T) ->
-            R = dht_routing_meta:refresh_node(Node, Opts, T),
+            R = dht_routing_meta:node_touch(Node, Opts, T),
             {ok, ok, R}
         end).
         
-refresh_node_pre(S) -> initialized(S) andalso has_nodes(S).
+node_touch_pre(S) -> initialized(S) andalso has_nodes(S).
 
-refresh_node_args(S) -> [rt_node(S), #{ reachable => bool() }].
+node_touch_args(S) -> [rt_node(S), #{ reachable => bool() }].
 
-refresh_node_callouts(#state { time = T }, [_Node, _Opts]) ->
+node_touch_callouts(#state { time = T }, [_Node, _Opts]) ->
     ?CALLOUT(dht_time, monotonic_time, [], T),
     ?RET(ok).
 
 %% Refreshing a node depends on its current reachability and if the new refresh is for a
 %% reply, in which case the node is reachable. If the node is not reachable, this is a no-op.
 %% and if the node is reachable, the backend structure is updated.
-refresh_node_next(#state { node_timers = NTs, time = T } = S, _, [Node, #{ reachable := R2}]) ->
+node_touch_next(#state { node_timers = NTs, time = T } = S, _, [Node, #{ reachable := R2}]) ->
     {_, _, _, R1} = lists:keyfind(Node, 1, NTs),
     case R1 or R2 of
         false -> S;
