@@ -162,6 +162,10 @@
 %%    {questionable, Age} for its age. This means we can sort based on questionability.
 %% • How do we assert the return from a range needing refreshing is random? The postcondition
 %%   is obvious here, but it requires us to run a function on the data...
+%% • Fun one: ranges can be empty. A range splits, but nothing falls into one side. This means an
+%%   empty range, and thus a range timer which picks among an empty list of nodes. Luckily, I
+%%   think the specification handles this case and does the right thing :P
+%%
 -module(dht_routing_meta_eqc).
 -compile(export_all).
 
@@ -261,8 +265,8 @@ range() ->
 
 peer(Lo, Hi) -> {choose(Lo, Hi), dht_eqc:ip(), dht_eqc:port()}.
 
-nodes(Lo, Hi) ->
-    ?LET(Sz, choose(0, 8),
+nodes(Lo, Hi, Limit) ->
+    ?LET(Sz, choose(0, Limit),
       ?LET(IDGen, vector(Sz, choose(Lo, Hi)),
         [{ID, dht_eqc:ip(), dht_eqc:port()} || ID <- dedup(IDGen)])).
 
@@ -275,11 +279,20 @@ routing_tree() ->
 %% • Trees where the Lo–Hi distance is short are like size 0 trees.
 %% • Larger trees are either done, or their consist of a split-point in the range
 %%    and then they consist of two trees of smaller sizes.
+%%
+%% Also a tree node can either be the one which can be split, or the one which
+%% can't be split. We only consider splitting nodes which are splittable in the tree
+%% and this guides the structure of the tree.
+%% • Leaf nodes which can be split can at most have 7 nodes. If they had 8, they would be
+%%   split by the code.
+%% • Leaf nodes which cannot be split, can have 0 to 8 nodes in them.
+%%
 routing_tree(0, Lo, Hi, Split) ->
-    Splittable = case Split of
-        split_yes -> true;
-        split_no -> false
-    end,
+    {Splittable, Nodes} =
+      case Split of
+        split_yes -> {true, nodes(Lo, Hi, 7)};
+        split_no -> {false, nodes(Lo, Hi, 8)}
+      end,
     [#{ lo => Lo, hi => Hi, nodes => nodes(Lo, Hi), split => Splittable }];
 routing_tree(_N, Lo, Hi, Split) when Hi - Lo < 4 -> routing_tree(0, Lo, Hi, Split);
 routing_tree(_N, Lo, Hi, split_no) ->
