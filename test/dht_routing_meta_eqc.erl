@@ -750,6 +750,10 @@ insert_node_next(S, _, [Node, _T]) ->
     NR = R#{ nodes := Nodes ++ [Node] },
     S#state{ tree = Rs ++ [NR] }.
 
+split_range_pre(S, [Node, P]) ->
+    { #{ lo := L, hi := H}, _Rs} = take_range(S, Node),
+    within(L, P, H).
+
 split_range_callouts(#state { time = T } = S, [Node, P]) ->
     { #{ split := Split, lo := L, hi := H }, _Rs} = take_range(S, Node),
     case Split of
