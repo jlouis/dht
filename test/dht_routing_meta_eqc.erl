@@ -745,9 +745,6 @@ insert_node_next(S, _, [Node, _T]) ->
     NR = R#{ nodes := Nodes ++ [Node] },
     S#state{ tree = Rs ++ [NR] }.
 
-in(L, X, H) when L =< X, X =< H -> true;
-in(_, _, _) -> false.
-
 split_range_callouts(#state { time = T } = S, [Node, P]) ->
     { #{ split := Split, lo := L, hi := H }, _Rs} = take_range(S, Node),
     case Split of
@@ -762,12 +759,12 @@ split_range_callouts(#state { time = T } = S, [Node, P]) ->
 split_range_next(#state { id = Own } = S, _, [Node, P]) ->
     F = fun({ID, _, _}) -> ID =< P end,
     { #{ lo := L, hi := H, nodes := Nodes, split := Split }, Rs} = take_range(S, Node),
-    Split = in(L, Own, H),
+    Split = within(L, Own, H), %% Assert the state of the split
     case Split of
         true ->
             {LowNodes, HighNodes} = list:partition(F, Nodes),
-            Low = #{ lo => L, hi => P, nodes => LowNodes, split => in(L, Own, P) },
-            High = #{ lo => P+1, hi => H, nodes => HighNodes, split => in(P+1, Own, H) },
+            Low = #{ lo => L, hi => P, nodes => LowNodes, split => within(L, Own, P) },
+            High = #{ lo => P+1, hi => H, nodes => HighNodes, split => within(P+1, Own, H) },
             S#state { tree = Rs ++ [Low, High] };
         false ->
             S
@@ -993,12 +990,15 @@ node_state_value(_, {_, Tau, _, _}) -> {questionable, Tau}.
 %% Various helpers
 %% --------------------
 
+%% A monus operation is a subtraction for natural numbers
 monus(A, B) when A > B -> A - B;
 monus(A, B) when A =< B -> 0.
 
+%% Pick a random element
 rand_pick([]) -> [];
 rand_pick(Elems) -> elements(Elems).
 
+%% Remove duplicates in a list through the use of a map()
 dedup(Xs) ->
     dedup(Xs, #{}).
     
@@ -1008,3 +1008,7 @@ dedup([X | Xs], M) ->
         true -> dedup(Xs, M);
         false -> [X | dedup(Xs, M#{ X => true })]
     end.
+
+%% within(L, X, H) checks that L ≤ X ≤ H
+within(L, X, H) when L =< X, X =< H -> true;
+within(_, _, _) -> false.
