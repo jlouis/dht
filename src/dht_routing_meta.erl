@@ -64,7 +64,8 @@ new(Tbl) ->
     {ok, ID, State}.
 
 is_member(Node, #routing { table = T }) -> dht_routing_table:is_member(Node, T).
-range_members(Node, #routing { table = T }) -> dht_routing_table:members(Node, T).
+range_members({_, _, _} = Node, #routing { table = T }) -> dht_routing_table:members(Node, T);
+range_members({_, _} = Range, #routing { table = T }) -> dht_routing_table:members(Range, T).
 
 %% @doc replace/3 substitutes one bad node for a new node
 %% Preconditions:
