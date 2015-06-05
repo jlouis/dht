@@ -218,7 +218,7 @@ api_spec() ->
         #api_module {
           name = dht_rand,
           functions = [
-            #api_fun { name = pic, arity = 1 }
+            #api_fun { name = pick, arity = 1 }
           ]},
         #api_module {
           name = dht_time,
