@@ -90,7 +90,7 @@ insert(Node, #routing { table = Tbl, nodes = NT } = Routing) ->
     T = dht_routing_table:insert(Node, Tbl),
     false =  dht_routing_table:is_member(Node, T),
     %% Update the timers, if they need to change
-    NewState = Routing#routing { nodes = node_update(Node, Now, NT) },
+    NewState = Routing#routing { nodes = node_update({unreachable, Node}, Now, NT) },
     {ok, update_ranges(Tbl, Now, NewState)}.
 
 %% @doc remove/2 removes a node from the routing table
@@ -246,7 +246,7 @@ init_range_timers(Now, Tbl) ->
 
 init_nodes(Now, Nodes) ->
     Timeout = dht_time:convert_time_unit(?NODE_TIMEOUT, milli_seconds, native),
-    F = fun(N) -> {N, #{ last_activity => Now - Timeout, timeout_count => 0 }} end,
+    F = fun(N) -> {N, #{ last_activity => Now - Timeout, timeout_count => 0, reachable => false }} end,
     maps:from_list([F(N) || N <- Nodes]).
 
 
