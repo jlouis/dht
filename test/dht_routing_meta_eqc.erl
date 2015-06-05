@@ -138,23 +138,14 @@
 %% • Run FIND_NODE on the random ID
 %% • find_nodes will run insertion, hopefully close the ID you already had
 %% 
-%% Startup:
+%% TODO: Startup:
 %% 
 %% • Inserting the first node
 %% • Or starting up with a routing table thereafter
 %% 
 %% Issue a FIND_NODE request on your own ID until you can't find any closer nodes.
 %% 
-
-%% TODO—Still missing work in the model:
-%%
-%% Structural model errors:
-%%
-%% • We have to precisely model that ranges are non-overlapping and that nodes
-%%   falls into ranges correctly. Otherwise, it is not possible to precisely map the
-%%   fact that sometimes, you can't add a new node to a range.
-%%
-%% Other mistakes in the current model:
+%% TODO—things-to-analyze in the current model:
 %%
 %% • After we started looking at the BEP 0005 spec, we have realized this module needs
 %%    some serious rewriting, as it is currently not doing the right thing.
@@ -165,7 +156,9 @@
 %% • Fun one: ranges can be empty. A range splits, but nothing falls into one side. This means an
 %%   empty range, and thus a range timer which picks among an empty list of nodes. Luckily, I
 %%   think the specification handles this case and does the right thing :P
-%%
+%% • When inserting new nodes into the routing table they are set as unreachable. Is this correct?
+%%   we can implement the other behaviour by an immediate node touch, but…
+
 -module(dht_routing_meta_eqc).
 -compile(export_all).
 
