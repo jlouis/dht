@@ -720,11 +720,26 @@ adjoin_callouts(#state { time = T }, [Node]) ->
     ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref], true),
 
     ?CALLOUT(dht_time, send_after, [T, ?WILDCARD, ?WILDCARD], make_ref()),
-    ?CALLOUT(dht_routing_table, ranges, [rt_ref], rt_ref),
-    ?CALLOUT(dht_routing_table, ranges, [rt_ref], rt_ref),
+    ?MATCH(Before, ?APPLY(obtain_ranges, [])),
     ?APPLY(insert_node, [Node, T]),
+    ?MATCH(After, ?APPLY(obtain_ranges, [])),
+    Ops = [{del, R} || R <- ordsets:subtract(Before, After)]
+      ++ [{add, R} || R <- ordsets:subtract(After, Before)],
+    ?APPLY(fold_ranges, [T, Ops]),
     ?RET(ok).
     
+obtain_ranges_callouts(S, []) ->
+    ?MATCH(R, ?CALLOUT(dht_routing_meta, ranges, [rt_ref], current_ranges(S))),
+    ?RET(R).
+
+fold_ranges_callouts(_S, [_T, []]) -> ?EMPTY;
+fold_ranges_callouts(S, [T, [{del, R} | Ops]]) ->
+    ?APPLY(remove_range_timer, [R]),
+    fold_ranges_callouts(S, [T, Ops]);
+fold_ranges_callouts(S, [T, [{add, R} | Ops]]) ->
+    ?APPLY(add_range_timer_at, [R, T]),
+    fold_ranges_callouts(S, [T, Ops]).
+
 %% TODO: Split too large ranges!
 insert_node_callouts(S, [Node, T]) ->
     { #{ lo := Lo, hi := Hi, nodes := Nodes }, _Rs} = take_range(S, Node),
