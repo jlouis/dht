@@ -380,7 +380,8 @@ insert_pre(S) -> initialized(S).
 %% you can do this insertion.
 insert_args(_S) -> [peer()].
 
-insert_args_pre(S, [Peer]) -> initialized(S) andalso (not has_peer(Peer, S)).
+insert_pre(S, [Peer]) ->
+    initialized(S) andalso (not has_peer(Peer, S)).
 
 %% We `adjoin' the Node to the routing table, which is addressed as a separate
 %% internal model transition.
@@ -912,6 +913,10 @@ prop_routing_correct() ->
           aggregate(command_names(Cmds),
             R == ok)))
       end))).
+
+%% Helper for showing states of the output:
+t() ->
+    eqc:quickcheck(eqc_statem:show_states(prop_routing_correct())).
 
 %% TRACING
 %% ------------------
