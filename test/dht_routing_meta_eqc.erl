@@ -291,12 +291,12 @@ routing_tree(_N, Lo, Hi, Split) when Hi - Lo < 4 -> routing_tree(0, Lo, Hi, Spli
 routing_tree(_N, Lo, Hi, split_no) ->
     routing_tree(0, Lo, Hi, split_no);
 routing_tree(N, Lo, Hi, split_yes) ->
-    frequency([
-        {50, routing_tree(0, Lo, Hi, split_yes)},
-        {50, ?LAZY(
+    oneof([
+        routing_tree(0, Lo, Hi, split_yes),
+        ?LAZY(
             ?LET({Point, Side}, {choose(Lo+1, Hi-1), elements([l, r])},
-              ?LETSHRINK([L, R], split_tree(N div 2, Lo, Hi, Point, Side),
-                L ++ R)))}
+              ?LET([L, R], split_tree(N div 2, Lo, Hi, Point, Side),
+                L ++ R)))
     ]).
 
 split_tree(Sz, Lo, Hi, Point, l) ->
@@ -525,7 +525,7 @@ range_members_pre(S) -> initialized(S).
 range_members_args(S) ->
     NodeOrRange = oneof([peer(), rt_range(S)]),
     [NodeOrRange].
-    
+
 %% This is simply a forward to the underlying routing table, so it should return whatever
 %% The RT returns.
 range_members_callouts(S, [{Lo, Hi} = Range]) ->
