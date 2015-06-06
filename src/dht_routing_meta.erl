@@ -309,7 +309,7 @@ mk_timer(Start, Interval, Msg) ->
     
 timer_state({node, N}, NTs) ->
     case maps:get(N, NTs, undefined) of
-        #{ timeout_count := K } when K > 2 -> bad;
+        #{ timeout_count := K } when K > 1 -> bad;
         #{ last_activity := LA } ->
             Age = age(LA),
             case Age < ?NODE_TIMEOUT of

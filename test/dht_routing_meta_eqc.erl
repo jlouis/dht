@@ -484,13 +484,15 @@ node_state_pre(S, [Nodes]) ->
 %% We simply expect this call to carry out queries on each given node in the member list.
 %% And we expect the return to be computed in the same order as the query itself.
 node_state_callouts(#state { time = T, node_timers = NTs }, [Nodes]) ->
-    LAs = [ element(2, lists:keyfind(N, 1, NTs)) || N <- Nodes],
-    ?SEQ([
-      ?SEQ(
-        ?CALLOUT(dht_time, monotonic_time, [], T),
-        ?CALLOUT(dht_time, convert_time_unit, [T - LA, native, milli_seconds], T-LA))
-      || LA <- LAs]),
-    ?RET([node_state_value(T, lists:keyfind(N, 1, NTs)) || N <- Nodes]).
+    Returns = [node_state_value(T, lists:keyfind(N, 1, NTs)) || N <- Nodes],
+    ?SEQ(
+      [case R of
+          bad -> ?EMPTY;
+          _ -> ?SEQ(
+              ?CALLOUT(dht_time, monotonic_time, [], T),
+              ?CALLOUT(dht_time, convert_time_unit, [T - LA, native, milli_seconds], T-LA) )
+        end || {R, LA} <- Returns]),
+    ?RET([R || {R, _LA} <- Returns]).
 
 %% NODE_TIMEOUT
 %% --------------------------------------------------
@@ -1004,10 +1006,14 @@ nodes_with_timers(#state { node_timers = NTs }) ->
 
 %% Given a time T and a node state tuple, compute the expected node state value
 %% for that tuple.
-node_state_value(_T, false) -> not_member;
-node_state_value(_T, {_, _, Errs, _}) when Errs > 1 -> bad;
-node_state_value(T, {_, Tau, _, _}) when T - Tau < ?NODE_TIMEOUT -> good;
-node_state_value(_, {_, Tau, _, _}) -> {questionable, Tau}.
+node_state_value(_T, false) -> {not_member, undefined};
+node_state_value(_T, {_, _, Errs, _}) when Errs > 1 -> {bad, undefined};
+node_state_value(T, {_, Tau, _, _}) when T >= Tau ->
+    Age = T - Tau,
+    case Age < ?NODE_TIMEOUT of
+        true -> {good, Tau};
+        false -> {{questionable, Age - ?NODE_TIMEOUT}, Tau}
+    end.
 
 %% Various helpers
 %% --------------------
