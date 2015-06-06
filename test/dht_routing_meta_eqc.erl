@@ -709,21 +709,18 @@ replace_callouts(_S, [OldNode, NewNode]) ->
 %% ADJOIN (Internal call)
 %% --------------------------------------------------
 
-%% TODO: Go through this call for correctness
+%% TODO:
+%%  • Update the callouts to ranges so they are correct
 adjoin_callouts(#state { time = T }, [Node]) ->
     ?CALLOUT(dht_time, monotonic_time, [], T),
     ?CALLOUT(dht_routing_table, insert, [Node, rt_ref], rt_ref),
-    ?MATCH(Member, ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref], bool())),
-    case Member of
-        false ->
-            ?RET(not_inserted);
-        true ->
-            ?CALLOUT(dht_time, send_after, [T, ?WILDCARD, ?WILDCARD], make_ref()),
-            ?CALLOUT(dht_routing_table, ranges, [rt_ref], rt_ref),
-            ?CALLOUT(dht_routing_table, ranges, [rt_ref], rt_ref),
-            ?APPLY(insert_node, [Node, T]),
-            ?RET(ok)
-    end.
+    ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref], true),
+
+    ?CALLOUT(dht_time, send_after, [T, ?WILDCARD, ?WILDCARD], make_ref()),
+    ?CALLOUT(dht_routing_table, ranges, [rt_ref], rt_ref),
+    ?CALLOUT(dht_routing_table, ranges, [rt_ref], rt_ref),
+    ?APPLY(insert_node, [Node, T]),
+    ?RET(ok).
     
 %% TODO: Split too large ranges!
 insert_node_callouts(S, [Node, T]) ->

@@ -88,7 +88,7 @@ replace(Old, New, #routing { nodes = Ns, table = Tbl } = State) ->
 insert(Node, #routing { table = Tbl, nodes = NT } = Routing) ->
     Now = dht_time:monotonic_time(),
     T = dht_routing_table:insert(Node, Tbl),
-    false =  dht_routing_table:is_member(Node, T),
+    true =  dht_routing_table:is_member(Node, T),
     %% Update the timers, if they need to change
     NewState = Routing#routing { nodes = node_update({unreachable, Node}, Now, NT) },
     {ok, update_ranges(Tbl, Now, NewState)}.
