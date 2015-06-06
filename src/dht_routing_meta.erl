@@ -192,7 +192,7 @@ range_state_members(Members, Routing) ->
     T = dht_time:monotonic_time(),
     case last_activity(Members, Routing) of
         never -> empty;
-        A when A < T ->
+        A when A =< T ->
             Window = dht_time:convert_time_unit(T - A, native, milli_seconds),
             case Window =< ?RANGE_TIMEOUT of
                 true -> ok;
