@@ -483,11 +483,14 @@ node_state_pre(S, [Nodes]) ->
     
 %% We simply expect this call to carry out queries on each given node in the member list.
 %% And we expect the return to be computed in the same order as the query itself.
-node_state_callouts(#state { time = T, node_timers = NTs } = S, [Nodes]) ->
-    ?SEQ([?CALLOUT(dht_routing_table, is_member, [N, rt_ref],
-    		lists:member(N, current_nodes(S)))
-        || N <- Nodes]),
-    ?RET([ node_state_value(T, lists:keyfind(N, 1, NTs)) || N <- Nodes]).
+node_state_callouts(#state { time = T, node_timers = NTs }, [Nodes]) ->
+    LAs = [ element(2, lists:keyfind(N, 1, NTs)) || N <- Nodes],
+    ?SEQ([
+      ?SEQ(
+        ?CALLOUT(dht_time, monotonic_time, [], T),
+        ?CALLOUT(dht_time, convert_time_unit, [T - LA, native, milli_seconds], T-LA))
+      || LA <- LAs]),
+    ?RET([node_state_value(T, lists:keyfind(N, 1, NTs)) || N <- Nodes]).
 
 %% NODE_TIMEOUT
 %% --------------------------------------------------
