@@ -70,47 +70,35 @@ node_id(#routing_table { self = ID }) -> ID.
 %%
 -spec insert(dht:peer(), t()) -> t().
 insert({ID, _, _} = Node, #routing_table { self = Self, table = Buckets} = Tbl) ->
-    {Rest, Acc} = insert_node(dht_metric:d(Self, ID), Self, Node, ?MAX_RANGE_SZ, Buckets, []),
+    {Rest, Acc} = insert_node(dht_metric:d(Self, ID), Self, Node, Buckets, []),
     Tbl#routing_table { table = lists:reverse(Acc) ++ Rest}.
 
 %% The recursive runner for insertion
-insert_node(0, _Self, _Node, _K, Buckets, Acc) ->
-    {Buckets, Acc};
-insert_node(1, _Self, Node, _K, [#bucket{ low = 0, high = 1, members = Members } = B], Acc) ->
+insert_node(0, _Self, _Node, Buckets, Acc) -> {Buckets, Acc};
+insert_node(1, _Self, Node, [#bucket{ low = 0, high = 1, members = Members } = B], Acc) ->
     {[B#bucket{ members = ordsets:add_element(Node, Members) }], Acc};
-insert_node(Dist, Self, Node, K, [#bucket{ low = Min, high = Max, members = Members} = B | Next], Acc)
+insert_node(Dist, Self, Node, [#bucket{ low = Min, high = Max, members = Members} = B | Next], Acc)
 	when ?in_range(Dist, Min, Max) ->
     %% We analyze the numbers of members and either insert or split the bucket
     case length(Members) of
-      L when L < K ->
+      L when L < ?MAX_RANGE_SZ ->
         {[B#bucket { members = ordsets:add_element(Node, Members) } | Next], Acc};
-      L when L == K, Next /= [] ->
+      L when L == ?MAX_RANGE_SZ, Next /= [] ->
         {[B | Next], Acc};
-      L when L == K ->
+      L when L == ?MAX_RANGE_SZ ->
         Splitted = insert_split_bucket(B, Self),
-        insert_node(Dist, Self, Node, K, Splitted, Acc)
+        insert_node(Dist, Self, Node, Splitted, Acc)
     end;
-insert_node(Dist, Self, Node, K, [H|T], Acc) ->
-    insert_node(Dist, Self, Node, K, T, [H|Acc]).
+insert_node(Dist, Self, Node, [H|T], Acc) ->
+    insert_node(Dist, Self, Node, T, [H|Acc]).
 
 insert_split_bucket(#bucket{ low = Min, high = Max, members = Members }, Self) ->
-  Diff = Max - Min,
-  Half = Max - (Diff div 2),
-  {Lower, Upper} = split_partition(Members, Self, Min, Half),
-  [#bucket{ low = Min, high = Half, members = Lower }, #bucket { low = Half, high = Max, members = Upper }].
-
-split_partition(Members, Self, Min, Half) ->
-	{Lower, Upper} =
-	  lists:foldl(fun ({MID, _, _} = N, {Ls, Us}) ->
-	                case ?in_range(dht_metric:d(MID, Self), Min, Half) of
-	                  true -> {[N | Ls ], Us};
-	                  false -> {Ls, [N | Us]}
-	                end
-	              end,
-	              {[], []},
-	              Members),
-	{lists:reverse(Lower), lists:reverse(Upper)}.
-
+    Diff = Max - Min,
+    Half = Max - (Diff div 2),
+    F = fun({MID, _, _}) -> ?in_range(dht_metric:d(MID, Self), Min, Half) end,
+    {Lower, Upper} = lists:partition(F, Members),
+    [#bucket{ low = Min, high = Half, members = Lower },
+     #bucket{ low = Half, high = Max, members = Upper }].
 
 %% Get all ranges present in a bucket list
 %%
