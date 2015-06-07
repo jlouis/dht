@@ -759,7 +759,7 @@ fold_ranges_callouts(S, [T, [{add, R} | Ops]]) ->
     fold_ranges_callouts(S, [T, Ops]).
 
 %% TODO: Split too large ranges!
-insert_node_callouts(S, [Node, T]) ->
+insert_node_callouts(_S, [Node, T]) ->
     ?APPLY(split_range, [Node, T]),
     ?APPLY(add_node_timer, [Node, T]).
 
@@ -944,8 +944,10 @@ prop_routing_correct() ->
       end))).
 
 %% Helper for showing states of the output:
-t() ->
-    eqc:quickcheck(eqc_statem:show_states(prop_routing_correct())).
+t() -> t(5).
+
+t(Secs) ->
+    eqc:quickcheck(eqc:testing_time(Secs, eqc_statem:show_states(prop_routing_correct()))).
 
 %% TRACING
 %% ------------------

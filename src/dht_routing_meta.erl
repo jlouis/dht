@@ -226,7 +226,7 @@ fold_ranges([], _Now, Ranges) -> Ranges.
 %% point for the range.
 range_last_activity(Range, #routing { table = Tbl, nodes = NT }) ->
     Members = dht_routing_table:members(Range, Tbl),
-    timer_oldest(Members, NT).
+    timer_newest(Members, NT).
 
 last_activity(Members, #routing { nodes = NTs } ) ->
     NodeTimers = [maps:get(M, NTs) || M <- Members],
@@ -268,10 +268,10 @@ node_update({unreachable, Item}, Activity, Timers) ->
 range_timer_add(Item, ActivityTime, TRef, Timers) ->
     Timers#{ Item => #{ last_activity => ActivityTime, timer_ref => TRef} }.
 
-timer_oldest([], _) -> dht_time:monotonic_time(); % None available
-timer_oldest(Items, Timers) ->
+timer_newest([], _) -> dht_time:monotonic_time(); % None available
+timer_newest(Items, Timers) ->
     Activities = [maps:get(K, Timers) || K <- Items],
-    lists:min([A || #{ last_activity := A } <- Activities]).
+    lists:max([A || #{ last_activity := A } <- Activities]).
 
 %% monus/2 is defined on integers in the obvious way (look up the Wikipedia article)
 monus(A, B) when A > B -> A - B;

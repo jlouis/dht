@@ -16,6 +16,13 @@
 %% case as well, however.
 %%
 %% @end
+%%
+%% TODO LIST:
+%% • When a range is full, you can maybe insert the node anyway. You have to ask if
+%%    the range can split, and if affirmative, you can still insert the node as the range
+%%    will correctly split in this case. This is not currently handled by the code, but it
+%%    is necessary for correct operation.
+
 -module(dht_state_eqc).
 -compile(export_all).
 
