@@ -111,8 +111,21 @@
 %% TODO: Verify the above for queries!
 %% 
 %% Buckets/ranges:
-%% 
-%% Buckets and ranges are split in the obvious pattern.
+%%
+%% How do we manage equality on Nodes? There are two answers to this question:
+%% (1) N1 =:= N2
+%% (2) element(1, N1) =:= element(1, N2) (compare the IDs of the nodes)
+%%
+%% What to use probably depends on where the node is added.
+%% • What does is_member return? It uses (1) in the above.
+%%
+%% Buckets and ranges are split in the obvious pattern. A good question is:
+%% Do we split once a bucket reaches 8 nodes, or once it has more than 8 nodes?
+%% The answer, of course, is: which solution gives the most lean code?
+%%
+%% In the case of split at ==8:
+%% In the case of split at >8:
+%%
 %% 
 %% A range can maximally hold K nodes, where K := 8 currently. 
 %% 
@@ -387,6 +400,8 @@ insert_pre(S, [Peer]) ->
 %% internal model transition.
 %%
 %% TODO: Go through this, it may be wrong.
+%% TODO list:
+%% • The bucket may actually split more than once in this call, and we don't track it!
 insert_callouts(_S, [Node]) ->
     ?MATCH(R, ?APPLY(adjoin, [Node])),
     case R of

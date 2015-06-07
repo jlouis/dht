@@ -80,7 +80,7 @@ handle_call({is_range, B}, _From, #state { table = RT } = State) ->
 handle_call({closest_to, ID, Filter, Num}, _From, #state { table = RT } = State) ->
 	{reply, dht_routing_table:closest_to(ID, Filter, Num, RT), State};
 handle_call(invariant, _From, #state { table = RT } = State) ->
-	{reply, check_invariants(RT), State};
+	{reply, check_invariants(dht_routing_table:node_id(RT), RT), State};
 handle_call(_Msg, _From, State) ->
 	{reply, {error, unsupported}, State}.
 
@@ -93,25 +93,37 @@ code_change(_Vsn, State, _Aux) ->
 terminate(_What, _State) ->
 	ok.
 	
-check_invariants(RT) ->
-	check_member_count(RT) andalso check_contiguous(RT).
+check_invariants(ID, RT) ->
+    check([
+      check_member_count(ID, RT),
+      check_contiguous(RT)
+    ]).
+    
+check([ok | Chks]) -> check(Chks);
+check([Err | _]) -> Err;
+check([]) -> true.
 
-check_member_count({routing_table, _, Table}) ->
-    check_member_count_(Table).
+check_member_count(ID, {routing_table, _, Table}) ->
+    check_member_count_(ID, Table).
 
-check_member_count_([]) -> true;
-check_member_count_([{_Min, _Max, Members } | Buckets ]) ->
-    case length(Members) =< 8 of
-        true -> check_member_count_(Buckets);
-        false -> {error, member_count}
+check_member_count_(_ID, []) -> true;
+check_member_count_(ID, [{bucket, Min, Max, Members } | Buckets ]) ->
+    %% If our own ID falls into a bucket, then there can't be 8 elements in that bucket
+    Sz = case Min =< ID andalso ID =< Max of
+        true -> 8;
+        false -> 8
+    end,
+    case length(Members) =< Sz of
+        true -> check_member_count_(ID, Buckets);
+        false -> {error, bucket_length}
     end.
 
 check_contiguous({routing_table, _, Table}) ->
     check_contiguous_(Table).
                         
 check_contiguous_([]) -> true;
-check_contiguous_([{_Min, _Max, _Members}]) -> true;
-check_contiguous_([{_Low, M1, _Members1}, {M2, High, Members2} | T]) when M1 == M2 ->
-  check_contiguous_([{M2, High, Members2} | T]);
+check_contiguous_([{bucket, _Min, _Max, _Members}]) -> true;
+check_contiguous_([{bucket, _Low, M1, _Members1}, {bucket, M2, High, Members2} | T]) when M1 == M2 ->
+  check_contiguous_([{bucket, M2, High, Members2} | T]);
 check_contiguous_([_X, _Y | _T]) ->
-  {error, not_contiguous}.
+  {error, contiguous}.

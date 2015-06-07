@@ -192,13 +192,12 @@ closest_to_features(_S, _A, _R) ->
 %% Invariant
 %% ---------
 %%
-%% · No bucket has more than 8 members
-%% · Buckets can't overlap
-%% · Members of a bucket share a property: a common prefix
-%% · The common prefix is given by the depth/width of the bucket
+%% • No bucket has more than 8 members
+%% • Buckets can't overlap
+%% • Members of a bucket share a property: a common prefix
+%% • The common prefix is given by the depth/width of the bucket
 invariant(_S) ->
-	routing_table:invariant().
-
+    routing_table:invariant().
 
 %% Weights
 %% -------
@@ -224,6 +223,9 @@ prop_seq() ->
             collect(eqc_lib:summary('Length'), length(Cmds),
                 R == ok))))
       end))).
+
+t() ->
+    eqc:quickcheck(eqc_statem:show_states(prop_seq())).
 
 %% Internal functions
 %% ------------------
