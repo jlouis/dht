@@ -16,7 +16,7 @@
 -module(dht_routing_table).
 -include("dht_constants.hrl").
 
--export([new/1]).
+-export([new/1, new/3]).
 -export([
 	delete/2,
 	insert/2
@@ -53,11 +53,12 @@
 %% Create a new bucket list
 %%
 -spec new(dht:id()) -> t().
-new(Self) when is_integer(Self), Self >= 0 ->
-    InitialBucket = #bucket { low = ?MIN_ID, high = ?MAX_ID, members = [] },
+new(Self) -> new(Self, ?MIN_ID, ?MAX_ID).
+
+new(Self, Lo, Hi) when is_integer(Self), Self >= 0 ->
     #routing_table {
        self = Self,
-       table = [InitialBucket]
+       table = [#bucket { low = Lo, high = Hi, members = [] }]
     }.
 
 -spec node_id(t()) -> dht:id().
@@ -70,27 +71,22 @@ node_id(#routing_table { self = ID }) -> ID.
 %%
 -spec insert(dht:peer(), t()) -> t().
 insert({ID, _, _} = Node, #routing_table { self = Self, table = Buckets} = Tbl) ->
-    {Rest, Acc} = insert_node(dht_metric:d(Self, ID), Self, Node, Buckets, []),
-    Tbl#routing_table { table = lists:reverse(Acc) ++ Rest}.
+    Tbl#routing_table { table = insert_node(dht_metric:d(Self, ID), Self, Node, Buckets) }.
 
 %% The recursive runner for insertion
-insert_node(0, _Self, _Node, Buckets, Acc) -> {Buckets, Acc};
-insert_node(1, _Self, Node, [#bucket{ low = 0, high = 1, members = Members } = B], Acc) ->
-    {[B#bucket{ members = ordsets:add_element(Node, Members) }], Acc};
-insert_node(Dist, Self, Node, [#bucket{ low = Min, high = Max, members = Members} = B | Next], Acc)
+insert_node(0, _Self, _Node, Buckets) -> Buckets;
+insert_node(1, _Self, Node, [#bucket{ low = 0, high = 1, members = Members } = B]) ->
+    true = length(Members) < 8,
+    [B#bucket{ members = ordsets:add_element(Node, Members) }];
+insert_node(Dist, Self, Node, [#bucket{ low = Min, high = Max, members = Members} = B | Next])
 	when ?in_range(Dist, Min, Max) ->
     %% We analyze the numbers of members and either insert or split the bucket
     case length(Members) of
-      L when L < ?MAX_RANGE_SZ ->
-        {[B#bucket { members = ordsets:add_element(Node, Members) } | Next], Acc};
-      L when L == ?MAX_RANGE_SZ, Next /= [] ->
-        {[B | Next], Acc};
-      L when L == ?MAX_RANGE_SZ ->
-        Splitted = insert_split_bucket(B, Self),
-        insert_node(Dist, Self, Node, Splitted, Acc)
+          L when L < ?MAX_RANGE_SZ -> [B#bucket { members = ordsets:add_element(Node, Members) } | Next];
+          L when L == ?MAX_RANGE_SZ, Next /= [] -> [B | Next];
+          L when L == ?MAX_RANGE_SZ -> insert_node(Dist, Self, Node, insert_split_bucket(B, Self) ++ Next)
     end;
-insert_node(Dist, Self, Node, [H|T], Acc) ->
-    insert_node(Dist, Self, Node, T, [H|Acc]).
+insert_node(Dist, Self, Node, [H|T]) -> [H | insert_node(Dist, Self, Node, T)].
 
 insert_split_bucket(#bucket{ low = Min, high = Max, members = Members }, Self) ->
     Diff = Max - Min,
@@ -112,10 +108,10 @@ ranges(#routing_table { table = Entries }) ->
 %% TODO: Figure out why this is a necessary call!
 -spec range(dht:id(), t()) -> {dht:id(), dht:id()}.
 range(ID, #routing_table { self = Self, table = Buckets}) ->
-    range_search(dht_metric:d(ID, Self), Buckets).
-
-range_search(Dist, [#bucket{ low = Min, high = Max }|_]) when ?in_range(Dist, Min, Max) -> {Min, Max};
-range_search(Dist, [_|T]) ->range_search(Dist, T).
+    Dist = dht_metric:d(ID, Self),
+    S = fun(B) -> in_bucket(Dist, B) end,
+    #bucket { low = L, high = H } = retrieve(S, Buckets),
+    {L, H}.
 
 %%
 %% Delete a node from a bucket list
@@ -137,20 +133,20 @@ delete_node(Dist, Node, [H|T], Acc) ->
 %%
 %% TODO: Figure out why we are using the metric here as well.
 %% TODO: Call as members({range, Min, Max} | {node, Node}) to make search explicit.
-members(Range={_Min, _Max}, #routing_table { table = Buckets}) ->
-    members_by_range(Range, Buckets);
-members({ID, _, _}, #routing_table { self = Self, table = Buckets}) ->
-    members_by_id(dht_metric:d(ID, Self), Buckets).
-
-members_by_range({Min, Max}, [#bucket { low = Min, high = Max, members = Members }|_]) ->
-    Members;
-members_by_range({Min, Max}, [_|T]) -> members_by_range({Min, Max}, T).
-
-members_by_id(Dist, [#bucket { low = Min, high = Max, members = Members }|_])
-	when ?in_range(Dist, Min, Max) ->
-    Members;
-members_by_id(Dist, [_|T]) -> members_by_id(Dist, T).
-
+-spec members({range, Range} | {node, Node}, t()) -> [Node]
+	when
+	  Node :: dht:peer(),
+	  Range :: dht:range().
+members({range, {Min, Max}}, #routing_table { table = Buckets}) ->
+    S = fun(#bucket { low = Lo, high = Hi}) -> Lo == Min andalso Hi == Max end,
+    Target = retrieve(S, Buckets),
+    Target#bucket.members;    
+members({node, {ID, _, _}}, #routing_table { table = Buckets, self = Self }) ->
+    Dist = dht_metric:d(ID, Self),
+    S = fun(B) -> in_bucket(Dist, B) end,
+    #bucket { members = Members } = retrieve(S, Buckets),
+    Members.
+    
 %%
 %% Check if a node is a member of a bucket list
 %%
@@ -204,4 +200,15 @@ closest_to_2(Dist, ID, Num, [#bucket { members = Members }|T], NodeFilterF, Acc)
 -spec node_list(t()) -> [dht:peer()].
 node_list(#routing_table { table = Entries }) ->
     lists:flatmap(fun(B) -> B#bucket.members end, Entries).
+
+%% Retrieve an element from a list
+%% Precondition: The element is already in the list
+retrieve(F, [X|Xs]) ->
+    case F(X) of
+        true -> X;
+        false -> retrieve(F, Xs)
+    end.
+
+%% Given a distance to a target, is it the right bucket?
+in_bucket(Dist, #bucket { low = Lo, high = Hi }) -> ?in_range(Dist, Lo, Hi).
 

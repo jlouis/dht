@@ -106,8 +106,8 @@ delete_features(#state { nodes = Ns }, [Node], _R) ->
 %% Ask for members of a given ID
 %% Currently, we only ask for existing members, but this could also fault-inject
 %% -----------------------------
-members(ID) ->
-	routing_table:members(ID).
+members(Node) ->
+	routing_table:members(Node).
 
 nonexisting_id(IDs) ->
   ?SUCHTHAT({ID, _, _}, dht_eqc:peer(),
@@ -117,12 +117,12 @@ members_args(#state { nodes = Ns }) ->
     Node = frequency(
     	[{1, nonexisting_id(ids(Ns))}] ++
     	[{10, elements(Ns)} || Ns /= [] ]),
-    [Node].
+    [{node, Node}].
 
 members_post(_S, _A, Res) -> length(Res) =< 8.
     
-members_features(#state { nodes = Ns }, [ID], _Res) ->
-    case lists:member(ID, ids(Ns)) of
+members_features(#state { nodes = Ns }, [{node, Node}], _Res) ->
+    case lists:member(Node, ids(Ns)) of
         true -> ["R006: Members of an existing ID"];
         false -> ["R007: Members of a non-existing ID"]
     end.
