@@ -70,8 +70,8 @@ node_id(#routing_table { self = ID }) -> ID.
 %% TODO: Insertion should also provide evidence for what happened to buckets/ranges.
 %%
 -spec insert(dht:peer(), t()) -> t().
-insert({ID, _, _} = Node, #routing_table { self = Self, table = Buckets} = Tbl) ->
-    Tbl#routing_table { table = insert_node(dht_metric:d(Self, ID), Self, Node, Buckets) }.
+insert({ID, _, _} = Node, #routing_table { self = Self, table = Table} = Tbl) ->
+    Tbl#routing_table { table = insert_node(dht_metric:d(Self, ID), Self, Node, Table) }.
 
 %% The recursive runner for insertion
 insert_node(0, _Self, _Node, Buckets) -> Buckets;
@@ -107,26 +107,22 @@ ranges(#routing_table { table = Entries }) ->
 %%
 %% TODO: Figure out why this is a necessary call!
 -spec range(dht:id(), t()) -> {dht:id(), dht:id()}.
-range(ID, #routing_table { self = Self, table = Buckets}) ->
-    Dist = dht_metric:d(ID, Self),
-    S = fun(B) -> in_bucket(Dist, B) end,
-    #bucket { low = L, high = H } = retrieve(S, Buckets),
+range(ID, RT) ->
+    #bucket { low = L, high = H } = retrieve_d(ID, RT),
     {L, H}.
 
 %%
 %% Delete a node from a bucket list
 %%
 -spec delete(dht:peer(), t()) -> t().
-delete({ID, _, _} = Node, #routing_table { self = Self, table = RoutingTable} = Tbl) ->
-    {Rest, Acc} = delete_node(dht_metric:d(ID, Self), Node, RoutingTable, []),
-    Tbl#routing_table { table = lists:reverse(Acc) ++ Rest }.
+delete({ID, _, _} = Node, #routing_table { self = Self, table = Table} = Tbl) ->
+    Tbl#routing_table { table = delete_node(dht_metric:d(ID, Self), Node, Table) }.
 
-delete_node(_, _, [], Acc) -> {[], Acc};
-delete_node(Dist, Node, [#bucket { low = Min, high = Max, members = Members } = B|T], Acc)
+delete_node(Dist, Node, [#bucket { low = Min, high = Max, members = Members } = B|T])
 	when ?in_range(Dist, Min, Max) ->
-    {[B#bucket { members = ordsets:del_element(Node, Members) }|T], Acc};
-delete_node(Dist, Node, [H|T], Acc) ->
-    delete_node(Dist, Node, T, [H|Acc]).
+    [B#bucket { members = ordsets:del_element(Node, Members) }|T];
+delete_node(Dist, Node, [H|T]) -> [H | delete_node(Dist, Node, T)];
+delete_node(_, _, []) -> [].
 
 %%
 %% Return all members of the bucket that this node is a member of
@@ -137,35 +133,27 @@ delete_node(Dist, Node, [H|T], Acc) ->
 	when
 	  Node :: dht:peer(),
 	  Range :: dht:range().
-members({range, {Min, Max}}, #routing_table { table = Buckets}) ->
+members({range, {Min, Max}}, #routing_table { table = Table}) ->
     S = fun(#bucket { low = Lo, high = Hi}) -> Lo == Min andalso Hi == Max end,
-    Target = retrieve(S, Buckets),
+    Target = retrieve(S, Table),
     Target#bucket.members;    
-members({node, {ID, _, _}}, #routing_table { table = Buckets, self = Self }) ->
-    Dist = dht_metric:d(ID, Self),
-    S = fun(B) -> in_bucket(Dist, B) end,
-    #bucket { members = Members } = retrieve(S, Buckets),
+members({node, {ID, _, _}}, RT) ->
+    #bucket { members = Members } = retrieve_d(ID, RT),
     Members.
     
 %%
 %% Check if a node is a member of a bucket list
 %%
 -spec is_member(dht:peer(), t()) -> boolean().
-is_member({ID, _, _} = Node, #routing_table { self = Self, table = RoutingTable}) ->
-    is_member_search(dht_metric:d(Self, ID), Node, RoutingTable).
-
-is_member_search(_Dist, _Node, []) -> false;
-is_member_search(Dist, Node, [#bucket { low = Min, high = Max, members = Members } | _Tail])
-	when ?in_range(Dist, Min, Max) ->
-    lists:member(Node, Members);
-is_member_search(Dist, Node, [_|Tail]) -> is_member_search(Dist, Node, Tail).
+is_member({ID, _, _} = Node, RT) ->
+    #bucket { members = Members } = retrieve_d(ID, RT),
+    lists:member(Node, Members).
 
 %%
 %% Check if a range exists in a range list
 %%
 -spec is_range({dht:id(), dht:id()}, t()) -> boolean().
-is_range(Range, #routing_table { table = Entries}) ->
-    lists:member(Range, [{Min, Max} || #bucket { low = Min, high = Max } <- Entries]).
+is_range(Range, RT) -> lists:member(Range, ranges(RT)).
 
 -spec closest_to(dht:id(), fun ((dht:id()) -> boolean()), pos_integer(), t()) ->
                         list(dht:peer()).
@@ -211,4 +199,11 @@ retrieve(F, [X|Xs]) ->
 
 %% Given a distance to a target, is it the right bucket?
 in_bucket(Dist, #bucket { low = Lo, high = Hi }) -> ?in_range(Dist, Lo, Hi).
+
+%% Specialized retrieve on distance to an ID
+retrieve_d(ID, #routing_table { self = Self, table = Table }) ->
+    Dist = dht_metric:d(Self, ID),
+    S = fun(B) -> in_bucket(Dist, B) end,
+    retrieve(S, Table).
+
 

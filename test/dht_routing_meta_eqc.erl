@@ -171,7 +171,7 @@
 %%   think the specification handles this case and does the right thing :P
 %% • When inserting new nodes into the routing table they are set as unreachable. Is this correct?
 %%   we can implement the other behaviour by an immediate node touch, but…
-
+%% • dht_routing_table:is_range/2 should die!
 -module(dht_routing_meta_eqc).
 -compile(export_all).
 

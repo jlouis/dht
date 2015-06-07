@@ -3,7 +3,7 @@
 -compile(export_all).
 
 -include_lib("eqc/include/eqc.hrl").
--include_lib("eqc/include/eqc_statem.hrl").
+-include_lib("eqc/include/eqc_component.hrl").
 
 -record(state,
 	{ self,
