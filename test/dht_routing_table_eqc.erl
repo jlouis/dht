@@ -218,10 +218,9 @@ prop_seq() ->
         ok = routing_table:reset(Self),
         {H, S, R} = run_commands(?MODULE, Cmds),
         pretty_commands(?MODULE, Cmds, {H, S, R},
-            aggregate(with_title('Features'), call_features(H),
             aggregate(with_title('Commands'), command_names(Cmds),
             collect(eqc_lib:summary('Length'), length(Cmds),
-                R == ok))))
+                R == ok)))
       end))).
 
 t() ->

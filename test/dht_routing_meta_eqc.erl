@@ -760,38 +760,52 @@ fold_ranges_callouts(S, [T, [{add, R} | Ops]]) ->
 
 %% TODO: Split too large ranges!
 insert_node_callouts(S, [Node, T]) ->
-    { #{ lo := Lo, hi := Hi, nodes := Nodes }, _Rs} = take_range(S, Node),
-    case length(Nodes) +1 of
-        L when L >= ?K -> ?FAIL(range_too_large);
-        L when L == ?K ->
-           ?MATCH_GEN(P, choose(Lo+1, Hi-1)),
-           ?APPLY(split_range, [Node, P]),
-           ?APPLY(add_node_timer, [Node, T]);
-        L when L < ?K -> 
-           ?APPLY(add_node_timer, [Node, T])
-    end.
+    ?APPLY(split_range, [Node, T]),
+    ?APPLY(add_node_timer, [Node, T]).
 
 insert_node_next(S, _, [Node, _T]) ->
     { #{ nodes := Nodes } = R, Rs} = take_range(S, Node),
     NR = R#{ nodes := Nodes ++ [Node] },
     S#state{ tree = Rs ++ [NR] }.
 
-split_range_pre(S, [Node, P]) ->
+%% SPLIT_RANGE (Model internal call)
+%% ------------------------------
+
+%% This call is used by the model to figure out if a range needs to split when
+%% inserting a new node.
+split_range_callouts(S, [Node, T]) ->
+    { #{ split := Split, lo := Lo, hi := Hi, nodes := Nodes }, _Rs} = take_range(S, Node),
+    case length(Nodes) +1 of
+       L when L =< ?K ->
+           ?EMPTY;
+       L when L > ?K, Split ->
+           ?MATCH_GEN(P, choose(Lo+1, Hi-1)),
+           ?APPLY(perform_split, [Node, P]),
+           ?APPLY(split_range, [Node, T]);
+       L when L > ?K, not Split ->
+           ?EMPTY
+    end.
+
+%% PERFORM_SPLIT (Model Internal Call)
+%% --------------------------------------------
+
+%% Performing a split is a tool we use to actually split a range. The precondition is that
+%% we can only split a range if our own node falls within it.
+perform_split_pre(S, [Node, P]) ->
     { #{ lo := L, hi := H}, _Rs} = take_range(S, Node),
     within(L, P, H).
 
-split_range_callouts(#state { time = T } = S, [Node, P]) ->
+perform_split_callouts(#state { time = T } = S, [Node, P]) ->
     { #{ split := Split, lo := L, hi := H }, _Rs} = take_range(S, Node),
     case Split of
         true ->
             ?APPLY(remove_range_timer, [{L, H}]),
             ?APPLY(add_range_timer_at, [{L, P}, T]),
             ?APPLY(add_range_timer_at, [{P+1, H}, T]);
-        false ->
-            ?EMPTY
+        false -> ?FAIL(cannot_perform_split)
     end.
 
-split_range_next(#state { id = Own } = S, _, [Node, P]) ->
+perform_split_next(#state { id = Own } = S, _, [Node, P]) ->
     F = fun({ID, _, _}) -> ID =< P end,
     { #{ lo := L, hi := H, nodes := Nodes, split := Split }, Rs} = take_range(S, Node),
     Split = within(L, Own, H), %% Assert the state of the split
