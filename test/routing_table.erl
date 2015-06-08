@@ -1,7 +1,7 @@
 -module(routing_table).
 -behaviour(gen_server).
 
--export([start_link/1, reset/1, insert/1, ranges/0, range/1, delete/1, members/1, is_member/1, invariant/0, node_list/0, is_range/1, closest_to/3]).
+-export([start_link/1, reset/1, insert/1, ranges/0, range/1, delete/1, members/1, is_member/1, invariant/0, node_list/0, is_range/1, closest_to/3, node_id/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2, code_change/3]).
 
@@ -42,6 +42,9 @@ is_member(Node) ->
 node_list() ->
 	gen_server:call(?MODULE, node_list).
 
+node_id() ->
+	gen_server:call(?MODULE, node_id).
+
 is_range(B) ->
 	gen_server:call(?MODULE, {is_range, B}).
 
@@ -75,6 +78,8 @@ handle_call({is_member, Node}, _From, #state { table = RT } = State) ->
 	{reply, dht_routing_table:is_member(Node, RT), State};
 handle_call(node_list, _From, #state { table = RT } = State) ->
 	{reply, dht_routing_table:node_list(RT), State};
+handle_call(node_id, _From, #state { table = RT} = State) ->
+	{reply, dht_routing_table:node_id(RT), State};
 handle_call({is_range, B}, _From, #state { table = RT } = State) ->
 	{reply, dht_routing_table:is_range(B, RT), State};
 handle_call({closest_to, ID, Filter, Num}, _From, #state { table = RT } = State) ->

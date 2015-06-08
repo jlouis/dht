@@ -181,6 +181,7 @@ api_spec() ->
         #api_module {
           name = dht_routing_table,
           functions = [
+            #api_fun { name = new, arity = 1, classify = dht_routing_table_eqc },
             #api_fun { name = closest_to, arity = 4, classify = dht_routing_table_eqc },
             #api_fun { name = delete, arity = 2, classify = dht_routing_table_eqc },
             #api_fun { name = insert, arity = 2, classify = dht_routing_table_eqc },
@@ -283,7 +284,8 @@ initial_state() -> #state{}.
 %% When the system initializes,  the routing table may be loaded from disk. When
 %% that happens, we have to re-instate the timers by query of the routing table, and
 %% then construct those timers.
-new(Tbl) ->
+new(ID) ->
+    Tbl = dht_routing_table:new(ID),
     eqc_lib:bind(?DRIVER, fun(_T) ->
       {ok, ID, Routing} = dht_routing_meta:new(Tbl),
       {ok, ID, Routing}
@@ -294,13 +296,14 @@ new(Tbl) ->
 new_pre(S) -> not initialized(S).
 
 %% The atom `rt_ref` is the dummy-value for the routing table, because we mock it.
-new_args(_S) -> [rt_ref].
+new_args(#state { id = ID }) -> [ID].
 
 %% When new is called, the system calls out to the routing_table. We feed the
 %% Nodes and Ranges we generated into the system. The assumption is that
 %% these Nodes and Ranges are ones which are initialized via the internal calls
 %% init_range_timers and init_node_timers.
-new_callouts(#state { id = ID, time = T } = S, [rt_ref]) ->
+new_callouts(#state { id = ID, time = T } = S, [ID]) ->
+    ?CALLOUT(dht_routing_table, new, [ID], rt_ref),
     ?CALLOUT(dht_time, monotonic_time, [], T),
     ?CALLOUT(dht_routing_table, node_list, [rt_ref], current_nodes(S)),
     ?CALLOUT(dht_routing_table, node_id, [rt_ref], ID),
@@ -571,7 +574,8 @@ range_state_callouts(#state{ time = T } = S, [Range]) ->
                        ?MATCH(PickedID, ?CALLOUT(dht_rand, pick, [IDs], rand_pick(IDs))),
                        ?RET({needs_refresh, PickedID})
                    end
-            end
+            end;
+        Ret -> ?FAIL({wrong_result, Ret})
     end.
                    
 %% RESET_RANGE_TIMER
@@ -876,7 +880,7 @@ weight(_S, _) -> 100.
 prop_routing_correct() ->
     ?SETUP(fun() ->
         eqc_mocking:start_mocking(api_spec()),
-        fun() -> ok end
+        fun() -> eqc_mocking:stop_mocking() end
     end,
     ?FORALL(State, gen_state(),
     ?FORALL(Cmds, commands(?MODULE, State),
@@ -889,23 +893,6 @@ prop_routing_correct() ->
             R == ok)))
       end))).
 
-xprop_cluster_correct() ->
-    ?SETUP(fun() ->
-        eqc_mocking:start_mocking(eqc_cluster:api_spec(dht_low_level_routing_cluster)),
-        fun() -> ok end
-    end,
-    ?FORALL({TableState, MetaState}, {dht_routing_table_eqc:gen_state(), dht_routing_meta_eqc:gen_state()},
-    ?FORALL(Cmds, eqc_cluster:commands(dht_low_level_routing_cluster,[{dht_routing_meta_eqc, MetaState},{dht_routing_table_eqc, TableState}]),
-      begin
-        ok = eqc_lib:reset(?DRIVER),
-        ok = routing_table:reset(dht_routing_table_eqc:self(TableState)),
-        {H,S,R} = eqc_cluster:run_commands(dht_low_level_routing_cluster, Cmds),
-        pretty_commands(?MODULE, Cmds, {H,S,R},
-          collect(eqc_lib:summary('Length'), length(Cmds),
-          aggregate(command_names(Cmds),
-            R == ok)))
-      end))).
-    
 %% Helper for showing states of the output:
 t() -> t(5).
 
