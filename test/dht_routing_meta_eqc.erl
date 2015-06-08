@@ -2,49 +2,6 @@
 %%
 %% This model defines the rules for the DHTs timing state.
 %% 
-%% The system has call chain dht_state -> dht_routing -> dht_routing_table, where each
-%% stage is responsible for a particular thing. This model, for dht_routing, defines the rules
-%% for timers.
-%%
-%% A "routing" construction is a handle to the underlying routing table, together with
-%% timing for the nodes in the RT and the ranges in the RT. The purpose of this module
-%% is to provide a high-level view of the routing table, where each operation also tracks
-%% the timing state as meta-data:
-%%
-%% Ex. Adding a node to a routing table, introduces a new timing entry for that node, always.
-%%
-%% To track timing information, without really having a routing table, we mock the table.
-%% The table is always named `rt_ref' and all state of the table is tracked in the model state.
-%% The `dht_time' module is also mocked, and time is tracked in the model state. This allows
-%% us to test the routing/timing code under various assumptions about time and timing.
-%%
-%% The advantage of the splitting model is that when testing, we can use a much simpler routing
-%% table where every entry is known precisely. This means we can avoid having to model the
-%% routing table in detail, which is unwieldy for a lot of situations. In turn, this model overspecifies
-%% the routing table for the rest of the system, but since the actual routing table is a subset obeying
-%% the same commands, this idea works.
-%%
-%% NODES
-%% ======================================================
-%%
-%% Nodes can be defined to be in one of 3 possible states:
-%%
-%% • Good—we have succesfully communicated with the node recently
-%% • Questionable—we have not communicated with this node recently
-%% • Bad—we have tried communication with the node, but communication has systematically timed
-%%   out.
-%%
-%% so to handle a node correctly, we need to understand the differences in state among the nodes.
-%%
-%% We don't track the Node state with a timer. Rather, we note the last succesful point of
-%% communication. This means a simple calculation defines when a node becomes questionable,
-%% and thus needs a refresh.
-%%
-%% The reason we do it this way, is that all refreshes of nodes are event-driven: The node is
-%% refreshed whenever an event happens:
-%%
-%% • We communicate with the node and the communication is sucessful according to the rules.
-%% • We need to insert a node close to the node that needs refreshing.
 %%
 %% RANGES
 %% ======================================================
@@ -73,19 +30,6 @@
 %% Also, the last_activity is defined as the maximum value among its members for
 %% last activity. This is far easier to reason about than tracking a separate last_activity
 %% value for the range.
-%%
-%% MODEL IMPLEMENTATION:
-%% ======================================================
-%%
-%% The model uses a simple list to model the routing system.
-%%
-%% Time
-%% ====
-%% 
-%% The model uses time in milli_seconds rather than the native time resolution
-%% used by the real system. This means time conversion is a no-op when converting
-%% from native time to milli_seconds in the model.
-%%
 %%
 %% GENERAL RULES FROM BEP 0005:
 %% ======================================================
@@ -914,7 +858,7 @@ add_node_timer_next(#state { node_timers = NT } = State, _, [Node, Activity]) ->
 %%
 remove_node_timer_next(#state { node_timers = NT } = State, _, [Node]) ->
     State#state { node_timers = lists:keydelete(Node, 1, NT) }.
-    
+
 %% PROPERTY
 %% --------------------------------------------------
 

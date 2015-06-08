@@ -25,30 +25,62 @@ init_per_testcase(_Case, Config) ->
 end_per_testcase(_Case, _Config) ->
     ok.
 
-dht_group() -> [{eqc, [shuffle], [
-	check_routing_table_seq,
-	check_protocol_encoding,
-	check_routing_system_seq
+metric_group() -> [{metric, [shuffle], [
+	check_metric_refl,
+	check_metric_sym,
+	check_metric_triangle_ineq
+    ]}].
+    
+state_group() -> [{state, [shuffle], [
+	check_routing_table,
+	check_routing_meta,
+	check_state
+    ]}].
+    
+network_group() -> [{network, [shuffle], [
+	check_protocol_encoding
+    ]}].
+
+utility_group() -> [{utility, [shuffle], [
+	check_rand_pick
     ]}].
 
 groups() ->
-    [{basic, [shuffle], [dummy]}]
-    ++ dht_group().
+    lists:append([
+	utility_group(),
+	metric_group(),
+	state_group(),
+	network_group()
+    ]).
 
 all() ->
-  [{group, basic},
-   {group, eqc}].
+  [{group, utility},
+   {group, metric},
+   {group, state},
+   {group, network}].
 
 %% TESTS
 %% ----------------------------------------------------------------------------
-dummy(_Config) ->
-    ok.
+check_rand_pick(_Config) ->
+    ?quickcheck((dht_rand_eqc:prop_pick())).
 
-check_routing_table_seq(_Config) ->
+check_metric_refl(_Config) ->
+    ?quickcheck((dht_metric_eqc:prop_op_refl())).
+    
+check_metric_sym(_Config) ->
+    ?quickcheck((dht_metric_eqc:prop_op_sym())).
+    
+check_metric_triangle_ineq(_Config) ->
+    ?quickcheck((dht_metric_eqc:prop_op_triangle_ineq())).
+
+check_routing_table(_Config) ->
     ?quickcheck((dht_routing_table_eqc:prop_seq())).
 
 check_protocol_encoding(_Config) ->
     ?quickcheck((dht_proto_eqc:prop_iso_packet())).
 
-check_routing_system_seq(_Config) ->
+check_routing_meta(_Config) ->
     ?quickcheck((dht_routing_meta_eqc:prop_routing_correct())).
+    
+check_state(_Config) ->
+    ?quickcheck((dht_state_eqc:prop_state_correct())).

@@ -48,15 +48,3 @@ token() ->
     ?LET([L, U], [choose(0, 16#FFFF), choose(0, 16#FFFF)],
         <<L:16, U:16>>).
 
-%% Operation properties
-prop_op_refl() ->
-    ?FORALL(X, id(),
-        dht_metric:d(X, X) == 0).
-
-prop_op_sym() ->
-    ?FORALL({X, Y}, {id(), id()},
-        dht_metric:d(X, Y) == dht_metric:d(Y, X)).
-
-prop_op_triangle_ineq() ->
-    ?FORALL({X, Y, Z}, {id(), id(), id()},
-        dht_metric:d(X, Y) + dht_metric:d(Y, Z) >= dht_metric:d(X, Z)).
