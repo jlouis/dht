@@ -254,10 +254,8 @@ t() ->
 
 contiguous([]) -> true;
 contiguous([{_Min, _Max}]) -> true;
-contiguous([{_Low, M1}, {M2, High} | T]) when M1 == M2 ->
-  contiguous([{M2, High} | T]);
-contiguous([X, Y | _T]) ->
-  {error, X, Y}.
+contiguous([{_Low, M1}, {M2, High} | T]) when M1 == M2 -> contiguous([{M2, High} | T]);
+contiguous([X, Y | _T]) -> {error, X, Y}.
 
 has_nodes(#state { nodes = [] }) -> false;
 has_nodes(#state { nodes = [_|_] }) -> true.
@@ -268,6 +266,5 @@ has_deleted_nodes(#state { deleted = [_|_] }) -> true.
 ids(Nodes) ->
   [ID || {ID, _, _} <- Nodes].
 
-is_subset([X | Xs], Set) ->
-    lists:member(X, Set) andalso is_subset(Xs, Set);
+is_subset([X | Xs], Set) -> lists:member(X, Set) andalso is_subset(Xs, Set);
 is_subset([], _Set) -> true.
