@@ -78,6 +78,7 @@ We don't track the Node state with a timer. Rather, we note the last succesful p
 
 The reason we do it this way, is that all refreshes of nodes are event-driven: the node is refreshed whenever it communicates or when we want to use that node. So if we know the point-in-time for last communication, we can determine its internal state, be it `good`, `questionable`, or `bad`.
 
+TODO
 
 ### Ranges
 

@@ -181,16 +181,16 @@ api_spec() ->
         #api_module {
           name = dht_routing_table,
           functions = [
-            #api_fun { name = closest_to, arity = 4 },
-            #api_fun { name = delete, arity = 2 },
-            #api_fun { name = insert, arity = 2 },
-            #api_fun { name = is_member, arity = 2 },
-            #api_fun { name = is_range, arity = 2 },
-            #api_fun { name = members, arity = 2 },
-            #api_fun { name = node_id, arity = 1 },
-            #api_fun { name = node_list, arity = 1 },
-            #api_fun { name = range, arity = 2 },
-            #api_fun { name = ranges, arity = 1 }
+            #api_fun { name = closest_to, arity = 4, classify = dht_routing_table_eqc },
+            #api_fun { name = delete, arity = 2, classify = dht_routing_table_eqc },
+            #api_fun { name = insert, arity = 2, classify = dht_routing_table_eqc },
+            #api_fun { name = is_member, arity = 2, classify = dht_routing_table_eqc },
+            #api_fun { name = is_range, arity = 2, classify = dht_routing_table_eqc },
+            #api_fun { name = members, arity = 2, classify = dht_routing_table_eqc },
+            #api_fun { name = node_id, arity = 1, classify = dht_routing_table_eqc },
+            #api_fun { name = node_list, arity = 1, classify = dht_routing_table_eqc },
+            #api_fun { name = range, arity = 2, classify = dht_routing_table_eqc },
+            #api_fun { name = ranges, arity = 1, classify = dht_routing_table_eqc }
           ]}
        ]}.
 
@@ -274,6 +274,8 @@ gen_state() ->
         node_timers = [],
         range_timers = []
       }).
+
+initial_state() -> #state{}.
 
 %% NEW
 %% --------------------------------------------------
@@ -887,6 +889,23 @@ prop_routing_correct() ->
             R == ok)))
       end))).
 
+xprop_cluster_correct() ->
+    ?SETUP(fun() ->
+        eqc_mocking:start_mocking(eqc_cluster:api_spec(dht_low_level_routing_cluster)),
+        fun() -> ok end
+    end,
+    ?FORALL({TableState, MetaState}, {dht_routing_table_eqc:gen_state(), dht_routing_meta_eqc:gen_state()},
+    ?FORALL(Cmds, eqc_cluster:commands(dht_low_level_routing_cluster,[{dht_routing_meta_eqc, MetaState},{dht_routing_table_eqc, TableState}]),
+      begin
+        ok = eqc_lib:reset(?DRIVER),
+        ok = routing_table:reset(dht_routing_table_eqc:self(TableState)),
+        {H,S,R} = eqc_cluster:run_commands(dht_low_level_routing_cluster, Cmds),
+        pretty_commands(?MODULE, Cmds, {H,S,R},
+          collect(eqc_lib:summary('Length'), length(Cmds),
+          aggregate(command_names(Cmds),
+            R == ok)))
+      end))).
+    
 %% Helper for showing states of the output:
 t() -> t(5).
 

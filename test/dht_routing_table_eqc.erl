@@ -11,6 +11,11 @@
 	  deleted = []
     }).
 
+api_spec() ->
+    #api_spec {
+      language = erlang,
+      modules = []}.
+
 %% Generators
 %% ----------
 
@@ -31,10 +36,19 @@ range(Low, High) ->
             [return({Low, High})])}
   ]).
 
+gen_state() ->
+    ?LET(Self, dht_eqc:id(),
+        #state { self = Self }).
+
+initial_state() ->
+	#state { self = 0 }.
+
 %% Insertion of new entries into the routing table
 %% -----------------------------------------------
 insert(Node) ->
 	routing_table:insert(Node).
+
+insert_callers() -> [dht_routing_meta_eqc].
 	
 insert_args(#state {}) ->
     [dht_eqc:peer()].
@@ -50,6 +64,7 @@ insert_features(_State, _Args, _Return) ->
 ranges() ->
 	routing_table:ranges().
 	
+ranges_callers() -> [dht_routing_meta_eqc].
 ranges_args(_S) ->
 	[].
 
@@ -66,6 +81,7 @@ ranges_features(_S, _A, _Res) ->
 range(ID) ->
 	routing_table:range(ID).
 	
+range_callers() -> [dht_routing_meta_eqc].
 range_args(_S) ->
 	[dht_eqc:id()].
 	
@@ -78,6 +94,7 @@ range_features(_S, _A, _Res) ->
 delete(Node) ->
 	routing_table:delete(Node).
 	
+delete_callers() -> [dht_routing_meta_eqc].
 delete_pre(S) ->
 	has_nodes(S).
 
@@ -113,6 +130,7 @@ nonexisting_id(IDs) ->
   ?SUCHTHAT({ID, _, _}, dht_eqc:peer(),
       not lists:member(ID, IDs)).
 
+members_callers() -> [dht_routing_meta_eqc].
 members_args(#state { nodes = Ns }) ->
     Node = frequency(
     	[{1, nonexisting_id(ids(Ns))}] ++
@@ -132,6 +150,7 @@ members_features(#state { nodes = Ns }, [{node, Node}], _Res) ->
 is_member(Node) ->
     routing_table:is_member(Node).
 
+is_member_callers() -> [dht_routing_meta_eqc].
 is_member_pre(S) ->
 	has_nodes(S) orelse has_deleted_nodes(S).
 
@@ -155,6 +174,7 @@ is_member_features(#state { deleted = DNs}, [N], _Res) ->
 node_list() ->
     routing_table:node_list().
     
+node_list_callers() -> [dht_routing_meta_eqc].
 node_list_args(_S) ->
 	[].
 	
@@ -169,6 +189,7 @@ node_list_features(_S, _A, _R) ->
 is_range(B) ->
 	routing_table:is_range(B).
 	
+is_range_callers() -> [dht_routing_meta_eqc].
 is_range_args(_S) ->
 	[range()].
 
@@ -180,6 +201,7 @@ is_range_features(_S, _A, false) -> ["R012: Asking for a bucket which does not e
 closest_to(ID, Num) ->
 	routing_table:closest_to(ID, fun(_X) -> true end, Num).
 	
+closest_to_callers() -> [dht_routing_meta_eqc].
 closest_to_args(#state { }) ->
 	[dht_eqc:id(), nat()].
 
@@ -209,13 +231,14 @@ weight(_S, _Cmd) -> 1.
 
 %% Properties
 %% ----------
+self(#state { self = S }) -> S.
 
 prop_seq() ->
     ?SETUP(fun() -> ok, fun() -> ok end end,
-    ?FORALL(Self, dht_eqc:id(),
-    ?FORALL(Cmds, commands(?MODULE, #state { self = Self}),
+    ?FORALL(InitState, gen_state(),
+    ?FORALL(Cmds, commands(?MODULE, InitState),
       begin
-        ok = routing_table:reset(Self),
+        ok = routing_table:reset(InitState#state.self),
         {H, S, R} = run_commands(?MODULE, Cmds),
         pretty_commands(?MODULE, Cmds, {H, S, R},
             aggregate(with_title('Commands'), command_names(Cmds),
