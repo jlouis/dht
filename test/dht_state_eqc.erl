@@ -88,9 +88,12 @@ api_spec() ->
 %% INITIAL STATE
 %% -----------------------
 
+gen_initial_state(ID) -> #state { id = ID, init = false }.
+
 gen_initial_state() ->
-    ?LET(NodeID, dht_eqc:id(),
-      #state { id = NodeID, init = false }).
+    ?LET(NodeID, dht_eqc:id(), gen_initial_state(NodeID)).
+
+initial_state() -> #state{}.
 
 %% START_LINK
 %% -----------------------
@@ -109,7 +112,7 @@ start_link_args(#state { id = ID }) ->
 
 %% Starting the routing state tracker amounts to initializing the routing meta-data layer
 start_link_callouts(#state { id = ID }, [ID, []]) ->
-    ?CALLOUT(dht_routing_meta, new, [?WILDCARD], {ok, ID, rt_ref}),
+    ?CALLOUT(dht_routing_meta, new, [ID], {ok, ID, rt_ref}),
     ?RET(true).
 
 %% Once started, we can't start the State system again.

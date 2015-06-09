@@ -17,7 +17,8 @@ prop_cluster_correct() ->
         eqc_mocking:start_mocking(api_spec()),
         fun() -> eqc_mocking:stop_mocking() end
     end,
-    ?FORALL({StartState, MetaState}, {dht_state:gen_initial_state(), dht_routing_meta:gen_state()},
+    ?FORALL(MetaState, dht_routing_meta_eqc:gen_state(),
+    ?FORALL(StartState, dht_state_eqc:gen_initial_state(dht_routing_meta_eqc:self(MetaState)),
     ?FORALL(Cmds, eqc_cluster:commands(?MODULE, [
     		{dht_state_eqc, StartState},
     		{dht_routing_meta_eqc, MetaState}]),
@@ -29,6 +30,6 @@ prop_cluster_correct() ->
           collect(eqc_lib:summary('Length'), length(Cmds),
           aggregate(command_names(Cmds),
             R == ok)))
-      end))).
+      end)))).
     
         

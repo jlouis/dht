@@ -307,8 +307,8 @@ new_args(#state { id = ID }) -> [ID].
 new_callouts(#state { id = ID, time = T } = S, [ID]) ->
     ?CALLOUT(dht_routing_table, new, [ID], rt_ref),
     ?CALLOUT(dht_time, monotonic_time, [], T),
-    ?CALLOUT(dht_routing_table, node_list, [rt_ref], current_nodes(S)),
-    ?CALLOUT(dht_routing_table, node_id, [rt_ref], ID),
+    ?CALLOUT(dht_routing_table, node_list, [?WILDCARD], current_nodes(S)),
+    ?CALLOUT(dht_routing_table, node_id, [?WILDCARD], ID),
     ?APPLY(init_range_timers, [current_ranges(S)]),
     ?APPLY(init_nodes, [current_nodes(S)]),
     ?RET(ID).
@@ -377,7 +377,7 @@ is_member_args(_S) -> [peer(), dummy].
     
 %% This is simply a forward to the underlying routing table, so it should return whatever
 %% The RT returns.
-is_member_callouts(S, [Node, dummy]) ->
+is_member_callouts(S, [Node, _]) ->
     ?MATCH(R, ?CALLOUT(dht_routing_table, is_member, [Node, ?WILDCARD],
         lists:member(Node, current_nodes(S)))),
     ?RET(R).
