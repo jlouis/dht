@@ -46,6 +46,8 @@ Time is often a problem in models because the system runs on a different time sc
 
 *NOTE:* We use a time resolution of `milli_seconds` for the models and we assume this is the “native” time resolution. This makes it easier to handle rather than the nano-second default which is used on the system by default.
 
+All time in the system is `monotonic_time()`. This makes all of the code time-warp-safe.
+
 ## Routing table
 
 Routing ID's are positive integers. They have a digital bit-representation as lists of bits. These bits form a binary tree structure. The routing table is such a “path” in such a binary tree, considering a prefix of the bit-string. The rules are:
@@ -76,6 +78,25 @@ A node can be in one of three possible states:
 
 Of course, “recently” and “repeatedly” has to be defined. We define the timeout limit to be 15 minutes and we define that nodes which have failed MORE THAN 1 time are bad nodes. These numbers could be changed, but they are not well-defined.
 
+The meta-data tracks nodes with the following map:
+
+	Node => #{ last_activity => time_point(), timeout_count => non_neg_integer(), reachability => boolean() }
+	
+Where:
+
+* `last_activity` encodes when we last had (valid) activity with the node as a point in time.
+* `timeout_count` measures how many timeouts we've had since the last succesful communication
+* `reachability` encodes if the node has ever replied to one of our queries. If it has, then this field is true. We use the field to track which nodes are behind firewalls and which are not.
+
+This means that for any point in time τ, we can measure the age(T) = τ-T, and
+check if the age is larger than, say, ?NODE_TIMEOUT. This defines when a node is
+questionable. The timeout_count defines a bad node, if it grows too large.
+
+The meta-data tracks ranges as a single map `Range => #{ timer => timer_ref() }`. When this timer triggers,
+we can use the current members of the range and their last activity points. The maximal such value defines the current `age(lists:max(LastActivities))` of the range.
+
+TODO: What do we do with a range where `Members = []`? I think we should think about this. Obvious candidates for a value is `monotonic_time()` and `monotinic_time() - convert_time_unit(?NODE_TIMEOUT, milli_seconds, native)`. But the right choice depends on many small things.
+
 ### Nodes
 
 We don't track the Node state with a timer. Rather, we note the last succesful point of communication. This means a simple calculation defines when a node becomes questionable, and thus needs a refresh.
@@ -88,4 +109,4 @@ TODO
 
 TODO
 
-
+• TODO: Describe the important notion of when "next-to-refresh" a range.
