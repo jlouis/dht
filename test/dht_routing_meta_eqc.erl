@@ -291,6 +291,8 @@ new(ID) ->
       {ok, ID, Routing}
     end).
 
+new_callers() -> [dht_state_eqc].
+
 %% You can only initialize once, so the system is not allowed to be initialized
 %% if it already is.
 new_pre(S) -> not initialized(S).
@@ -328,21 +330,23 @@ new_next(State, _, _) -> State#state { init = true }.
 
 %% Insertion returns `{R, S}' where `S' is the new state and `R' is the response. We
 %% check the response is in accordance with what we think.
-insert(Node) ->
+insert(Node, _) ->
     eqc_lib:bind(?DRIVER,
       fun(T) ->
           {R, S} = dht_routing_meta:insert(Node, T),
           {ok, R, S}
       end).
 
+insert_callers() -> [dht_state_eqc].
+
 %% You can only insert data when the system has been initialized.
 insert_pre(S) -> initialized(S).
 
 %% Any peer is eligible for insertion at any time. There are no limits on how and when
 %% you can do this insertion.
-insert_args(_S) -> [peer()].
+insert_args(_S) -> [peer(), dummy].
 
-insert_pre(S, [Peer]) ->
+insert_pre(S, [Peer, dummy]) ->
     initialized(S) andalso (not has_peer(Peer, S)).
 
 %% We `adjoin' the Node to the routing table, which is addressed as a separate
@@ -351,7 +355,7 @@ insert_pre(S, [Peer]) ->
 %% TODO: Go through this, it may be wrong.
 %% TODO list:
 %% • The bucket may actually split more than once in this call, and we don't track it!
-insert_callouts(_S, [Node]) ->
+insert_callouts(_S, [Node, dummy]) ->
     ?MATCH(R, ?APPLY(adjoin, [Node])),
     case R of
         ok -> ?RET(ok);
@@ -362,17 +366,19 @@ insert_callouts(_S, [Node]) ->
 %% --------------------------------------------------
 
 %% Ask if a given node is a member of the Routing Table.
-is_member(Node) ->
+is_member(Node, _) ->
     eqc_lib:bind(?DRIVER, fun(T) -> {ok, dht_routing_meta:is_member(Node, T), T} end).
+
+is_member_callers() -> [dht_state_eqc].
 
 is_member_pre(S) -> initialized(S).
 
-is_member_args(_S) -> [peer()].
+is_member_args(_S) -> [peer(), dummy].
     
 %% This is simply a forward to the underlying routing table, so it should return whatever
 %% The RT returns.
-is_member_callouts(S, [Node]) ->
-    ?MATCH(R, ?CALLOUT(dht_routing_table, is_member, [Node, rt_ref],
+is_member_callouts(S, [Node, dummy]) ->
+    ?MATCH(R, ?CALLOUT(dht_routing_table, is_member, [Node, ?WILDCARD],
         lists:member(Node, current_nodes(S)))),
     ?RET(R).
 
@@ -382,15 +388,17 @@ is_member_callouts(S, [Node]) ->
 %% Neighbours returns the K nodes which are closest to a given node in
 %% the routing table. We just verify that the call is correct with respect to
 %% the system.
-neighbors(ID, K) ->
+neighbors(ID, K, _) ->
     eqc_lib:bind(?DRIVER,
       fun(T) ->
           {ok, dht_routing_meta:neighbors(ID, K, T), T}
       end).
+
+neighbors_callers() -> [dht_state_eqc].
       
 neighbors_pre(S) -> initialized(S).
 
-neighbors_args(_S) -> [id(), nat()].
+neighbors_args(_S) -> [id(), nat(), dummy].
 
 %% Neighbors calls out twice currently, because it has two filter functions it runs in succession.
 %% First it queries for the known good nodes, and then it queries for the questionable nodes.
@@ -398,9 +406,9 @@ neighbors_args(_S) -> [id(), nat()].
 %% Note that we don't care if we return the right nodes here. We are only interested in the
 %% behavior of this call, and assumes that the routing table underneath is doing the right
 %% thing.
-neighbors_callouts(S, [ID, K]) ->
+neighbors_callouts(S, [ID, K, _]) ->
     ?MATCH(GoodNodes,
-      ?CALLOUT(dht_routing_table, closest_to, [ID, ?WILDCARD, K, rt_ref],
+      ?CALLOUT(dht_routing_table, closest_to, [ID, ?WILDCARD, K, ?WILDCARD],
     	  rt_nodes(S))),
     case GoodNodes of
        GoodNodes when length(GoodNodes) == K -> ?RET(GoodNodes);
@@ -416,39 +424,43 @@ neighbors_callouts(S, [ID, K]) ->
 %%
 %% Node list is a proxy forward to the node_list call of the routing table
 
-node_list() ->
+node_list(_) ->
     eqc_lib:bind(?DRIVER, fun(T) -> {ok, dht_routing_meta:node_list(T), T} end).
     
+node_list_callers() -> [dht_state_eqc].
+
 node_list_pre(S) -> initialized(S).
 	
-node_list_args(_S) -> [].
+node_list_args(_S) -> [dummy].
 
-node_list_callouts(S, []) ->
+node_list_callouts(S, [_]) ->
     ?MATCH(R, ?CALLOUT(dht_routing_table, node_list, [rt_ref], rt_nodes(S))),
     ?RET(R).
     
 %% NODE_STATE
 %% --------------------------------------------------
 
-node_state(Nodes) ->
+node_state(Nodes, _) ->
     eqc_lib:bind(?DRIVER,
       fun(T) -> {ok, dht_routing_meta:node_state(Nodes, T), T}
     end).
+
+node_state_callers() -> [dht_state_eqc].
     
 node_state_pre(S) -> initialized(S) andalso has_nodes(S).
 
 %% We currently generate output for known nodes only. The obvious
 %% thing to do when a node is unknown is to ignore it.
 %% TODO: Send in unknown nodes.
-node_state_args(S) -> [rt_nodes(S)].
+node_state_args(S) -> [rt_nodes(S), dummy].
 
-node_state_pre(S, [Nodes]) ->
+node_state_pre(S, [Nodes, _]) ->
     Current = current_nodes(S),
     lists:all(fun(N) -> lists:member(N, Current) end, Nodes).
     
 %% We simply expect this call to carry out queries on each given node in the member list.
 %% And we expect the return to be computed in the same order as the query itself.
-node_state_callouts(#state { time = T, node_timers = NTs }, [Nodes]) ->
+node_state_callouts(#state { time = T, node_timers = NTs }, [Nodes, _]) ->
     Returns = [node_state_value(T, lists:keyfind(N, 1, NTs)) || N <- Nodes],
     ?SEQ(
       [case R of
@@ -465,20 +477,22 @@ node_state_callouts(#state { time = T, node_timers = NTs }, [Nodes]) ->
 %% The node_timeout/2 call is invoked whenever a node doesn't respond within the allotted
 %% time. The policy is, that the nodes ends up with a bad state once it has increased its timer
 %% enough times.
-node_timeout(Node) ->
+node_timeout(Node, _) ->
     eqc_lib:bind(?DRIVER,
       fun(T) ->
         {ok, ok, dht_routing_meta:node_timeout(Node, T)}
       end).
+
+node_timeout_callers() -> [dht_state_eqc].
       
 node_timeout_pre(S) -> initialized(S) andalso has_nodes(S).
 
-node_timeout_args(S) -> [rt_node(S)].
+node_timeout_args(S) -> [rt_node(S), dummy].
 
-node_timeout_callouts(_S, [_Node]) ->
+node_timeout_callouts(_S, [_Node, _]) ->
     ?RET(ok).
 
-node_timeout_next(#state { node_timers = NT } = S, _, [Node]) ->
+node_timeout_next(#state { node_timers = NT } = S, _, [Node, _]) ->
     {Node, LA, Count, Reachable} = lists:keyfind(Node, 1, NT),
     S#state { node_timers = lists:keyreplace(Node, 1, NT, {Node, LA, Count+1, Reachable}) }.
 
@@ -487,22 +501,26 @@ node_timeout_next(#state { node_timers = NT } = S, _, [Node]) ->
 
 %% Returns the members of given node range.
 %%
-range_members(Node) ->
+range_members(Node, _) ->
     eqc_lib:bind(?DRIVER, fun(T) -> {ok, dht_routing_meta:range_members(Node, T), T} end).
+
+range_members_callers() -> [dht_state_eqc].
 
 range_members_pre(S) -> initialized(S).
 
 range_members_args(S) ->
     NodeOrRange = oneof([peer(), rt_range(S)]),
-    [NodeOrRange].
+    [NodeOrRange, dummy].
 
 %% This is simply a forward to the underlying routing table, so it should return whatever
 %% The RT returns.
-range_members_callouts(S, [{Lo, Hi} = Range]) ->
-    ?MATCH(R, ?CALLOUT(dht_routing_table, members, [Range, rt_ref], nodes_in_range(S, {Lo, Hi}))),
+range_members_callouts(S, [{Lo, Hi} = Range, _]) ->
+    ?MATCH(R, ?CALLOUT(dht_routing_table, members, [Range, ?WILDCARD],
+    		nodes_in_range(S, {Lo, Hi}))),
     ?RET(R);
-range_members_callouts(S, [{ID, _, _} = Node]) ->
-    ?MATCH(R, ?CALLOUT(dht_routing_table, members, [Node, rt_ref], nodes_in_range(S, ID))),
+range_members_callouts(S, [{ID, _, _} = Node, _]) ->
+    ?MATCH(R, ?CALLOUT(dht_routing_table, members, [Node, ?WILDCARD],
+    		nodes_in_range(S, ID))),
     ?RET(R).
 
 %% NODE_TOUCH
@@ -511,25 +529,27 @@ range_members_callouts(S, [{ID, _, _} = Node]) ->
 %% Refreshing a node means that the node had activity. In turn, its timer
 %% structure should be refreshed when this happens. The transition is that
 %% we remove the old timer and install a new timer at a future point in time.
-node_touch(Node, Opts) ->
+node_touch(Node, Opts, _) ->
     eqc_lib:bind(?DRIVER,
         fun(T) ->
             R = dht_routing_meta:node_touch(Node, Opts, T),
             {ok, ok, R}
         end).
+
+node_touch_callers() -> [dht_state_eqc].
         
 node_touch_pre(S) -> initialized(S) andalso has_nodes(S).
 
-node_touch_args(S) -> [rt_node(S), #{ reachable => bool() }].
+node_touch_args(S) -> [rt_node(S), #{ reachable => bool() }, dummy].
 
-node_touch_callouts(#state { time = T }, [_Node, _Opts]) ->
+node_touch_callouts(#state { time = T }, [_Node, _Opts, _]) ->
     ?CALLOUT(dht_time, monotonic_time, [], T),
     ?RET(ok).
 
 %% Refreshing a node depends on its current reachability and if the new refresh is for a
 %% reply, in which case the node is reachable. If the node is not reachable, this is a no-op.
 %% and if the node is reachable, the backend structure is updated.
-node_touch_next(#state { node_timers = NTs, time = T } = S, _, [Node, #{ reachable := R2}]) ->
+node_touch_next(#state { node_timers = NTs, time = T } = S, _, [Node, #{ reachable := R2}, _]) ->
     {_, _, _, R1} = lists:keyfind(Node, 1, NTs),
     case R1 or R2 of
         false -> S;
@@ -539,11 +559,13 @@ node_touch_next(#state { node_timers = NTs, time = T } = S, _, [Node, #{ reachab
 %% RANGE_STATE
 %% --------------------------------------------------
 
-range_state(Range) ->
+range_state(Range, _) ->
     eqc_lib:bind(?DRIVER,
       fun(T) ->
           {ok, dht_routing_meta:range_state(Range, T), T}
       end).
+
+range_state_callers() -> [dht_state_eqc].
       
 range_state_pre(S) -> initialized(S).
 
@@ -552,15 +574,15 @@ range_state_args(S) ->
         {10, rt_range(S)},
         {1, range()}
     ]),
-    [Range].
+    [Range, dummy].
 
-range_state_callouts(#state{ time = T } = S, [Range]) ->
+range_state_callouts(#state{ time = T } = S, [Range, _]) ->
     ?MATCH(IsRange, ?CALLOUT(dht_routing_table, is_range, [Range, rt_ref],
         lists:member(Range, current_ranges(S)))),
     case IsRange of
         false -> ?RET({error, not_member});
         true ->
-            ?MATCH(Members, ?APPLY(range_members, [Range])),
+            ?MATCH(Members, ?APPLY(range_members, [Range, dummy])),
             ?CALLOUT(dht_time, monotonic_time, [], T),
             case last_active(S, Members) of
                {error, Reason} -> ?FAIL({error, Reason});
@@ -585,24 +607,26 @@ range_state_callouts(#state{ time = T } = S, [Range]) ->
 %% a rule which says this can only happen once the timer has triggered.
 %%
 %% NOTE: this is an assumed precondition.
-reset_range_timer(Range, Opts) ->
+reset_range_timer(Range, Opts, _) ->
     eqc_lib:bind(?DRIVER,
         fun(T) ->
           R = dht_routing_meta:reset_range_timer(Range, Opts, T),
           {ok, ok, R}
         end).
 
+reset_range_timer_callers() -> [dht_state_eqc].
+
 reset_range_timer_pre(S) -> initialized(S).
 
 reset_range_timer_args(S) ->
-    [rt_range(S), #{ force => bool() }].
+    [rt_range(S), #{ force => bool() }, dummy].
 
-reset_range_timer_callouts(#state { time = T }, [Range, #{ force := true }]) ->
+reset_range_timer_callouts(#state { time = T }, [Range, #{ force := true }, _]) ->
     ?CALLOUT(dht_time, monotonic_time, [], T),
     ?APPLY(remove_range_timer, [Range]),
     ?APPLY(add_range_timer_at, [Range, T]),
     ?RET(ok);
-reset_range_timer_callouts(_S, [Range, #{ force := false }]) ->
+reset_range_timer_callouts(_S, [Range, #{ force := false }, _]) ->
     ?MATCH(A, ?APPLY(range_last_activity, [Range])),
     ?APPLY(remove_range_timer, [Range]),
     ?APPLY(add_range_timer_at, [Range, A]),
@@ -778,7 +802,7 @@ take_range([R | Rs], ID, Acc) -> take_range(Rs, ID, [R | Acc]).
 rev_append([], Ls) -> Ls;
 rev_append([S|Ss], Ls) -> rev_append(Ss, [S|Ls]).
 
-%% ADVANCING TIME (Internal call)
+%% ADVANCING TIME (MODEL)
 %% --------------------------------------------------
 
 %% Time is part of the model state, and is represented as milli_seconds,

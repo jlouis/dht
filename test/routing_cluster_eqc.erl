@@ -1,4 +1,4 @@
--module(dht_low_level_routing_cluster).
+-module(routing_cluster_eqc).
 
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_cluster.hrl").

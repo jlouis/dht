@@ -48,22 +48,22 @@ api_spec() ->
 		  	#api_module {
 		  		name = dht_routing_meta,
 		  		functions = [
-		  			#api_fun { name = new, arity = 1 },
-		  			#api_fun { name = export, arity = 1 },
+		  			#api_fun { name = new, arity = 1, classify = dht_routing_meta_eqc },
+		  			#api_fun { name = export, arity = 1, classify = dht_routing_meta_eqc },
 		  			
-		  			#api_fun { name = insert, arity = 2 },
-		  			#api_fun { name = replace, arity = 3 },
-		  			#api_fun { name = remove, arity = 2 },
-		  			#api_fun { name = node_touch, arity = 3 },
-		  			#api_fun { name = node_timeout, arity = 2 },
-		  			#api_fun { name = reset_range_timer, arity = 3 },
+		  			#api_fun { name = insert, arity = 2, classify = dht_routing_meta_eqc },
+		  			#api_fun { name = replace, arity = 3, classify = dht_routing_meta_eqc },
+		  			#api_fun { name = remove, arity = 2, classify = dht_routing_meta_eqc },
+		  			#api_fun { name = node_touch, arity = 3, classify = dht_routing_meta_eqc },
+		  			#api_fun { name = node_timeout, arity = 2, classify = dht_routing_meta_eqc },
+		  			#api_fun { name = reset_range_timer, arity = 3, classify = dht_routing_meta_eqc },
 		  		
-		  			#api_fun { name = is_member, arity = 2 },
-		  			#api_fun { name = neighbors, arity = 3 },
+		  			#api_fun { name = is_member, arity = 2, classify = dht_routing_meta_eqc },
+		  			#api_fun { name = neighbors, arity = 3, classify = dht_routing_meta_eqc },
 		  			#api_fun { name = node_list, arity = 1},
-		  			#api_fun { name = node_state, arity = 2 },
-		  			#api_fun { name = range_members, arity = 2 },
-		  			#api_fun { name = range_state, arity = 2}
+		  			#api_fun { name = node_state, arity = 2, classify = dht_routing_meta_eqc },
+		  			#api_fun { name = range_members, arity = 2, classify = dht_routing_meta_eqc },
+		  			#api_fun { name = range_state, arity = 2, classify = dht_routing_meta_eqc }
 		  		]
 		  	},
 		  	#api_module {
