@@ -46,6 +46,12 @@ api_spec() ->
 		modules =
 		  [
 		  	#api_module {
+		  		name = dht_routing_table,
+		  		functions = [
+		  			#api_fun { name = new, arity = 1, classify = dht_routing_table_eqc }
+		  		]
+		  	},
+		  	#api_module {
 		  		name = dht_routing_meta,
 		  		functions = [
 		  			#api_fun { name = new, arity = 1, classify = dht_routing_meta_eqc },
@@ -112,7 +118,9 @@ start_link_args(#state { id = ID }) ->
 
 %% Starting the routing state tracker amounts to initializing the routing meta-data layer
 start_link_callouts(#state { id = ID }, [ID, []]) ->
-    ?CALLOUT(dht_routing_meta, new, [ID], {ok, ID, rt_ref}),
+    ?SEQ(
+      ?CALLOUT(dht_routing_table, new, [ID], rt_ref_2),
+      ?CALLOUT(dht_routing_meta, new, [?WILDCARD], {ok, ID, rt_ref})),
     ?RET(true).
 
 %% Once started, we can't start the State system again.

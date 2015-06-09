@@ -21,7 +21,7 @@ prop_cluster_correct() ->
     ?FORALL(Cmds, eqc_cluster:commands(?MODULE,[{dht_routing_meta_eqc, MetaState}]),
       begin
         ok = eqc_lib:reset(?DRIVER),
-        {H,S,R} = eqc_cluster:run_commands(?MODULE, Cmds),
+        {H,S,R} = run_commands(?MODULE, Cmds),
         pretty_commands(?MODULE, Cmds, {H,S,R},
           collect(eqc_lib:summary('Length'), length(Cmds),
           aggregate(command_names(Cmds),

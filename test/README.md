@@ -16,6 +16,10 @@ For each Erlang module, we define a *component* which has a *mocking* *specifica
 
 Once we have all components, we assemble them into a cluster. Now, the mocking specifications are replaced with actual models. In turn, a callout to a mock can now be verified by the preconditions of the underlying model. This ensures the composition of components are safe.
 
+# Test Model
+
+In the real system, the ID-space used is 160 bit (SHA-1) or 256 bit (SHA-256). In our test case, in order to hit limits faster, we pick an ID-space of 7 bit (128 positions). This allows us to find corner cases much faster and it is also more likely we hit counterexamples earlier.
+
 # Specification
 
 In order to make sure the code performs as defined in the DHT BitTorrent BEP 0005 spec, this code defines a model of the specification which is executed against the DHT code. Using QuickCheck, random test cases are generated from the specification and are then used as tests. Usually, 100 randomly generated test cases are enough to uncover errors in the system, but before releases we run test cases for much larger counts: hundreds of thousands to millions.

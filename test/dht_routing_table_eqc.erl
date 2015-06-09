@@ -48,7 +48,7 @@ initial_state() ->
 new(Self) ->
     routing_table:reset(Self).
 
-new_callers() -> [dht_routing_meta_eqc].
+new_callers() -> [dht_state_eqc, dht_routing_meta_eqc].
 new_pre(S) -> not initialized(S).
 new_args(_S) -> [dht_eqc:id()].
 

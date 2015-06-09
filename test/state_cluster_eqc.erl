@@ -7,7 +7,8 @@
 
 components() -> [
 	dht_state_eqc,
-	dht_routing_meta_eqc
+	dht_routing_meta_eqc,
+	dht_routing_table_eqc
 ].
 
 api_spec() -> api_spec(?MODULE).

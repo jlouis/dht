@@ -4,12 +4,12 @@
 
 -include_lib("eqc/include/eqc.hrl").
 
+-include("dht_eqc.hrl").
+
 %% Generators
 id(Min, Max) -> choose(Min, Max).
 
-id() ->
-    ?LET(<<ID:160>>, binary(20),
-        ID).
+id() -> id(?ID_MIN, ?ID_MAX).
 
 ip() -> ipv4_address(). %% ipv6 support later :P
     
@@ -36,13 +36,10 @@ tag() ->
         <<ID:16>>).
 
 unique_id_pair() ->
-    ?SUCHTHAT({X, Y}, {id(), id()},
+    ?SUCHTHAT([X, Y], [id(), id()],
       X /= Y).
 
-range() ->
-    ?LET({X, Y}, unique_id_pair(),
-      {min(X,Y),
-       max(X,Y)}).
+range() -> ?LET([X, Y], unique_id_pair(), list_to_tuple(lists:sort([X,Y]))).
 
 token() ->
     ?LET([L, U], [choose(0, 16#FFFF), choose(0, 16#FFFF)],
