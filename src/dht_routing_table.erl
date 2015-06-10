@@ -30,7 +30,6 @@
 	members/2,
 	node_id/1,
 	node_list/1,
-	range/2,
 	ranges/1
 ]).
 
@@ -101,15 +100,6 @@ insert_split_bucket(#bucket{ low = Min, high = Max, members = Members }, Self) -
 -spec ranges(t()) -> list({dht:id(), dht:id()}).
 ranges(#routing_table { table = Entries }) ->
     [{Min, Max} || #bucket{ low = Min, high = Max } <- Entries].
-
-%%
-%% Return the range in which the distance ||ID - Self|| falls within
-%%
-%% TODO: Figure out why this is a necessary call!
--spec range(dht:id(), t()) -> {dht:id(), dht:id()}.
-range(ID, RT) ->
-    #bucket { low = L, high = H } = retrieve_d(ID, RT),
-    {L, H}.
 
 %%
 %% Delete a node from a bucket list

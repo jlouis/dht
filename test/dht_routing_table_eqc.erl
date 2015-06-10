@@ -103,22 +103,6 @@ ranges_return(S, [_Dummy]) ->
 ranges_features(_S, _A, _Res) ->
     ["RANGES001: Ask for the current ranges in the routing table"].
 
-%% Ask in what range a random ID falls in
-%% --------------------------------------
-range(ID, _) ->
-    routing_table:range(ID).
-    
-range_callers() -> [dht_routing_meta_eqc].
-range_pre(S) -> initialized(S).
-range_args(_S) -> [dht_eqc:id(), 'ROUTING_TABLE'].
-    
-range_return(S, [ID, _Tbl]) ->
-    [Range] = [{Lo, Hi} || {Lo, Hi} <- current_ranges(S), between(Lo, ID, Hi)],
-    Range.
-
-range_features(_S, _A, _Res) ->
-    ["RANGE001: Asking for a range for a random ID"].
-
 %% Delete a node from the routing table
 %% If the node is not present, this is a no-op.
 %% ------------------------------------

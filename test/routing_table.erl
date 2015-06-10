@@ -3,7 +3,7 @@
 
 -include("dht_eqc.hrl").
 
--export([start_link/1, reset/1, insert/1, ranges/0, range/1, delete/1, members/1, is_member/1, invariant/0, node_list/0, is_range/1, closest_to/3, node_id/0]).
+-export([start_link/1, reset/1, insert/1, ranges/0, delete/1, members/1, is_member/1, invariant/0, node_list/0, is_range/1, closest_to/3, node_id/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2, code_change/3]).
 
@@ -28,9 +28,6 @@ insert(Node) ->
 
 ranges() ->
 	gen_server:call(?MODULE, ranges).
-
-range(ID) ->
-	gen_server:call(?MODULE, {range, ID}).
 
 delete(Node) ->
 	gen_server:call(?MODULE, {delete, Node}).
@@ -68,8 +65,6 @@ handle_call({reset, Self}, _From, State) ->
 	{reply, ok, State#state { table = dht_routing_table:new(Self, ?ID_MIN, ?ID_MAX) }};
 handle_call(ranges, _From, #state { table = RT } = State) ->
 	{reply, dht_routing_table:ranges(RT), State};
-handle_call({range, ID}, _From, #state{ table = RT } = State) ->
-	{reply, dht_routing_table:range(ID, RT), State};
 handle_call({insert, Node}, _From, #state { table = RT } = State) ->
 	{reply, 'ROUTING_TABLE', State#state { table = dht_routing_table:insert(Node, RT) }};
 handle_call({delete, Node}, _From, #state { table = RT } = State) ->

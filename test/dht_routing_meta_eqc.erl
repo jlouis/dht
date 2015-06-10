@@ -193,7 +193,6 @@ api_spec() ->
             #api_fun { name = members, arity = 2, classify = dht_routing_table_eqc },
             #api_fun { name = node_id, arity = 1, classify = dht_routing_table_eqc },
             #api_fun { name = node_list, arity = 1, classify = dht_routing_table_eqc },
-            #api_fun { name = range, arity = 2, classify = dht_routing_table_eqc },
             #api_fun { name = ranges, arity = 1, classify = dht_routing_table_eqc }
           ]}
        ]}.
