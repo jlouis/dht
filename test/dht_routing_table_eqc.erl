@@ -241,15 +241,16 @@ is_range_features(_S, _, false) -> ["IS_RANGE002: Non-existing range"].
 
 %% Ask who is closest to a given ID
 %% --------------------------------
-closest_to(ID, _, Num, _) ->
-    routing_table:closest_to(ID, fun(_X) -> true end, Num).
+closest_to(ID, F, Num, _) ->
+    lists:sort(
+      routing_table:closest_to(ID, F, Num) ).
     
 closest_to_callers() -> [dht_routing_meta_eqc].
 
 closest_to_pre(S) -> initialized(S).
 
 closest_to_args(_S) ->
-    [dht_eqc:id(), dummy, nat(), dummy].
+    [dht_eqc:id(), function1(bool()), nat(), dummy].
 
 closest_to_return(S, [TargetID, _, N, _]) ->
     Ns = current_nodes(S),
