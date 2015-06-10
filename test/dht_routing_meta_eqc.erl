@@ -892,7 +892,7 @@ postcondition_common(S, Call, Res) ->
 weight(_S, _) -> 100.
 
 %% Main property, just verify that the commands are in sync with reality.
-prop_routing_correct() ->
+prop_component_correct() ->
     ?SETUP(fun() ->
         eqc_mocking:start_mocking(api_spec()),
         fun() -> eqc_mocking:stop_mocking() end
@@ -914,7 +914,7 @@ self(#state { id = ID }) -> ID.
 t() -> t(5).
 
 t(Secs) ->
-    eqc:quickcheck(eqc:testing_time(Secs, eqc_statem:show_states(prop_routing_correct()))).
+    eqc:quickcheck(eqc:testing_time(Secs, eqc_statem:show_states(prop_component_correct()))).
 
 %% TRACING
 %% ------------------

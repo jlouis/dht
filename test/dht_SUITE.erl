@@ -73,14 +73,14 @@ check_metric_sym(_Config) ->
 check_metric_triangle_ineq(_Config) ->
     ?quickcheck((dht_metric_eqc:prop_op_triangle_ineq())).
 
-check_routing_table(_Config) ->
-    ?quickcheck((dht_routing_table_eqc:prop_seq())).
-
 check_protocol_encoding(_Config) ->
     ?quickcheck((dht_proto_eqc:prop_iso_packet())).
 
+check_routing_table(_Config) ->
+    ?quickcheck((dht_routing_table_eqc:prop_component_correct())).
+
 check_routing_meta(_Config) ->
-    ?quickcheck((dht_routing_meta_eqc:prop_routing_correct())).
+    ?quickcheck((dht_routing_meta_eqc:prop_component_correct())).
     
 check_state(_Config) ->
-    ?quickcheck((dht_state_eqc:prop_state_correct())).
+    ?quickcheck((dht_state_eqc:prop_component_correct())).

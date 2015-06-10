@@ -413,7 +413,7 @@ reset() ->
 postcondition_common(S, Call, Res) ->
     eq(Res, return_value(S, Call)).
 
-prop_state_correct() ->
+prop_component_correct() ->
     ?SETUP(fun() ->
         eqc_mocking:start_mocking(api_spec()),
         fun() -> eqc_mocking:stop_mocking(), ok end
