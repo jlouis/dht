@@ -9,7 +9,7 @@
 %% Generators
 id(Min, Max) -> choose(Min, Max).
 
-id() -> id(?ID_MIN, ?ID_MAX).
+id() -> id(?ID_MIN, ?ID_MAX - 1).
 
 ip() -> ipv4_address(). %% ipv6 support later :P
     

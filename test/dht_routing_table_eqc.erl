@@ -37,7 +37,7 @@ new_pre(S) -> not initialized(S).
 new_args(_S) -> [dht_eqc:id()].
 
 new_return(_S, [_Self]) -> ok.
-new_next(S, _, _) -> S#state { init = true, tree = initial_tree() }.
+new_next(S, _, [Self]) -> S#state { self = Self, init = true, tree = initial_tree() }.
 
 new_features(_S, _, _) -> ["NEW: Created a new routing table"].
 
@@ -49,12 +49,36 @@ insert(Node, _) ->
 insert_callers() -> [dht_routing_meta_eqc].
 insert_pre(S) -> initialized(S).
 
-%%insert_args(#state {}) ->
-%%    [dht_eqc:peer(), dummy].
+insert_args(#state {}) ->
+    [dht_eqc:peer(), 'ROUTING_TABLE'].
       
-insert_next(#state { tree = TR } = State, _V, [Node, _]) ->
-    {Range, Members} = find_range({node, Node}, TR),
-    State#state { tree = TR#{ Range := [Node | Members] } }.
+insert_pre(#state { self = Self } = S, [{NodeID, _, _} = Node, _]) ->
+    (not lists:member(Node, current_nodes(S))) andalso has_space(Node, S) andalso (Self /= NodeID).
+    
+has_space(Node, #state { self = Self } = S) ->
+    {{Lo, Hi}, Members} = find_range({node, Node}, S),
+    case length(Members) of
+        L when L < ?MAX_RANGE_SZ -> true;
+        L when L == ?MAX_RANGE_SZ -> between(Lo, Self, Hi)
+    end.
+
+insert_callouts(#state { self = Self } = S, [Node, _]) ->
+    {{Lo, Hi}, Members} = find_range({node, Node}, S),
+    case length(Members) of
+        L when L < ?MAX_RANGE_SZ ->
+            ?APPLY(add_node, [Node]),
+            ?RET('ROUTING_TABLE');
+        L when L == ?MAX_RANGE_SZ ->
+            case between(Lo, Self, Hi) of
+                true ->
+                    ?APPLY(insert_split_range, [Node, 7]),
+                    ?RET('ROUTING_TABLE');
+                false ->
+                    ?FAIL('inserted illegal node')
+            end;
+        L when L > ?MAX_RANGE_SZ ->
+            ?FAIL('range has too many members')
+     end.
 
 insert_features(_State, _Args, _Return) ->
     %% TODO: There are more features here, but we don't cover them yet
@@ -69,7 +93,7 @@ ranges_callers() -> [dht_routing_meta_eqc].
 
 ranges_pre(S) -> initialized(S).
 
-ranges_args(_S) -> [dummy].
+ranges_args(_S) -> ['ROUTING_TABLE'].
 
 %% Range validation is simple. The set of all ranges should form a contiguous
 %% space of split ranges. If it doesn't something is wrong.
@@ -86,7 +110,7 @@ range(ID, _) ->
     
 range_callers() -> [dht_routing_meta_eqc].
 range_pre(S) -> initialized(S).
-range_args(_S) -> [dht_eqc:id(), dummy].
+range_args(_S) -> [dht_eqc:id(), 'ROUTING_TABLE'].
     
 range_return(S, [ID, _Tbl]) ->
     [Range] = [{Lo, Hi} || {Lo, Hi} <- current_ranges(S), between(Lo, ID, Hi)],
@@ -114,15 +138,14 @@ delete_args(S) ->
       lists:append(
     	[{1, nonexisting_node(Ns)}],
     	[{10, elements(Ns)} || Ns /= [] ])),
-    [Node, dummy].
+    [Node, 'ROUTING_TABLE'].
     
 delete_next(#state { tree = TR } = S, _, [Node, _]) ->
     {Range, Members} = find_range({node, Node}, S),
     S#state { tree = TR#{ Range := Members -- [Node] } }.
 
 %% TODO: Fix this, as we have to return the routing table itself
-delete_return(_S, [_, _]) ->
-    ok.
+delete_return(_S, [_, _]) -> 'ROUTING_TABLE'.
 
 delete_features(S, [Node, _], _R) ->
     case lists:member(Node, current_nodes(S)) of
@@ -134,7 +157,7 @@ delete_features(S, [Node, _], _R) ->
 %% Currently, we only ask for existing members, but this could also fault-inject
 %% -----------------------------
 members(Node, _) ->
-    routing_table:members(Node).
+    lists:sort(routing_table:members(Node)).
 
 nonexisting_id(IDs) ->
   ?SUCHTHAT({ID, _, _}, dht_eqc:peer(),
@@ -151,7 +174,11 @@ members_args(S) ->
       lists:append(
     	[{1, nonexisting_id(ids(Ns))}],
     	[{10, elements(Ns)} || Ns /= [] ])),
-    [{node, Node}, dummy].
+    [{node, Node}, 'ROUTING_TABLE'].
+
+members_return(S, [Node, _]) ->
+    {_, Members} = find_range(Node, S),
+    lists:sort(Members).
 
 members_post(_S, _A, Res) -> length(Res) =< 8.
     
@@ -176,7 +203,7 @@ is_member_args(S) ->
         elements(current_nodes(S)),
         dht_eqc:peer()
     ]),
-    [Node, dummy].
+    [Node, 'ROUTING_TABLE'].
 
 is_member_return(S, [N, _]) ->
     lists:member(N, current_nodes(S)).
@@ -195,7 +222,7 @@ node_id_callers() -> [dht_routing_meta_eqc].
 
 node_id_pre(S) -> initialized(S).
 
-node_id_args(_S) -> [dummy].
+node_id_args(_S) -> ['ROUTING_TABLE'].
 
 node_id_return(#state { self = Self }, _) -> Self.
 
@@ -205,13 +232,14 @@ node_id_features(_S, [_], _R) ->
 %% Ask for the node list
 %% -----------------------
 node_list(_) ->
-    routing_table:node_list().
+    lists:sort(
+    	routing_table:node_list() ).
     
 node_list_callers() -> [dht_routing_meta_eqc].
 
 node_list_pre(S) -> initialized(S).
 
-node_list_args(_S) -> [dummy].
+node_list_args(_S) -> ['ROUTING_TABLE'].
     
 node_list_return(S, [_], _) ->
     lists:sort(current_nodes(S)).
@@ -231,7 +259,7 @@ is_range_pre(S) -> initialized(S).
 is_range_args(S) ->
     Rs = current_ranges(S),
     Range = oneof([elements(Rs), dht_eqc:range()]),
-    [Range, dummy].
+    [Range, 'ROUTING_TABLE'].
 
 is_range_return(S, [Range, _]) ->
     lists:member(Range, current_ranges(S)).
@@ -249,21 +277,57 @@ closest_to_callers() -> [dht_routing_meta_eqc].
 
 closest_to_pre(S) -> initialized(S).
 
-closest_to_args(_S) ->
-    [dht_eqc:id(), function1(bool()), nat(), dummy].
+%%closest_to_args(_S) ->
+%%    [dht_eqc:id(), function1(bool()), nat(), 'ROUTING_TABLE'].
 
 closest_to_return(S, [TargetID, _, N, _]) ->
     Ns = current_nodes(S),
-    D = fun({ID, _IP, _Port}) -> metric:d(TargetID, ID) end,
+    D = fun({ID, _IP, _Port}) -> dht_metric:d(TargetID, ID) end,
     Sorted = lists:sort(fun(X, Y) -> D(X) =< D(Y) end, Ns),
     take(N, Sorted).
     
 take(0, _) -> [];
 take(_, []) -> [];
-take(K, [X|Xs]) when K > 1 -> [X | take(K-1, Xs)].
+take(K, [X|Xs]) when K > 0 -> [X | take(K-1, Xs)].
 
 closest_to_features(_S, _A, _R) ->
     ["CLOSEST_TO: Asking for the N nodes closest to an ID"].
+
+%% INSERT_SPLIT_RANGE / SPLIT_RANGE (Internal calls)
+
+insert_split_range_callouts(_S, [_, 0]) ->
+    ?FAIL('recursion depth');
+insert_split_range_callouts(#state { self = Self } = S, [Node, K]) ->
+    {{Lo, Hi}, Members} = find_range({node, Node}, S),
+    case length(Members) of
+        L when L < ?MAX_RANGE_SZ ->
+            ?APPLY(add_node, [Node]);
+        L when L == ?MAX_RANGE_SZ ->
+            case between(Lo, Self, Hi) of
+                true ->
+                    ?APPLY(split_range, [{Lo, Hi}]),
+                    ?APPLY(insert_split_range, [Node, K-1]);
+                false ->
+                    ?FAIL('impossible insert_split_range')
+            end
+     end.
+
+split_range_callouts(_S, [{0, 1}]) -> ?FAIL('range too small to split');
+split_range_callouts(_S, [_Range]) -> ?EMPTY.
+
+split_range_next(#state { tree = TR } = S, _, [{Lo, Hi} = Range]) ->
+    Members = maps:get(Range, TR),
+    Half = (Hi - Lo) bsr 1,
+    {Lower, Upper} = lists:partition(fun({ID, _, _}) -> ID < Half end, Members),
+    SplitTree = (maps:remove(Range, TR))#{ {Lo, Half} => Lower, {Half, Hi} => Upper },
+    S#state { tree = SplitTree }.
+
+%% ADD_NODE (Internal call)
+%% ----------------------------------
+
+add_node_next(#state { tree = TR } = S, _, [Node]) ->
+    {Range, Members} = find_range({node, Node}, S),
+    S#state { tree = TR#{ Range := [Node | Members] } }.
 
 %% Invariant
 %% ---------
@@ -309,8 +373,10 @@ prop_component_correct() ->
                 R == ok)))))
       end)).
 
-t() ->
-    eqc:quickcheck(eqc_statem:show_states(prop_component_correct())).
+t() -> t(5).
+
+t(Time) ->
+    eqc:quickcheck(eqc:testing_time(Time, eqc_statem:show_states(prop_component_correct()))).
 
 %% Internal functions
 %% ------------------
@@ -324,8 +390,8 @@ current_nodes(#state { tree = TR }) -> lists:append(maps:values(TR)).
 current_ranges(#state { tree = TR }) -> maps:keys(TR).
 
 find_range({node, {ID, _, _}}, S) ->
-    [{Range, Members}] = maps:filter(fun({Lo, Hi}, _) -> between(Lo, ID, Hi) end, tree(S)),
+    [{Range, Members}] = maps:to_list(maps:filter(fun({Lo, Hi}, _) -> between(Lo, ID, Hi) end, tree(S))),
     {Range, Members}.
 
-between(L, X, H) when L =< X, X =< H -> true;
+between(L, X, H) when L =< X, X < H -> true;
 between(_, _, _) -> false.
