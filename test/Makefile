@@ -1,5 +1,5 @@
-console:
-	erl -pa ../ebin ../deps/*/ebin
+compile:
+	erl -make
 
 clean:
 	rm *.beam
