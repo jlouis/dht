@@ -54,10 +54,19 @@ Routing ID's are positive integers. They have a digital bit-representation as li
 
 * Leafs have at most 8 nodes
 * If inserting a new node into a leaf of size 8, there are two cases:
-	* Our own ID has a common prefix `P` with the leaf: Partition the leaf into nodes with prefix `P0` and prefix `P1`. These become the new leafs.
+	* Our own ID has a common prefix `P` with the leaf: Partition the leaf into nodes with prefix follow by a `0` bit: `P0` and prefix followed by a `1` bit: `P1`. These become the new leafs. One of these leafs contain our own ID, whereas the other does not. This ensure only one subtree will split later on.
 	* Our own ID is not a common prefix with the leaf: reject the insertion.
 	
 In turn, the routing table is a “spine” in the tree only where the path mimicks our own ID. In turn, the routing table stores more elements close to ourselves rather than far away from ourselves.
+
+When there are 3 bits left in the suffix, the tree will not expand further since you can at most have 8 nodes in a leaf. This MUST hold, but it only holds if equality is on the NodeID. Example: In a 160 bit ID space, if you have a suffix of 157 bits in common with our own ID, there can at most be 3 bits which can vary. Our own ID is one of those, so there are 7 nodes left. They will fill the leaf, but it is impossible to insert more nodes into the table.
+
+### Modeling the routing table
+
+We use a simple `map({Lo, Hi}, [Node])` as the model of the routing table in our component. `Lo` and `Hi` are the bounds on the range: all elements `X` in the range has an id such that `Lo ≤ id(X) < Hi`. Most operations are straightforward to define since we can just walk all of the range and filter it by predicate functions which pick the wanted elements.
+
+The `closest_to` call looks hard to implement, but it's formal specification is straightforward: sort all nodes based on the distance to the desired ID, and pick the first K of those nodes. If we canonicalize the output by sorting it, we
+obtain a correct specification.
 
 TODO: Add documentation
 
@@ -78,6 +87,10 @@ A node can be in one of three possible states:
 
 Of course, “recently” and “repeatedly” has to be defined. We define the timeout limit to be 15 minutes and we define that nodes which have failed MORE THAN 1 time are bad nodes. These numbers could be changed, but they are not well-defined.
 
+We don't track the Node state with a timer. Rather, we note the last succesful point of communication. This means a simple calculation defines when a node becomes questionable, and thus needs a refresh.
+
+The reason we do it this way, is that all refreshes of nodes are event-driven: the node is refreshed whenever it communicates or when we want to use that node. So if we know the point-in-time for last communication, we can determine its internal state, be it `good`, `questionable`, or `bad`.
+
 The meta-data tracks nodes with the following map:
 
 	Node => #{ last_activity => time_point(), timeout_count => non_neg_integer(), reachability => boolean() }
@@ -97,15 +110,19 @@ we can use the current members of the range and their last activity points. The 
 
 TODO: What do we do with a range where `Members = []`? I think we should think about this. Obvious candidates for a value is `monotonic_time()` and `monotinic_time() - convert_time_unit(?NODE_TIMEOUT, milli_seconds, native)`. But the right choice depends on many small things.
 
-### Nodes
+## Nodes
 
-We don't track the Node state with a timer. Rather, we note the last succesful point of communication. This means a simple calculation defines when a node becomes questionable, and thus needs a refresh.
+Nodes are defined as the triple `{id(), ip(), port()}`, where `id()` is the Node ID space (7 bits in test, 160 bit in Kademlia based on sha1, 256bit if based on sha-256). `port()` is the UDP port number, in the usual 0–65535 range. Currently `ip()` is an `ipv4_address()`, but this needs extension to `ipv6_addresses()`.
 
-The reason we do it this way, is that all refreshes of nodes are event-driven: the node is refreshed whenever it communicates or when we want to use that node. So if we know the point-in-time for last communication, we can determine its internal state, be it `good`, `questionable`, or `bad`.
+### Node Equality
+
+TODO: Discussion needed here. Equality is either on the ID or on the Node. The important thing to understand is how this affects roaming nodes which changes address/port but not the ID. How will this affect the routing table and such?
+
+• Equality on NodeID means we can handle the deep end of the routing table easily.
 
 TODO
 
-### Ranges
+## Ranges
 
 TODO
 
