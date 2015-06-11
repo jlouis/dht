@@ -53,7 +53,7 @@ insert_args(#state {}) ->
     [dht_eqc:peer(), 'ROUTING_TABLE'].
       
 insert_pre(#state { self = Self } = S, [{NodeID, _, _} = Node, _]) ->
-    (not lists:member(Node, current_nodes(S))) andalso has_space(Node, S) andalso (Self /= NodeID).
+    (not has_node(Node, S)) andalso has_space(Node, S) andalso (Self /= NodeID).
     
 has_space(Node, #state { self = Self } = S) ->
     {{Lo, Hi}, Members} = find_range({node, Node}, S),
@@ -63,22 +63,8 @@ has_space(Node, #state { self = Self } = S) ->
     end.
 
 insert_callouts(#state { self = Self } = S, [Node, _]) ->
-    {{Lo, Hi}, Members} = find_range({node, Node}, S),
-    case length(Members) of
-        L when L < ?MAX_RANGE_SZ ->
-            ?APPLY(add_node, [Node]),
-            ?RET('ROUTING_TABLE');
-        L when L == ?MAX_RANGE_SZ ->
-            case between(Lo, Self, Hi) of
-                true ->
-                    ?APPLY(insert_split_range, [Node, 7]),
-                    ?RET('ROUTING_TABLE');
-                false ->
-                    ?FAIL('inserted illegal node')
-            end;
-        L when L > ?MAX_RANGE_SZ ->
-            ?FAIL('range has too many members')
-     end.
+    ?APPLY(insert_split_range, [Node, 7]),
+    ?RET('ROUTING_TABLE').
 
 insert_features(_State, _Args, _Return) ->
     %% TODO: There are more features here, but we don't cover them yet
@@ -113,14 +99,14 @@ delete_callers() -> [dht_routing_meta_eqc].
 
 delete_pre(S) -> initialized(S) andalso has_nodes(S).
 
-nonexisting_node(Ns) ->
-  ?SUCHTHAT(Node, dht_eqc:peer(), not lists:member(Node, Ns)).
+nonexisting_node(S) ->
+  ?SUCHTHAT(Node, dht_eqc:peer(), not has_node(Node, S)).
 
 delete_args(S) ->
     Ns = current_nodes(S),
     Node = frequency(
       lists:append(
-    	[{1, nonexisting_node(Ns)}],
+    	[{1, nonexisting_node(S)}],
     	[{10, elements(Ns)} || Ns /= [] ])),
     [Node, 'ROUTING_TABLE'].
     
@@ -132,7 +118,7 @@ delete_next(#state { tree = TR } = S, _, [Node, _]) ->
 delete_return(_S, [_, _]) -> 'ROUTING_TABLE'.
 
 delete_features(S, [Node, _], _R) ->
-    case lists:member(Node, current_nodes(S)) of
+    case has_node(Node, S) of
         true -> ["DELETE001: Delete an existing node from the routing table"];
         false -> ["DELETE002: Delete a non-existing node from the routing table"]
     end.
@@ -167,36 +153,39 @@ members_return(S, [Node, _]) ->
 members_post(_S, _A, Res) -> length(Res) =< 8.
     
 members_features(S, [{node, Node}, _], _Res) ->
-    case lists:member(Node, ids(current_nodes(S))) of
+    case has_node(Node, S) of
         true -> ["MEMBERS001: Members on a node which has an existing ID"];
         false -> ["MEMBERS002: Members of a non-existing node"]
     end.
 
 %% Ask for membership of the Routing Table
 %% ---------------------------------------
-is_member(Node, _) ->
-    routing_table:is_member(Node).
+member_state(Node, _) ->
+    routing_table:member_state(Node).
+    
+member_state_callers() -> [dht_routing_meta_eqc].
 
-is_member_callers() -> [dht_routing_meta_eqc].
-
-is_member_pre(S) ->
+member_state_pre(S) ->
     initialized(S) andalso has_nodes(S).
-
-is_member_args(S) ->
+    
+member_state_args(S) ->
     Node = oneof([
         elements(current_nodes(S)),
         dht_eqc:peer()
     ]),
     [Node, 'ROUTING_TABLE'].
-
-is_member_return(S, [N, _]) ->
-    lists:member(N, current_nodes(S)).
-
-is_member_features(S, [N, _], _Res) ->
-    case lists:member(N, current_nodes(S)) of
-      true -> ["IS_MEMBER001: is_member on existing node"];
-      false -> ["IS_MEMBER002: is_member on nonexisting node"]
+    
+member_state_return(S, [{ID, IP, Port}, _]) ->
+    Ns = current_nodes(S),
+    case lists:keyfind(ID, 1, Ns) of
+        false -> unknown;
+        {ID, IP, Port} -> member;
+        {ID, _, _} -> roaming_member
     end.
+
+member_state_features(_S, [_, _], unknown) -> ["MEMBER_STATE001: Lookup of unknown member"];
+member_state_features(_S, [_, _], member) -> ["MEMBER_STATE002: Lookup of a member"];
+member_state_features(_S, [_, _], roaming_member) -> ["MEMBER_STATE003: Lookup of a roaming member"].
 
 %% Ask for the node id
 %% --------------------------
@@ -292,16 +281,13 @@ insert_split_range_callouts(#state { self = Self } = S, [Node, K]) ->
                     ?APPLY(split_range, [{Lo, Hi}]),
                     ?APPLY(insert_split_range, [Node, K-1]);
                 false ->
-                    ?FAIL('impossible insert_split_range')
+                    ?EMPTY
             end
      end.
 
-split_range_callouts(_S, [{0, 1}]) -> ?FAIL('range too small to split');
-split_range_callouts(_S, [_Range]) -> ?EMPTY.
-
 split_range_next(#state { tree = TR } = S, _, [{Lo, Hi} = Range]) ->
     Members = maps:get(Range, TR),
-    Half = (Hi - Lo) bsr 1,
+    Half = ((Hi - Lo) bsr 1) + Lo,
     {Lower, Upper} = lists:partition(fun({ID, _, _}) -> ID < Half end, Members),
     SplitTree = (maps:remove(Range, TR))#{ {Lo, Half} => Lower, {Half, Hi} => Upper },
     S#state { tree = SplitTree }.
@@ -357,13 +343,17 @@ prop_component_correct() ->
                 R == ok)))))
       end)).
 
-t() -> t(5).
+t() -> t(15).
 
 t(Time) ->
     eqc:quickcheck(eqc:testing_time(Time, eqc_statem:show_states(prop_component_correct()))).
 
 %% Internal functions
 %% ------------------
+
+has_node({ID, _, _}, S) ->
+    Ns = current_nodes(S),
+    lists:keymember(ID, 1, Ns).
 
 has_nodes(S) -> current_nodes(S) /= [].
 

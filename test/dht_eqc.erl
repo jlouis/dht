@@ -45,3 +45,4 @@ token() ->
     ?LET([L, U], [choose(0, 16#FFFF), choose(0, 16#FFFF)],
         <<L:16, U:16>>).
 
+node_eq({X, _, _}, {Y, _, _}) -> X =:= Y.

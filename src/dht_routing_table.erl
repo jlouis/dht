@@ -25,7 +25,7 @@
 %% Query
 -export([
 	closest_to/4,
-	is_member/2,
+	member_state/2,
 	is_range/2,
 	members/2,
 	node_id/1,
@@ -134,10 +134,14 @@ members({node, {ID, _, _}}, RT) ->
 %%
 %% Check if a node is a member of a bucket list
 %%
--spec is_member(dht:peer(), t()) -> boolean().
-is_member({ID, _, _} = Node, RT) ->
+-spec member_state(dht:peer(), t()) -> boolean().
+member_state({ID, IP, Port}, RT) ->
     #bucket { members = Members } = retrieve_d(ID, RT),
-    lists:member(Node, Members).
+    case lists:keyfind(ID, 1, Members) of
+        false -> unknown;
+        {ID, IP, Port} -> member;
+        {ID, _, _} -> roaming_member
+    end.
 
 %%
 %% Check if a range exists in a range list
