@@ -17,12 +17,19 @@ While here, a lot of decisions has to be made in order to ensure future stabilit
 
 The code here is excised from ETorrent. We want to hammer on the code until it works and begins to provide a working system. To do this, we will start out simple and then gradually make the code base work as it should in a larger setting. The trick is to run the code through several milestones, each one layering on top of the milestone which came before. The code is currently in an unknown state, so the goal is to establish exactly what works, what doesn't and how things are working or not.
 
+## QuickCheck
+
+The "research project" which is being done in this project is to provide a full QuickCheck model of every part of the DHT code. This work has already uncovered numerous grave errors and mistakes in the original etorrent code base, to the point where I'm wondering if this code even worked appropriately in the first place.
+
+Hence, the modeling work continues. It is slowly moving, because you often need to do successive refinement on the knowledge you have as you go along. On the other hand, the parts which have been checked are likely to be formally correct. Far more than any other project.
+
+The current effort is centered around the routing table component, which is by far the most complicated of all the compoenents. We have a full model, but the model is currently failing in a lot of important cases.
+
 # TODO List:
 
 haphazard things we should do.
 
 * The `dht_iter_search` function in `dht_net` needs a lot of care and perusal. It is a very large imperative function, which should be rewritten into a more functional style and simplified while we are at it.
-* Split all timer code to a helper library. This should help later on with writing QuickCheck models for different components of the system.
-* make `dht_state` sequential by putting the UNREACHABLE_TAB into the gen_server itself. It should not be much slower having it in there.
 * Figure out the API of the system. Currently it is in shambles and it needs some help.
+* Finish the model for the state engine system.
 
