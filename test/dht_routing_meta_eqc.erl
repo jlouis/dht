@@ -308,6 +308,8 @@ new_callouts(#state { id = ID, time = T } = S, [ID, L, H]) ->
 %% Track that we initialized the system
 new_next(State, _, _) -> State#state { init = true }.
 
+new_features(_S, _A, _R) -> new.
+
 %% INSERT
 %% --------------------------------------------------
 
@@ -336,7 +338,7 @@ insert_pre(S) -> initialized(S).
 
 %% Any peer is eligible for insertion at any time. There are no limits on how and when
 %% you can do this insertion.
-insert_args(_S) -> [dht_eqc:peer(), dummy].
+insert_args(_S) -> [dht_eqc:peer(), 'ROUTING_TABLE'].
 
 insert_pre(S, [Peer, _]) ->
     initialized(S) andalso (not has_peer(Peer, S)).
@@ -354,6 +356,8 @@ insert_callouts(_S, [Node, _]) ->
         Else -> ?FAIL(Else)
     end.
 
+insert_features(_S, _A, _R) -> insert.
+
 %% IS_MEMBER
 %% --------------------------------------------------
 
@@ -365,7 +369,7 @@ is_member_callers() -> [dht_state_eqc].
 
 is_member_pre(S) -> initialized(S).
 
-is_member_args(_S) -> [dht_eqc:peer(), dummy].
+is_member_args(_S) -> [dht_eqc:peer(), 'ROUTING_TABLE'].
     
 %% This is simply a forward to the underlying routing table, so it should return whatever
 %% The RT returns.
@@ -373,6 +377,8 @@ is_member_callouts(S, [Node, _]) ->
     ?MATCH(R, ?CALLOUT(dht_routing_table, is_member, [Node, ?WILDCARD],
         lists:member(Node, current_nodes(S)))),
     ?RET(R).
+
+is_member_features(_S, _A, Bool) -> {is_member, Bool}.
 
 %% NEIGHBORS
 %% --------------------------------------------------
@@ -390,7 +396,7 @@ neighbors_callers() -> [dht_state_eqc].
       
 neighbors_pre(S) -> initialized(S).
 
-neighbors_args(_S) -> [dht_eqc:id(), nat(), dummy].
+neighbors_args(_S) -> [dht_eqc:id(), nat(), 'ROUTING_TABLE'].
 
 %% Neighbors calls out twice currently, because it has two filter functions it runs in succession.
 %% First it queries for the known good nodes, and then it queries for the questionable nodes.
@@ -411,6 +417,12 @@ neighbors_callouts(S, [ID, K, _]) ->
          ?RET(GoodNodes ++ QuestionableNodes)
     end.
 
+neighbors_features(_S, _A, R) ->
+    case R of
+        [] -> {neighbors, empty};
+        L when is_list(L) -> {neighbors, cons}
+    end.
+
 %% NODE_LIST
 %% --------------------------------------------------
 %%
@@ -423,12 +435,14 @@ node_list_callers() -> [dht_state_eqc].
 
 node_list_pre(S) -> initialized(S).
 	
-node_list_args(_S) -> [dummy].
+node_list_args(_S) -> ['ROUTING_TABLE'].
 
 node_list_callouts(S, [_]) ->
     ?MATCH(R, ?CALLOUT(dht_routing_table, node_list, [?WILDCARD], rt_nodes(S))),
     ?RET(R).
     
+node_list_features(_S, _A, _R) -> node_list.
+
 %% NODE_STATE
 %% --------------------------------------------------
 
@@ -444,7 +458,7 @@ node_state_pre(S) -> initialized(S) andalso has_nodes(S).
 %% We currently generate output for known nodes only. The obvious
 %% thing to do when a node is unknown is to ignore it.
 %% TODO: Send in unknown nodes.
-node_state_args(S) -> [rt_nodes(S), dummy].
+node_state_args(S) -> [rt_nodes(S), 'ROUTING_TABLE'].
 
 node_state_pre(S, [Nodes, _]) ->
     Current = current_nodes(S),
@@ -463,6 +477,25 @@ node_state_callouts(#state { time = T, node_timers = NTs }, [Nodes, _]) ->
         end || {R, LA} <- Returns]),
     ?RET([R || {R, _LA} <- Returns]).
 
+node_state_features(_S, _A, R) ->
+    lists:append([
+      [{node_state, bad} || contains_bad(R)],
+      [{node_state, good} || contains_good(R)],
+      [{node_state, questionable} || contains_questionable(R)],
+      [{ndoe_state, not_member} || contains_not_member(R)]
+    ]).
+
+contains_bad(R) -> lists:member({bad, undefined}, R).
+contains_not_member(R) -> lists:member({not_member, undefined}, R).
+
+contains_good([]) -> false;
+contains_good([{good, _}|_]) -> true;
+contains_good([_|Xs]) -> contains_good(Xs).
+
+contains_questionable([]) -> false;
+contains_questionable([{questionable, _} | _]) -> true;
+contains_questionable([_|Xs]) -> contains_questionable(Xs).
+
 %% NODE_TIMEOUT
 %% --------------------------------------------------
 
@@ -479,7 +512,7 @@ node_timeout_callers() -> [dht_state_eqc].
       
 node_timeout_pre(S) -> initialized(S) andalso has_nodes(S).
 
-node_timeout_args(S) -> [rt_node(S), dummy].
+node_timeout_args(S) -> [rt_node(S), 'ROUTING_TABLE'].
 
 node_timeout_callouts(_S, [_Node, _]) ->
     ?RET(ok).
@@ -487,6 +520,8 @@ node_timeout_callouts(_S, [_Node, _]) ->
 node_timeout_next(#state { node_timers = NT } = S, _, [Node, _]) ->
     {Node, LA, Count, Reachable} = lists:keyfind(Node, 1, NT),
     S#state { node_timers = lists:keyreplace(Node, 1, NT, {Node, LA, Count+1, Reachable}) }.
+
+node_timeout_features(_S, _A, _R) -> [node_timeout].
 
 %% RANGE_MEMBERS
 %% --------------------------------------------------
@@ -502,7 +537,7 @@ range_members_pre(S) -> initialized(S).
 
 range_members_args(S) ->
     NodeOrRange = oneof([dht_eqc:peer(), rt_range(S)]),
-    [NodeOrRange, dummy].
+    [NodeOrRange, 'ROUTING_TABLE'].
 
 %% This is simply a forward to the underlying routing table, so it should return whatever
 %% The RT returns.
@@ -514,6 +549,9 @@ range_members_callouts(S, [{ID, _, _} = Node, _]) ->
     ?MATCH(R, ?CALLOUT(dht_routing_table, members, [Node, ?WILDCARD],
     		nodes_in_range(S, ID))),
     ?RET(R).
+
+range_members_features(_S, [{_, _, _} = _Node, _], _) -> [{range_members, node}];
+range_members_features(_S, [{_, _} = _Range, _], _) -> [{range_members, range}].
 
 %% NODE_TOUCH
 %% --------------------------------------------------
@@ -532,7 +570,7 @@ node_touch_callers() -> [dht_state_eqc].
         
 node_touch_pre(S) -> initialized(S) andalso has_nodes(S).
 
-node_touch_args(S) -> [rt_node(S), #{ reachable => bool() }, dummy].
+node_touch_args(S) -> [rt_node(S), #{ reachable => bool() }, 'ROUTING_TABLE'].
 
 node_touch_callouts(#state { time = T }, [_Node, _Opts, _]) ->
     ?CALLOUT(dht_time, monotonic_time, [], T),
@@ -547,6 +585,8 @@ node_touch_next(#state { node_timers = NTs, time = T } = S, _, [Node, #{ reachab
         false -> S;
         true -> S#state { node_timers = lists:keyreplace(Node, 1, NTs, {Node, T, 0, true}) }
     end.
+
+node_touch_features(_S, _A, _R) -> [node_touch].
 
 %% RANGE_STATE
 %% --------------------------------------------------
@@ -566,7 +606,7 @@ range_state_args(S) ->
         {10, rt_range(S)},
         {1, dht_eqc:range()}
     ]),
-    [Range, dummy].
+    [Range, 'ROUTING_TABLE'].
 
 range_state_callouts(#state{ time = T } = S, [Range, _]) ->
     ?MATCH(IsRange, ?CALLOUT(dht_routing_table, is_range, [Range, ?WILDCARD],
@@ -591,7 +631,12 @@ range_state_callouts(#state{ time = T } = S, [Range, _]) ->
             end;
         Ret -> ?FAIL({wrong_result, Ret})
     end.
-                   
+               
+range_state_features(_S, _A, empty) -> [{range_state, empty}];
+range_state_features(_S, _A, {error, not_member}) -> [{range_state, non_existing_range}];
+range_state_features(_S, _A, ok) -> [{range_state, ok}];
+range_state_features(_S, _A, {needs_refresh, _}) -> [{range_state, needs_refresh}].
+    
 %% RESET_RANGE_TIMER
 %% --------------------------------------------------
 
@@ -611,7 +656,7 @@ reset_range_timer_callers() -> [dht_state_eqc].
 reset_range_timer_pre(S) -> initialized(S).
 
 reset_range_timer_args(S) ->
-    [rt_range(S), #{ force => bool() }, dummy].
+    [rt_range(S), #{ force => bool() }, 'ROUTING_TABLE'].
 
 reset_range_timer_callouts(#state { time = T }, [Range, #{ force := true }, _]) ->
     ?CALLOUT(dht_time, monotonic_time, [], T),
@@ -624,6 +669,9 @@ reset_range_timer_callouts(_S, [Range, #{ force := false }, _]) ->
     ?APPLY(add_range_timer_at, [Range, A]),
     ?RET(ok).
 
+reset_range_timer_features(_S, [_Range, #{ force := Force }, _], _R) ->
+    [{reset_range_timer, case Force of true -> forced; false -> normal end}].
+    
 %% RANGE_LAST_ACTIVITY (Internal call)
 %% ---------------------------------------------------------
 %% This call is used internally to figure out when there was last activity
@@ -682,6 +730,8 @@ remove_callouts(_S, [Node]) ->
 
 remove_next(#state { tree = Tree } = State, _, [Node]) ->
     State#state { tree = delete_node(Node, Tree) }.
+
+remove_features(_S, _A, _R) -> [remove].
 
 %% REPLACE (Internal call)
 %% --------------------------------------------------
@@ -752,6 +802,8 @@ split_range_callouts(S, [Node, T]) ->
            ?EMPTY
     end.
 
+split_range_features(_S, _A, _R) -> [split_range].
+
 %% PERFORM_SPLIT (Model Internal Call)
 %% --------------------------------------------
 
@@ -800,7 +852,7 @@ rev_append([S|Ss], Ls) -> rev_append(Ss, [S|Ls]).
 %% Time is part of the model state, and is represented as milli_seconds,
 %% because I think this is enough resolution to hit the fun corner cases.
 %%
-%% The call is a model-internal call, so there is just a simple dummy function
+%% The call is a model-internal call, so there is just a simple 'ROUTING_TABLE' function
 %% which is called whenever time is advanced.
 advance_time(_A) -> ok.
 
@@ -903,9 +955,11 @@ prop_component_correct() ->
       begin
         {H,S,R} = run_commands(?MODULE, Cmds),
         pretty_commands(?MODULE, Cmds, {H,S,R},
-          collect(eqc_lib:summary('Length'), length(Cmds),
-          aggregate(command_names(Cmds),
-            R == ok)))
+            aggregate(with_title('Commands'), command_names(Cmds),
+            collect(eqc_lib:summary('Length'), length(Cmds),
+            aggregate(with_title('Features'), eqc_statem:call_features(H),
+            features(eqc_statem:call_features(H),
+                R == ok)))))
       end))).
 
 self(#state { id = ID }) -> ID.
