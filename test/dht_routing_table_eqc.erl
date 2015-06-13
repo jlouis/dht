@@ -10,6 +10,7 @@
 -record(state,
     { self,
       init = false,
+      filter_fun = fun(_X) -> true end,
       tree = #{} }).
 
 %% Generators
@@ -259,14 +260,14 @@ closest_to_callers() -> [dht_routing_meta_eqc].
 
 closest_to_pre(S) -> initialized(S).
 
-%%closest_to_args(_S) ->
-%%    [dht_eqc:id(), function1(bool()), nat(), 'ROUTING_TABLE'].
+closest_to_args(#state { filter_fun = F }) ->
+    [dht_eqc:id(), F, nat(), 'ROUTING_TABLE'].
 
-closest_to_return(S, [TargetID, _, N, _]) ->
-    Ns = current_nodes(S),
+closest_to_return(#state { filter_fun = F } = S, [TargetID, _, K, _]) ->
+    Ns = [N || N <- current_nodes(S), F(N)],
     D = fun({ID, _IP, _Port}) -> dht_metric:d(TargetID, ID) end,
-    Sorted = lists:sort(fun(X, Y) -> D(X) =< D(Y) end, Ns),
-    take(N, Sorted).
+    Sorted = lists:sort(fun(X, Y) -> D(X) < D(Y) end, Ns),
+    lists:sort(take(K, Sorted)).
     
 take(0, _) -> [];
 take(_, []) -> [];
@@ -340,7 +341,8 @@ postcondition_common(S, Call, Res) ->
 
 prop_component_correct() ->
     ?SETUP(fun() -> ok, fun() -> ok end end,
-    ?FORALL(Cmds, commands(?MODULE),
+    ?FORALL(Filter, eqc_fun:function1(bool()),
+    ?FORALL(Cmds, commands(?MODULE, #state { filter_fun = Filter}),
       begin
         {H, S, R} = run_commands(?MODULE, Cmds),
         pretty_commands(?MODULE, Cmds, {H, S, R},
@@ -348,8 +350,9 @@ prop_component_correct() ->
             collect(eqc_lib:summary('Length'), length(Cmds),
             aggregate(with_title('Features'), eqc_statem:call_features(H),
             features(eqc_statem:call_features(H),
-                R == ok)))))
-      end)).
+            ?WHENFAIL(eqc_fun:print_function("FilterFun =", Filter),
+                R == ok))))))
+      end))).
 
 t() -> t(15).
 
