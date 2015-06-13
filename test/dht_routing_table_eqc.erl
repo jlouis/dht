@@ -273,6 +273,7 @@ take(0, _) -> [];
 take(_, []) -> [];
 take(K, [X|Xs]) when K > 0 -> [X | take(K-1, Xs)].
 
+closest_to_features(_S, [_, _, N, _], _R) when N >= 8 -> {closest_to, '>=8'};
 closest_to_features(_S, [_, _, N, _], _R) -> {closest_to, N}.
 
 %% INSERT_SPLIT_RANGE / SPLIT_RANGE (Internal calls)
