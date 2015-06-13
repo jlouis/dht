@@ -416,7 +416,7 @@ postcondition_common(S, Call, Res) ->
 prop_component_correct() ->
     ?SETUP(fun() ->
         eqc_mocking:start_mocking(api_spec()),
-        fun() -> eqc_mocking:stop_mocking(), ok end
+        fun() -> ok end
     end,
     ?FORALL(StartState, gen_initial_state(),
     ?FORALL(Cmds, commands(?MODULE, StartState),

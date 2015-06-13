@@ -12,32 +12,28 @@
       init = false,
       tree = #{} }).
 
-api_spec() ->
-    #api_spec {
-      language = erlang,
-      modules = []}.
-
 %% Generators
 %% ----------
-
 gen_state() ->
     ?LET(Self, dht_eqc:id(), #state { self = Self }).
 
 initial_state() -> #state {  }.
-initial_tree() ->
-    K = {?ID_MIN, ?ID_MAX},
+
+initial_tree(Low, High) ->
+    K = {Low, High},
     #{ K => [] }.
 
-new(Self) ->
-    routing_table:reset(Self).
-
-new_callers() -> [dht_state_eqc, dht_routing_meta_eqc].
+new(Self, Low, High) ->
+    routing_table:reset(Self, Low, High),
+    'ROUTING_TABLE'.
 
 new_pre(S) -> not initialized(S).
-new_args(_S) -> [dht_eqc:id()].
+new_args(_S) -> [dht_eqc:id(), ?ID_MIN, ?ID_MAX].
+new_pre(_S, _) -> true.
 
-new_return(_S, [_Self]) -> ok.
-new_next(S, _, [Self]) -> S#state { self = Self, init = true, tree = initial_tree() }.
+new_return(_S, [_Self, _, _]) -> 'ROUTING_TABLE'.
+
+new_next(S, _, [Self, Low, High]) -> S#state { self = Self, init = true, tree = initial_tree(Low, High) }.
 
 new_features(_S, _, _) -> ["NEW: Created a new routing table"].
 
@@ -62,7 +58,7 @@ has_space(Node, #state { self = Self } = S) ->
         L when L == ?MAX_RANGE_SZ -> between(Lo, Self, Hi)
     end.
 
-insert_callouts(#state { self = Self } = S, [Node, _]) ->
+insert_callouts(_S, [Node, _]) ->
     ?APPLY(insert_split_range, [Node, 7]),
     ?RET('ROUTING_TABLE').
 
@@ -140,18 +136,31 @@ members_pre(S) -> initialized(S).
 %% TODO: Ask for ranges here as well!
 members_args(S) ->
     Ns = current_nodes(S),
-    Node = frequency(
-      lists:append(
-    	[{1, nonexisting_id(ids(Ns))}],
-    	[{10, elements(Ns)} || Ns /= [] ])),
-    [{node, Node}, 'ROUTING_TABLE'].
+    Rs = current_ranges(S),
+    Arg = frequency(
+      lists:append([
+    	[{1, {node, nonexisting_id(ids(Ns))}}],
+    	[{10, {node, elements(Ns)}} || Ns /= [] ],
+    	[{5, {range, elements(Rs)}} || Rs /= [] ]
+    ])),
+    [Arg, 'ROUTING_TABLE'].
 
-members_return(S, [Node, _]) ->
-    {_, Members} = find_range(Node, S),
+members_pre(_S, [{node, _}, _]) -> true;
+members_pre(S, [{range, R}, _]) -> has_range(R, S);
+members_pre(_S, _) -> false.
+
+members_return(#state { tree = Tree }, [{range, R}, _]) ->
+    {ok, Members} = maps:find(R, Tree),
+    lists:sort(Members);
+members_return(S, [{node, Node}, _]) ->
+    {_, Members} = find_range({node, Node}, S),
     lists:sort(Members).
 
-members_post(_S, _A, Res) -> length(Res) =< 8.
-    
+members_features(S, [{range, R}, _], _Res) ->
+    case has_range(R, S) of
+        true -> ["MEMBERS003: Members on a range which exists"];
+        false -> ["MEMBERS004: Members on a range which doesn't exist"]
+    end;
 members_features(S, [{node, Node}, _], _Res) ->
     case has_node(Node, S) of
         true -> ["MEMBERS001: Members on a node which has an existing ID"];
@@ -354,6 +363,8 @@ t(Time) ->
 has_node({ID, _, _}, S) ->
     Ns = current_nodes(S),
     lists:keymember(ID, 1, Ns).
+
+has_range(R, #state { tree = Tree }) -> maps:is_key(R, Tree).
 
 has_nodes(S) -> current_nodes(S) /= [].
 

@@ -16,7 +16,7 @@ api_spec() -> api_spec(?MODULE).
 prop_cluster_correct() ->
     ?SETUP(fun() ->
         eqc_mocking:start_mocking(api_spec()),
-        fun() -> eqc_mocking:stop_mocking() end
+        fun() -> ok end
     end,
     ?FORALL(MetaState, dht_routing_meta_eqc:gen_state(),
     ?FORALL(StartState, dht_state_eqc:gen_initial_state(dht_routing_meta_eqc:self(MetaState)),

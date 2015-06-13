@@ -3,7 +3,20 @@
 
 -include("dht_eqc.hrl").
 
--export([start_link/1, reset/1, insert/1, ranges/0, delete/1, members/1, member_state/1, invariant/0, node_list/0, is_range/1, closest_to/3, node_id/0]).
+-export([start_link/0]).
+-export([
+	closest_to/3,
+	delete/1,
+	insert/1,
+	invariant/0,
+	is_range/1,
+	members/1,
+	member_state/1,
+	node_id/0,
+	node_list/0,
+	ranges/0,
+	reset/3
+]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2, code_change/3]).
 
@@ -11,17 +24,15 @@
 	table
 }).
 
-start_link(Self) ->
-	gen_server:start_link({local, ?MODULE}, ?MODULE, [Self], []).
+start_link() ->
+	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-reset(Self) ->
-	case whereis(?MODULE) of
-	    undefined ->
-	        {ok, _} = start_link(Self),
-	        ok;
-	    P when is_pid(P) ->
-	        gen_server:call(?MODULE, {reset, Self})
-	end.
+reset(Self, L, H) ->
+    case whereis(?MODULE) of
+        undefined -> {ok, _} = start_link();
+        P when is_pid(P) -> ok
+    end,
+    gen_server:call(?MODULE, {reset, Self, L, H}).
 
 insert(Node) ->
 	gen_server:call(?MODULE, {insert, Node}).
@@ -55,14 +66,14 @@ invariant() ->
 
 %% Callbacks
 
-init([Self]) ->
-	{ok, #state{ table = dht_routing_table:new(Self, ?ID_MIN, ?ID_MAX) }}.
+init([]) ->
+	{ok, #state{ table = undefined }}.
 
 handle_cast(_Msg, State) ->
 	{noreply, State}.
 	
-handle_call({reset, Self}, _From, State) ->
-	{reply, ok, State#state { table = dht_routing_table:new(Self, ?ID_MIN, ?ID_MAX) }};
+handle_call({reset, Self, L, H}, _From, State) ->
+	{reply, ok, State#state { table = dht_routing_table:new(Self, L, H) }};
 handle_call(ranges, _From, #state { table = RT } = State) ->
 	{reply, dht_routing_table:ranges(RT), State};
 handle_call({insert, Node}, _From, #state { table = RT } = State) ->

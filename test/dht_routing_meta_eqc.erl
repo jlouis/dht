@@ -183,7 +183,7 @@ api_spec() ->
         #api_module {
           name = dht_routing_table,
           functions = [
-            #api_fun { name = new, arity = 1, classify = dht_routing_table_eqc},
+            #api_fun { name = new, arity = 3, classify = dht_routing_table_eqc},
 
             #api_fun { name = closest_to, arity = 4, classify = dht_routing_table_eqc },
             #api_fun { name = delete, arity = 2, classify = dht_routing_table_eqc },
@@ -275,10 +275,12 @@ initial_state() -> #state{}.
 %% When the system initializes,  the routing table may be loaded from disk. When
 %% that happens, we have to re-instate the timers by query of the routing table, and
 %% then construct those timers.
-new(Tbl) ->
+new(ID, L, H) ->
+    eqc_lib:reset(?DRIVER),
+    Tbl = dht_routing_table:new(ID, L, H),
     eqc_lib:bind(?DRIVER, fun(_T) ->
       {ok, ID, Routing} = dht_routing_meta:new(Tbl),
-      {ok, {ok, ID, rt_ref}, Routing}
+      {ok, {ok, ID, 'ROUTING_TABLE'}, Routing}
     end).
 
 new_callers() -> [dht_state_eqc].
@@ -288,20 +290,20 @@ new_callers() -> [dht_state_eqc].
 new_pre(S) -> not initialized(S).
 
 %% Construct a Table entry for injection.
-new_args(#state { id = ID }) ->
-    [{state, ID, [{bucket, ?ID_MIN, ?ID_MAX, []}]}].
+new_args(#state { id = ID }) -> [ID, ?ID_MIN, ?ID_MAX].
 
 %% When new is called, the system calls out to the routing_table. We feed the
 %% Nodes and Ranges we generated into the system. The assumption is that
 %% these Nodes and Ranges are ones which are initialized via the internal calls
 %% init_range_timers and init_node_timers.
-new_callouts(#state { id = ID, time = T } = S, [_]) ->
+new_callouts(#state { id = ID, time = T } = S, [ID, L, H]) ->
+    ?MATCH(Tbl, ?CALLOUT(dht_routing_table, new, [ID, L, H], 'ROUTING_TABLE')),
     ?CALLOUT(dht_time, monotonic_time, [], T),
-    ?CALLOUT(dht_routing_table, node_list, [?WILDCARD], current_nodes(S)),
-    ?CALLOUT(dht_routing_table, node_id, [?WILDCARD], ID),
+    ?CALLOUT(dht_routing_table, node_list, [Tbl], current_nodes(S)),
+    ?CALLOUT(dht_routing_table, node_id, [Tbl], ID),
     ?APPLY(init_range_timers, [current_ranges(S)]),
     ?APPLY(init_nodes, [current_nodes(S)]),
-    ?RET({ok, ID, rt_ref}).
+    ?RET({ok, ID, Tbl}).
   
 %% Track that we initialized the system
 new_next(State, _, _) -> State#state { init = true }.
@@ -675,7 +677,7 @@ init_nodes_next(#state { time = T } = S, _, [Nodes]) ->
 %% and also remove its timer structure.
 %% TODO: Assert only bad nodes are removed because this is the rule of the system!
 remove_callouts(_S, [Node]) ->
-    ?CALLOUT(dht_routing_table, delete, [Node, ?WILDCARD], rt_ref),
+    ?CALLOUT(dht_routing_table, delete, [Node, ?WILDCARD], 'ROUTING_TABLE'),
     ?RET(ok).
 
 remove_next(#state { tree = Tree } = State, _, [Node]) ->
@@ -698,7 +700,7 @@ replace_callouts(_S, [OldNode, NewNode]) ->
 %%  • Update the callouts to ranges so they are correct
 adjoin_callouts(#state { time = T }, [Node]) ->
     ?CALLOUT(dht_time, monotonic_time, [], T),
-    ?CALLOUT(dht_routing_table, insert, [Node, ?WILDCARD], rt_ref),
+    ?CALLOUT(dht_routing_table, insert, [Node, ?WILDCARD], 'ROUTING_TABLE'),
     ?CALLOUT(dht_routing_table, is_member, [Node, ?WILDCARD], true),
 
     ?CALLOUT(dht_time, send_after, [T, ?WILDCARD, ?WILDCARD], make_ref()),
@@ -894,12 +896,11 @@ weight(_S, _) -> 100.
 prop_component_correct() ->
     ?SETUP(fun() ->
         eqc_mocking:start_mocking(api_spec()),
-        fun() -> eqc_mocking:stop_mocking() end
+        fun() -> ok end
     end,
     ?FORALL(State, gen_state(),
     ?FORALL(Cmds, commands(?MODULE, State),
       begin
-        ok = eqc_lib:reset(?DRIVER),
         {H,S,R} = run_commands(?MODULE, Cmds),
         pretty_commands(?MODULE, Cmds, {H,S,R},
           collect(eqc_lib:summary('Length'), length(Cmds),
