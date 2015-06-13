@@ -338,12 +338,14 @@ initialized(#state { init = I }) -> I.
 %% Use a common postcondition for all commands, so we can utilize the valid return
 %% of each command.
 postcondition_common(S, Call, Res) ->
-    eq(Res, return_value(S, Call)).
+    case eq(Res, return_value(S, Call)) of
+        true -> true;
+        Otherwise -> {Otherwise, sys:get_state(routing_table)}
+    end.
 
 prop_component_correct() ->
     ?SETUP(fun() -> ok, fun() -> ok end end,
-    ?FORALL(Filter, function1(bool()),
-    ?FORALL(Cmds, commands(?MODULE, #state { filter_fun = Filter}),
+    ?FORALL(Cmds, commands(?MODULE, #state {}),
       begin
         {H, S, R} = run_commands(?MODULE, Cmds),
         pretty_commands(?MODULE, Cmds, {H, S, R},
@@ -352,7 +354,7 @@ prop_component_correct() ->
             aggregate(with_title('Features'), eqc_statem:call_features(H),
             features(eqc_statem:call_features(H),
                 R == ok)))))
-      end))).
+      end)).
 
 t() -> t(15).
 

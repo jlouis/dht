@@ -35,12 +35,11 @@ d(ID1, ID2) -> ID1 bxor ID2.
     Limit :: non_neg_integer().
 
 neighborhood(ID, Nodes, Limit) ->
-	Distances = [{d(ID, NID), N} || {NID, _, _} = N <- Nodes],
-	Eligible = case lists:sort(Distances) of
-	    Sorted when length(Sorted) =< Limit -> Sorted;
-	    Sorted when length(Sorted) > Limit ->
-	        {H, _T} = lists:split(Limit, Sorted),
-	        H
-	end,
-	[S || {_, S} <- Eligible].
+    DF = fun({NID, _, _}) -> d(ID, NID) end,
+    case lists:sort(fun(X, Y) -> DF(X) < DF(Y) end, Nodes) of
+        Sorted when length(Sorted) =< Limit -> Sorted;
+        Sorted when length(Sorted) > Limit ->
+            {H, _T} = lists:split(Limit, Sorted),
+            H
+    end.
 
