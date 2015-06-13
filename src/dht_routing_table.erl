@@ -151,7 +151,7 @@ is_range(Range, RT) -> lists:member(Range, ranges(RT)).
 -spec closest_to(dht:id(), fun ((dht:id()) -> boolean()), pos_integer(), t()) ->
                         list(dht:peer()).
 closest_to(ID, NodeFilterF, Num, #routing_table { table = Buckets }) ->
-    lists:flatten(closest_to_1(ID, Num, Buckets, NodeFilterF, [], [])).
+    sets:to_list(closest_to_1(ID, Num, Buckets, NodeFilterF, [], sets:new() )).
 
 %% TODO: This can be done in one recursion rather than two.
 %% Walking "down" toward the target first will pick the most specific nodes we can find.
@@ -160,20 +160,20 @@ closest_to_1(_, 0, _, _, _, Ret) -> Ret;
 closest_to_1(ID, Num, [], NodeFilterF, Rest, Ret) -> closest_to_2(ID, Num, Rest, NodeFilterF, Ret);
 closest_to_1(ID, Num, [#bucket { low = Min, members = Members }|T], NodeFilterF, Rest, Acc)
   when (ID band Min) > 0 ->
-    CloseNodes = dht_metric:neighborhood(ID, [M || M <- Members, NodeFilterF(M)], Num),
-    NxtNum = max(0, Num - length(CloseNodes)),
-    NxtAcc = [CloseNodes|Acc],
-    closest_to_1(ID, NxtNum, T, NodeFilterF, Rest, NxtAcc);
+    ClosestNodes = dht_metric:neighborhood(ID, [M || M <- Members, NodeFilterF(M)], Num),
+    NxtNum = max(0, Num - length(ClosestNodes)),
+    closest_to_1(ID, NxtNum, T, NodeFilterF, Rest, sets:union(Acc, sets:from_list(ClosestNodes)));
 closest_to_1(ID, Num, [H|T], NodeFilterF, Rest, Acc) ->
     closest_to_1(ID, Num, T, NodeFilterF, [H|Rest], Acc).
 
 closest_to_2(_, 0, _, _, Ret) -> Ret;
 closest_to_2(_, _, [], _, Ret) -> Ret;
 closest_to_2(ID, Num, [#bucket { members = Members }|T], NodeFilterF, Acc) ->
-    ClosestNodes = dht_metric:neighborhood(ID, [M || M <- Members, NodeFilterF(M)], Num) ++ Acc,
-    NxtN = max(0, Num - length(ClosestNodes)),
-    NxtAcc = [ClosestNodes|Acc],
-    closest_to_2(ID, NxtN, T, NodeFilterF, NxtAcc).
+    ClosestNodes = sets:union(
+        sets:from_list(dht_metric:neighborhood(ID, [M || M <- Members, NodeFilterF(M)], Num)),
+        Acc),
+    NxtN = max(0, Num - sets:size(ClosestNodes)),
+    closest_to_2(ID, NxtN, T, NodeFilterF, ClosestNodes).
 
 %%
 %% Return a list of all members, combined, in all buckets.
