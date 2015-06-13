@@ -141,7 +141,7 @@
 	
 	%%% MODEL OF TIMERS
 	%%
-	time :: time(),
+	time = 0:: time(),
 	timers = [] :: [{time(), time_ref()}],
 	tref = 0 :: time_ref(),
 	%% The fields time, timers and tref models time. The idea is that `time' is the
@@ -152,7 +152,7 @@
 	%%
 	init = false :: boolean(),
 	%% init encodes if we have initialized the routing table or not.
-	id :: any(),
+	id = 0:: any(),
 	%% id represents the current ID of the node we are running as
 	node_timers = [] :: [{dht:peer(), time(), non_neg_integer(), boolean()}],
 	range_timers = [] :: [{dht:range(), time_ref()}]
@@ -267,7 +267,7 @@ gen_state() ->
         range_timers = []
       }).
 
-initial_state() -> #state{}.
+%% initial_state() -> #state{}.
 
 %% NEW
 %% --------------------------------------------------
@@ -306,9 +306,9 @@ new_callouts(#state { id = ID, time = T } = S, [ID, L, H]) ->
     ?RET({ok, ID, Tbl}).
   
 %% Track that we initialized the system
-new_next(State, _, _) -> State#state { init = true }.
+new_next(S, _, _) -> S#state { init = true }.
 
-new_features(_S, _A, _R) -> new.
+new_features(_S, _A, _R) -> [new].
 
 %% INSERT
 %% --------------------------------------------------
@@ -338,10 +338,11 @@ insert_pre(S) -> initialized(S).
 
 %% Any peer is eligible for insertion at any time. There are no limits on how and when
 %% you can do this insertion.
-insert_args(_S) -> [dht_eqc:peer(), 'ROUTING_TABLE'].
+insert_args(S) ->
+    Peer = ?SUCHTHAT(P, dht_eqc:peer(), not has_peer(P, S)),
+    [Peer, 'ROUTING_TABLE'].
 
-insert_pre(S, [Peer, _]) ->
-    initialized(S) andalso (not has_peer(Peer, S)).
+insert_pre(S, [Peer, _]) -> initialized(S) andalso (not has_peer(Peer, S)).
 
 %% We `adjoin' the Node to the routing table, which is addressed as a separate
 %% internal model transition.
@@ -351,12 +352,13 @@ insert_pre(S, [Peer, _]) ->
 %% • The bucket may actually split more than once in this call, and we don't track it!
 insert_callouts(_S, [Node, _]) ->
     ?MATCH(R, ?APPLY(adjoin, [Node])),
+    R = ok,
     case R of
         ok -> ?RET(ok);
         Else -> ?FAIL(Else)
     end.
 
-insert_features(_S, _A, _R) -> insert.
+insert_features(_S, _A, _R) -> [insert].
 
 %% IS_MEMBER
 %% --------------------------------------------------
@@ -378,7 +380,7 @@ is_member_callouts(S, [Node, _]) ->
         lists:member(Node, current_nodes(S)))),
     ?RET(R).
 
-is_member_features(_S, _A, Bool) -> {is_member, Bool}.
+is_member_features(_S, _A, Bool) -> [{is_member, Bool}].
 
 %% NEIGHBORS
 %% --------------------------------------------------
@@ -419,8 +421,8 @@ neighbors_callouts(S, [ID, K, _]) ->
 
 neighbors_features(_S, _A, R) ->
     case R of
-        [] -> {neighbors, empty};
-        L when is_list(L) -> {neighbors, cons}
+        [] -> [{neighbors, empty}];
+        L when is_list(L) -> [{neighbors, cons}]
     end.
 
 %% NODE_LIST
@@ -441,7 +443,7 @@ node_list_callouts(S, [_]) ->
     ?MATCH(R, ?CALLOUT(dht_routing_table, node_list, [?WILDCARD], rt_nodes(S))),
     ?RET(R).
     
-node_list_features(_S, _A, _R) -> node_list.
+node_list_features(_S, _A, _R) -> [node_list].
 
 %% NODE_STATE
 %% --------------------------------------------------
@@ -746,22 +748,29 @@ replace_callouts(_S, [OldNode, NewNode]) ->
 %% ADJOIN (Internal call)
 %% --------------------------------------------------
 
+send_after_callouts(#state { tref = TRef, time = T }, []) ->
+    ?CALLOUT(dht_time, send_after, [T, ?WILDCARD, ?WILDCARD], {tref, TRef}).
+    
+send_after_next(#state { tref = C } = S, _, []) -> S#state { tref = C + 1 }.
+
 %% TODO:
 %%  • Update the callouts to ranges so they are correct
 adjoin_callouts(#state { time = T }, [Node]) ->
     ?CALLOUT(dht_time, monotonic_time, [], T),
     ?CALLOUT(dht_routing_table, insert, [Node, ?WILDCARD], 'ROUTING_TABLE'),
     ?CALLOUT(dht_routing_table, is_member, [Node, ?WILDCARD], true),
-
-    ?CALLOUT(dht_time, send_after, [T, ?WILDCARD, ?WILDCARD], make_ref()),
+    ?APPLY(send_after, []),
     ?MATCH(Before, ?APPLY(obtain_ranges, [])),
     ?APPLY(insert_node, [Node, T]),
     ?MATCH(After, ?APPLY(obtain_ranges, [])),
-    Ops = [{del, R} || R <- ordsets:subtract(Before, After)]
-      ++ [{add, R} || R <- ordsets:subtract(After, Before)],
+    Ops = lists:append(
+        [{del, R} || R <- ordsets:subtract(Before, After)],
+        [{add, R} || R <- ordsets:subtract(After, Before)]),
     ?APPLY(fold_ranges, [T, Ops]),
     ?RET(ok).
     
+adjoin_features(_S, _A, _R) -> [adjoin].
+
 obtain_ranges_callouts(S, []) ->
     ?MATCH(R, ?CALLOUT(dht_routing_meta, ranges, [?WILDCARD], current_ranges(S))),
     ?RET(R).
@@ -808,11 +817,8 @@ split_range_features(_S, _A, _R) -> [split_range].
 %% --------------------------------------------
 
 %% Performing a split is a tool we use to actually split a range. The precondition is that
-%% we can only split a range if our own node falls within it.
-perform_split_pre(S, [Node, P]) ->
-    { #{ lo := L, hi := H}, _Rs} = take_range(S, Node),
-    within(L, P, H).
-
+%% we can only split a range if our own node falls within it. And we track this by means
+%% of a test on the `split` value of the range.
 perform_split_callouts(#state { time = T } = S, [Node, P]) ->
     { #{ split := Split, lo := L, hi := H }, _Rs} = take_range(S, Node),
     case Split of
@@ -902,15 +908,22 @@ add_range_timer_at_next(#state { timers = TS, tref = C, range_timers = RT } = St
     }.
 
 remove_range_timer_callouts(#state { range_timers = RT } = S, [Range]) ->
-    {Range, _, TRef} = lists:keyfind(Range, 1, RT),
-    ?CALLOUT(dht_time, cancel_timer, [TRef], timer_state(S, TRef)).
+    case lists:keyfind(Range, 1, RT) of
+        {Range, _, TRef} ->
+            ?CALLOUT(dht_time, cancel_timer, [TRef], timer_state(S, TRef));
+        false ->
+            ?FAIL(remove_non_existing_range)
+    end.
     
 remove_range_timer_next(#state { range_timers = RT, timers = Timers } = State, _, [Range]) ->
-    {Range, _, TRef} = lists:keyfind(Range, 1, RT),
-    State#state {
-        range_timers = lists:keydelete(TRef, 3, RT),
-        timers = lists:keydelete(TRef, 2, Timers)
-    }.
+    case lists:keyfind(Range, 1, RT) of
+        {Range, _, TRef} ->
+            State#state {
+                range_timers = lists:keydelete(TRef, 3, RT),
+                timers = lists:keydelete(TRef, 2, Timers)
+            };
+        false -> State
+    end.
 
 timer_state(#state { time = T, timers = Timers }, TRef) ->
     case lists:keyfind(TRef, 2, Timers) of
@@ -940,9 +953,6 @@ remove_node_timer_next(#state { node_timers = NT } = State, _, [Node]) ->
 %% of each command.
 postcondition_common(S, Call, Res) ->
     eq(Res, return_value(S, Call)).
-
-%% Adjust weights of commands.
-weight(_S, _) -> 100.
 
 %% Main property, just verify that the commands are in sync with reality.
 prop_component_correct() ->
