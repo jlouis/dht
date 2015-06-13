@@ -342,7 +342,7 @@ postcondition_common(S, Call, Res) ->
 
 prop_component_correct() ->
     ?SETUP(fun() -> ok, fun() -> ok end end,
-    ?FORALL(Filter, eqc_fun:function1(bool()),
+    ?FORALL(Filter, function1(bool()),
     ?FORALL(Cmds, commands(?MODULE, #state { filter_fun = Filter}),
       begin
         {H, S, R} = run_commands(?MODULE, Cmds),
@@ -351,8 +351,7 @@ prop_component_correct() ->
             collect(eqc_lib:summary('Length'), length(Cmds),
             aggregate(with_title('Features'), eqc_statem:call_features(H),
             features(eqc_statem:call_features(H),
-            ?WHENFAIL(eqc_fun:print_function("FilterFun =", Filter),
-                R == ok))))))
+                R == ok)))))
       end))).
 
 t() -> t(15).
