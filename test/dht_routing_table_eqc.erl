@@ -35,7 +35,7 @@ new_return(_S, [_Self, _, _]) -> 'ROUTING_TABLE'.
 
 new_next(S, _, [Self, Low, High]) -> S#state { self = Self, init = true, tree = initial_tree(Low, High) }.
 
-new_features(_S, _, _) -> ["NEW: Created a new routing table"].
+new_features(_S, _, _) -> new.
 
 %% Insertion of new entries into the routing table
 %% -----------------------------------------------
@@ -62,9 +62,12 @@ insert_callouts(_S, [Node, _]) ->
     ?APPLY(insert_split_range, [Node, 7]),
     ?RET('ROUTING_TABLE').
 
-insert_features(_State, _Args, _Return) ->
-    %% TODO: There are more features here, but we don't cover them yet
-    ["INSERT001: Insert a new node into the routing table"].
+insert_features(_State, [Node, _], _Return) ->
+    Ns = routing_table:node_list(),
+    case lists:member(Node, Ns) of
+        true -> {insert, success};
+        false -> {insert, full_bucket}
+    end.
 
 %% Ask the system for the current state table ranges
 %% -------------------------------------------------
@@ -82,8 +85,7 @@ ranges_args(_S) -> ['ROUTING_TABLE'].
 ranges_return(S, [_Dummy]) ->
     lists:sort(current_ranges(S)).
 
-ranges_features(_S, _A, _Res) ->
-    ["RANGES001: Ask for the current ranges in the routing table"].
+ranges_features(_S, _A, _Res) -> ranges.
 
 %% Delete a node from the routing table
 %% If the node is not present, this is a no-op.
@@ -115,8 +117,8 @@ delete_return(_S, [_, _]) -> 'ROUTING_TABLE'.
 
 delete_features(S, [Node, _], _R) ->
     case has_node(Node, S) of
-        true -> ["DELETE001: Delete an existing node from the routing table"];
-        false -> ["DELETE002: Delete a non-existing node from the routing table"]
+        true -> {delete, member};
+        false -> {delete, non_member}
     end.
 
 %% Ask for members of a given ID
@@ -158,13 +160,13 @@ members_return(S, [{node, Node}, _]) ->
 
 members_features(S, [{range, R}, _], _Res) ->
     case has_range(R, S) of
-        true -> ["MEMBERS003: Members on a range which exists"];
-        false -> ["MEMBERS004: Members on a range which doesn't exist"]
+        true -> {members, existing_range};
+        false -> {members, nonexisting_range}
     end;
 members_features(S, [{node, Node}, _], _Res) ->
     case has_node(Node, S) of
-        true -> ["MEMBERS001: Members on a node which has an existing ID"];
-        false -> ["MEMBERS002: Members of a non-existing node"]
+        true -> {members, existing_node};
+        false -> {members, nonexisting_node}
     end.
 
 %% Ask for membership of the Routing Table
@@ -192,9 +194,9 @@ member_state_return(S, [{ID, IP, Port}, _]) ->
         {ID, _, _} -> roaming_member
     end.
 
-member_state_features(_S, [_, _], unknown) -> ["MEMBER_STATE001: Lookup of unknown member"];
-member_state_features(_S, [_, _], member) -> ["MEMBER_STATE002: Lookup of a member"];
-member_state_features(_S, [_, _], roaming_member) -> ["MEMBER_STATE003: Lookup of a roaming member"].
+member_state_features(_S, [_, _], unknown) -> {member_state, unknown};
+member_state_features(_S, [_, _], member) -> {member_state, member};
+member_state_features(_S, [_, _], roaming_member) -> {member_state, roaming}.
 
 %% Ask for the node id
 %% --------------------------
@@ -208,8 +210,7 @@ node_id_args(_S) -> ['ROUTING_TABLE'].
 
 node_id_return(#state { self = Self }, _) -> Self.
 
-node_id_features(_S, [_], _R) ->
-    ["NODE_ID001: Asked for the node ID"].
+node_id_features(_S, [_], _R) -> node_id.
 
 %% Ask for the node list
 %% -----------------------
@@ -226,8 +227,7 @@ node_list_args(_S) -> ['ROUTING_TABLE'].
 node_list_return(S, [_], _) ->
     lists:sort(current_nodes(S)).
 
-node_list_features(_S, _A, _R) ->
-    ["NODE_LIST001: Asking for the current node list"].
+node_list_features(_S, _A, _R) -> node_list.
 
 %% Ask if the routing table has a bucket
 %% -------------------------------------
@@ -246,8 +246,8 @@ is_range_args(S) ->
 is_range_return(S, [Range, _]) ->
     lists:member(Range, current_ranges(S)).
 
-is_range_features(_S, _, true) -> ["IS_RANGE001: Existing range"];
-is_range_features(_S, _, false) -> ["IS_RANGE002: Non-existing range"].
+is_range_features(_S, _, true) -> {is_range, existing};
+is_range_features(_S, _, false) -> {is_range, nonexisting}.
 
 %% Ask who is closest to a given ID
 %% --------------------------------
@@ -272,8 +272,7 @@ take(0, _) -> [];
 take(_, []) -> [];
 take(K, [X|Xs]) when K > 0 -> [X | take(K-1, Xs)].
 
-closest_to_features(_S, _A, _R) ->
-    ["CLOSEST_TO: Asking for the N nodes closest to an ID"].
+closest_to_features(_S, [_, _, N, _], _R) -> {closest_to, N}.
 
 %% INSERT_SPLIT_RANGE / SPLIT_RANGE (Internal calls)
 
@@ -347,7 +346,7 @@ prop_component_correct() ->
         pretty_commands(?MODULE, Cmds, {H, S, R},
             aggregate(with_title('Commands'), command_names(Cmds),
             collect(eqc_lib:summary('Length'), length(Cmds),
-            aggregate(eqc_statem:call_features(H),
+            aggregate(with_title('Features'), eqc_statem:call_features(H),
             features(eqc_statem:call_features(H),
                 R == ok)))))
       end)).
