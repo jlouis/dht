@@ -748,18 +748,11 @@ replace_callouts(_S, [OldNode, NewNode]) ->
 %% ADJOIN (Internal call)
 %% --------------------------------------------------
 
-send_after_callouts(#state { tref = TRef, time = T }, []) ->
-    ?CALLOUT(dht_time, send_after, [T, ?WILDCARD, ?WILDCARD], {tref, TRef}).
-    
-send_after_next(#state { tref = C } = S, _, []) -> S#state { tref = C + 1 }.
-
-%% TODO:
-%%  • Update the callouts to ranges so they are correct
+%% Adjoin a new node to the routing table, tracking meta-data information as well
 adjoin_callouts(#state { time = T }, [Node]) ->
     ?CALLOUT(dht_time, monotonic_time, [], T),
     ?CALLOUT(dht_routing_table, insert, [Node, ?WILDCARD], 'ROUTING_TABLE'),
     ?CALLOUT(dht_routing_table, is_member, [Node, ?WILDCARD], true),
-    ?APPLY(send_after, []),
     ?MATCH(Before, ?APPLY(obtain_ranges, [])),
     ?APPLY(insert_node, [Node, T]),
     ?MATCH(After, ?APPLY(obtain_ranges, [])),
@@ -772,7 +765,7 @@ adjoin_callouts(#state { time = T }, [Node]) ->
 adjoin_features(_S, _A, _R) -> [adjoin].
 
 obtain_ranges_callouts(S, []) ->
-    ?MATCH(R, ?CALLOUT(dht_routing_meta, ranges, [?WILDCARD], current_ranges(S))),
+    ?MATCH(R, ?CALLOUT(dht_routing_table, ranges, [?WILDCARD], current_ranges(S))),
     ?RET(R).
 
 fold_ranges_callouts(_S, [_T, []]) -> ?EMPTY;
@@ -835,7 +828,7 @@ perform_split_next(#state { id = Own } = S, _, [Node, P]) ->
     Split = within(L, Own, H), %% Assert the state of the split
     case Split of
         true ->
-            {LowNodes, HighNodes} = list:partition(F, Nodes),
+            {LowNodes, HighNodes} = lists:partition(F, Nodes),
             Low = #{ lo => L, hi => P, nodes => LowNodes, split => within(L, Own, P) },
             High = #{ lo => P+1, hi => H, nodes => HighNodes, split => within(P+1, Own, H) },
             S#state { tree = Rs ++ [Low, High] };
