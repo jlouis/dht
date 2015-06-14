@@ -151,29 +151,10 @@ is_range(Range, RT) -> lists:member(Range, ranges(RT)).
 -spec closest_to(dht:id(), fun ((dht:id()) -> boolean()), pos_integer(), t()) ->
                         list(dht:peer()).
 closest_to(ID, NodeFilterF, Num, #routing_table { table = Buckets }) ->
-    sets:to_list(closest_to_1(ID, Num, Buckets, NodeFilterF, [], sets:new() )).
-
-%% TODO: This can be done in one recursion rather than two.
-%% Walking "down" toward the target first will pick the most specific nodes we can find.
-%% Walking "up" the recursion chain then fulfills the remaining answer.
-closest_to_1(_, 0, _, _, _, Ret) -> Ret;
-closest_to_1(ID, Num, [], NodeFilterF, Rest, Ret) -> closest_to_2(ID, Num, Rest, NodeFilterF, Ret);
-closest_to_1(ID, Num, [#bucket { low = Min, members = Members }|T], NodeFilterF, Rest, Acc)
-  when (ID band Min) > 0 ->
-    ClosestNodes = dht_metric:neighborhood(ID, [M || M <- Members, NodeFilterF(M)], Num),
-    NxtNum = max(0, Num - length(ClosestNodes)),
-    closest_to_1(ID, NxtNum, T, NodeFilterF, Rest, sets:union(Acc, sets:from_list(ClosestNodes)));
-closest_to_1(ID, Num, [H|T], NodeFilterF, Rest, Acc) ->
-    closest_to_1(ID, Num, T, NodeFilterF, [H|Rest], Acc).
-
-closest_to_2(_, 0, _, _, Ret) -> Ret;
-closest_to_2(_, _, [], _, Ret) -> Ret;
-closest_to_2(ID, Num, [#bucket { members = Members }|T], NodeFilterF, Acc) ->
-    ClosestNodes = sets:union(
-        sets:from_list(dht_metric:neighborhood(ID, [M || M <- Members, NodeFilterF(M)], Num)),
-        Acc),
-    NxtN = max(0, Num - sets:size(ClosestNodes)),
-    closest_to_2(ID, NxtN, T, NodeFilterF, ClosestNodes).
+    Nodes = [N || N <- all_nodes(Buckets), NodeFilterF(N)],
+    DF = fun({MID, _, _}) -> dht_metric:d(ID, MID) end,
+    Closest = lists:sort(fun(X, Y) -> DF(X) < DF(Y) end, Nodes),
+    take(Num, Closest).
 
 %%
 %% Return a list of all members, combined, in all buckets.
@@ -197,3 +178,13 @@ in_bucket(Dist, #bucket { low = Lo, high = Hi }) -> ?in_range(Dist, Lo, Hi).
 retrieve_id(ID, #routing_table { table = Table }) ->
     S = fun(B) -> in_bucket(ID, B) end,
     retrieve(S, Table).
+
+all_nodes([]) -> [];
+all_nodes([#bucket { members = Ns } | Bs]) ->
+    Rest = all_nodes(Bs),
+    Ns ++ Rest.
+
+take(0, _) -> [];
+take(_, []) -> [];
+take(K, [X|Xs]) when K > 0 -> [X | take(K-1, Xs)].
+
