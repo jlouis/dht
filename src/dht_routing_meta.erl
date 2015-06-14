@@ -90,7 +90,7 @@ insert(Node, #routing { table = Tbl, nodes = NT } = Routing) ->
     T = dht_routing_table:insert(Node, Tbl),
     true =  dht_routing_table:is_member(Node, T),
     %% Update the timers, if they need to change
-    NewState = Routing#routing { nodes = node_update({unreachable, Node}, Now, NT) },
+    NewState = Routing#routing { nodes = node_update({reachable, Node}, Now, NT) },
     {ok, update_ranges(Tbl, Now, NewState)}.
 
 %% @doc remove/2 removes a node from the routing table

@@ -68,6 +68,12 @@ We use a simple `map({Lo, Hi}, [Node])` as the model of the routing table in our
 The `closest_to` call looks hard to implement, but it's formal specification is straightforward: sort all nodes based on the distance to the desired ID, and pick the first K of those nodes. If we canonicalize the output by sorting it, we
 obtain a correct specification.
 
+### Node reachability
+
+Nodes in the routing table are either "reachable" or not. Nodes which are "reachable" are nodes which are not thought to be behind a firewall, which means they are possible to contact at any time.
+
+TODO: We need to model the fact that node insertion can be for non-reachable nodes. And we need to make a distinction between nodes when we insert them. But the current model ignores this.
+
 TODO: Add documentation
 
 ## Routing table metadata
