@@ -516,12 +516,21 @@ node_timeout_pre(S) -> initialized(S) andalso has_nodes(S).
 
 node_timeout_args(S) -> [rt_node(S), 'ROUTING_TABLE'].
 
-node_timeout_callouts(_S, [_Node, _]) ->
-    ?RET(ok).
+node_timeout_pre(S, [Node, _]) -> has_peer(Node, S).
+
+node_timeout_callouts(#state { node_timers = NT }, [Node, _]) ->
+    case lists:keymember(Node, 1, NT) of
+        true -> ?RET(ok);
+        false -> ?FAIL({node_timeout, {unknown_node, Node}})
+    end.
 
 node_timeout_next(#state { node_timers = NT } = S, _, [Node, _]) ->
-    {Node, LA, Count, Reachable} = lists:keyfind(Node, 1, NT),
-    S#state { node_timers = lists:keyreplace(Node, 1, NT, {Node, LA, Count+1, Reachable}) }.
+    case lists:keyfind(Node, 1, NT) of
+        {Node, LA, Count, Reachable} ->
+            S#state { node_timers = lists:keyreplace(Node, 1, NT, {Node, LA, Count+1, Reachable}) };
+        false ->
+            S
+    end.
 
 node_timeout_features(_S, _A, _R) -> [node_timeout].
 
@@ -574,18 +583,29 @@ node_touch_pre(S) -> initialized(S) andalso has_nodes(S).
 
 node_touch_args(S) -> [rt_node(S), #{ reachable => bool() }, 'ROUTING_TABLE'].
 
-node_touch_callouts(#state { time = T }, [_Node, _Opts, _]) ->
-    ?CALLOUT(dht_time, monotonic_time, [], T),
-    ?RET(ok).
+node_touch_pre(S, [Node, _, _]) -> has_peer(Node, S).
+
+node_touch_callouts(#state { time = T } = S, [Node, _Opts, _]) ->
+    case has_peer(Node, S) of
+        true ->
+            ?CALLOUT(dht_time, monotonic_time, [], T),
+            ?RET(ok);
+        false ->
+            ?FAIL({node_touch, {unknown_node, Node}})
+    end.
 
 %% Refreshing a node depends on its current reachability and if the new refresh is for a
 %% reply, in which case the node is reachable. If the node is not reachable, this is a no-op.
 %% and if the node is reachable, the backend structure is updated.
 node_touch_next(#state { node_timers = NTs, time = T } = S, _, [Node, #{ reachable := R2}, _]) ->
-    {_, _, _, R1} = lists:keyfind(Node, 1, NTs),
-    case R1 or R2 of
-        false -> S;
-        true -> S#state { node_timers = lists:keyreplace(Node, 1, NTs, {Node, T, 0, true}) }
+    case lists:keyfind(Node, 1, NTs) of
+        {_, _, _, R1} ->
+            case R1 or R2 of
+                false -> S;
+                true -> S#state { node_timers = lists:keyreplace(Node, 1, NTs, {Node, T, 0, true}) }
+            end;
+        false ->
+            S
     end.
 
 node_touch_features(_S, _A, _R) -> [node_touch].
@@ -659,6 +679,8 @@ reset_range_timer_pre(S) -> initialized(S).
 
 reset_range_timer_args(S) ->
     [rt_range(S), #{ force => bool() }, 'ROUTING_TABLE'].
+
+reset_range_timer_pre(S, [Range, _ ,_]) -> has_range(Range, S).
 
 reset_range_timer_callouts(#state { time = T }, [Range, #{ force := true }, _]) ->
     ?CALLOUT(dht_time, monotonic_time, [], T),
@@ -759,7 +781,7 @@ adjoin_callouts(#state { time = T }, [Node]) ->
     Ops = lists:append(
         [{del, R} || R <- ordsets:subtract(Before, After)],
         [{add, R} || R <- ordsets:subtract(After, Before)]),
-    ?APPLY(fold_ranges, [T, Ops]),
+    ?APPLY(fold_ranges, [Ops]),
     ?RET(ok).
     
 adjoin_features(_S, _A, _R) -> [adjoin].
@@ -768,13 +790,14 @@ obtain_ranges_callouts(S, []) ->
     ?MATCH(R, ?CALLOUT(dht_routing_table, ranges, [?WILDCARD], current_ranges(S))),
     ?RET(R).
 
-fold_ranges_callouts(_S, [_T, []]) -> ?EMPTY;
-fold_ranges_callouts(S, [T, [{del, R} | Ops]]) ->
+fold_ranges_callouts(_S, [[]]) -> ?EMPTY;
+fold_ranges_callouts(S, [[{del, R} | Ops]]) ->
     ?APPLY(remove_range_timer, [R]),
-    fold_ranges_callouts(S, [T, Ops]);
-fold_ranges_callouts(S, [T, [{add, R} | Ops]]) ->
-    ?APPLY(add_range_timer_at, [R, T]),
-    fold_ranges_callouts(S, [T, Ops]).
+    fold_ranges_callouts(S, [Ops]);
+fold_ranges_callouts(S, [[{add, R} | Ops]]) ->
+    ?MATCH(Activity, ?APPLY(range_last_activity, [R])),
+    ?APPLY(add_range_timer_at, [R, Activity]),
+    fold_ranges_callouts(S, [Ops]).
 
 %% TODO: Split too large ranges!
 insert_node_callouts(_S, [Node, T]) ->
@@ -812,13 +835,10 @@ split_range_features(_S, _A, _R) -> [split_range].
 %% Performing a split is a tool we use to actually split a range. The precondition is that
 %% we can only split a range if our own node falls within it. And we track this by means
 %% of a test on the `split` value of the range.
-perform_split_callouts(#state { time = T } = S, [Node, P]) ->
-    { #{ split := Split, lo := L, hi := H }, _Rs} = take_range(S, Node),
+perform_split_callouts(#state {} = S, [Node, _P]) ->
+    { #{ split := Split }, _Rs} = take_range(S, Node),
     case Split of
-        true ->
-            ?APPLY(remove_range_timer, [{L, H}]),
-            ?APPLY(add_range_timer_at, [{L, P}, T]),
-            ?APPLY(add_range_timer_at, [{P+1, H}, T]);
+        true -> ?EMPTY;
         false -> ?FAIL(cannot_perform_split)
     end.
 
@@ -1029,6 +1049,10 @@ has_nodes(S) -> current_nodes(S) /= [].
 has_peer({ID, _, _}, S) ->
     Nodes = current_nodes(S),
     lists:keymember(ID, 1, Nodes).
+
+has_range(R, S) ->
+    Rs = current_ranges(S),
+    lists:member(R, Rs).
 
 delete_node(_Node, []) -> [];
 delete_node({ID, _, _} = Node, [#{ lo := Lo, hi := Hi, nodes := Nodes } = R | Rs]) when Lo =< ID, ID =< Hi ->
