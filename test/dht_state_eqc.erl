@@ -429,6 +429,12 @@ prop_component_correct() ->
                   R == ok)))
         end))).
 
+%% Helper for showing states of the output:
+t() -> t(5).
+
+t(Secs) ->
+    eqc:quickcheck(eqc:testing_time(Secs, eqc_statem:show_states(prop_component_correct()))).
+
 %% INTERNAL MODEL HELPERS
 %% -----------------------
 

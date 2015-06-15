@@ -267,7 +267,7 @@ gen_state() ->
         range_timers = []
       }).
 
-%% initial_state() -> #state{}.
+initial_state() -> #state{}.
 
 %% NEW
 %% --------------------------------------------------
@@ -479,24 +479,12 @@ node_state_callouts(#state { time = T, node_timers = NTs }, [Nodes, _]) ->
         end || {R, LA} <- Returns]),
     ?RET([R || {R, _LA} <- Returns]).
 
-node_state_features(_S, _A, R) ->
-    lists:append([
-      [{node_state, bad} || contains_bad(R)],
-      [{node_state, good} || contains_good(R)],
-      [{node_state, questionable} || contains_questionable(R)],
-      [{ndoe_state, not_member} || contains_not_member(R)]
-    ]).
-
-contains_bad(R) -> lists:member({bad, undefined}, R).
-contains_not_member(R) -> lists:member({not_member, undefined}, R).
-
-contains_good([]) -> false;
-contains_good([{good, _}|_]) -> true;
-contains_good([_|Xs]) -> contains_good(Xs).
-
-contains_questionable([]) -> false;
-contains_questionable([{questionable, _} | _]) -> true;
-contains_questionable([_|Xs]) -> contains_questionable(Xs).
+node_state_features(_S, _A, Result) ->
+    lists:usort([
+      case R of
+        {questionable, _} -> {node_state, questionable};
+        X -> {node_state, X}
+      end || R <- Result]).
 
 %% NODE_TIMEOUT
 %% --------------------------------------------------
@@ -583,7 +571,9 @@ node_touch_pre(S) -> initialized(S) andalso has_nodes(S).
 
 node_touch_args(S) -> [rt_node(S), #{ reachable => bool() }, 'ROUTING_TABLE'].
 
-node_touch_pre(S, [Node, _, _]) -> has_peer(Node, S).
+node_touch_pre(S, [Node, _, _]) -> 
+    Ns = current_nodes(S),
+    lists:member(Node, Ns).
 
 node_touch_callouts(#state { time = T } = S, [Node, _Opts, _]) ->
     case has_peer(Node, S) of
@@ -802,7 +792,7 @@ fold_ranges_callouts(S, [[{add, R} | Ops]]) ->
 %% TODO: Split too large ranges!
 insert_node_callouts(_S, [Node, T]) ->
     ?APPLY(split_range, [Node, T]),
-    ?APPLY(add_node_timer, [Node, T]).
+    ?APPLY(add_node_timer, [Node, T, true]).
 
 insert_node_next(S, _, [Node, _T]) ->
     { #{ nodes := Nodes } = R, Rs} = take_range(S, Node),
@@ -948,9 +938,9 @@ timer_state(#state { time = T, timers = Timers }, TRef) ->
 %% of that node. The last activity point is passed as an extra parameter in this call.
 %%
 %% A node starts out with no errors and as being unreachable
-add_node_timer_next(#state { node_timers = NT } = State, _, [Node, Activity]) ->
+add_node_timer_next(#state { node_timers = NT } = State, _, [Node, Activity, Reachable]) ->
     State#state {
-        node_timers = NT ++ [{Node, Activity, 0, false}]
+        node_timers = NT ++ [{Node, Activity, 0, Reachable}]
     }.
     
 %% Removing a node/range timer from the model state is akin to deleting that state
