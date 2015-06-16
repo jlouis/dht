@@ -7,6 +7,12 @@
 
 -include("dht_eqc.hrl").
 
+api_spec() ->
+    #api_spec {
+      language = erlang,
+      modules = []
+    }.
+
 -record(state,
     { self,
       init = false,
@@ -15,10 +21,7 @@
 
 %% Generators
 %% ----------
-gen_state() ->
-    ?LET(Self, dht_eqc:id(), #state { self = Self }).
-
-initial_state() -> #state {  }.
+initial_state() -> #state {}.
 
 initial_tree(Low, High) ->
     K = {Low, High},
@@ -344,8 +347,11 @@ postcondition_common(S, Call, Res) ->
     end.
 
 prop_component_correct() ->
-    ?SETUP(fun() -> ok, fun() -> ok end end,
-    ?FORALL(Cmds, commands(?MODULE, #state {}),
+    ?SETUP(fun() ->
+        eqc_mocking:start_mocking(api_spec()),
+        fun() -> ok end
+    end,
+    ?FORALL(Cmds, commands(?MODULE),
       begin
         {H, S, R} = run_commands(?MODULE, Cmds),
         pretty_commands(?MODULE, Cmds, {H, S, R},

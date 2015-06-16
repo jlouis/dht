@@ -12,7 +12,7 @@ api_spec() -> api_spec(?MODULE).
 
 prop_cluster_correct() ->
     ?SETUP(fun() ->
-        eqc_mocking:start_mocking(api_spec()),
+        eqc_mocking:start_mocking(api_spec(), components()),
         fun() -> ok end
     end,
     ?FORALL(MetaState, dht_routing_meta_eqc:gen_state(),

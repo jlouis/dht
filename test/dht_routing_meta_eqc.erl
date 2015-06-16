@@ -61,7 +61,6 @@
 %% (2) element(1, N1) =:= element(1, N2) (compare the IDs of the nodes)
 %%
 %% What to use probably depends on where the node is added.
-%% • What does is_member return? It uses (1) in the above.
 %%
 %% Buckets and ranges are split in the obvious pattern. A good question is:
 %% Do we split once a bucket reaches 8 nodes, or once it has more than 8 nodes?
@@ -188,7 +187,7 @@ api_spec() ->
             #api_fun { name = closest_to, arity = 4, classify = dht_routing_table_eqc },
             #api_fun { name = delete, arity = 2, classify = dht_routing_table_eqc },
             #api_fun { name = insert, arity = 2, classify = dht_routing_table_eqc },
-            #api_fun { name = is_member, arity = 2, classify = dht_routing_table_eqc },
+            #api_fun { name = member_state, arity = 2, classify = dht_routing_table_eqc },
             #api_fun { name = is_range, arity = 2, classify = dht_routing_table_eqc },
             #api_fun { name = members, arity = 2, classify = dht_routing_table_eqc },
             #api_fun { name = node_id, arity = 1, classify = dht_routing_table_eqc },
@@ -364,23 +363,23 @@ insert_features(_S, _A, _R) -> [insert].
 %% --------------------------------------------------
 
 %% Ask if a given node is a member of the Routing Table.
-is_member(Node, _) ->
-    eqc_lib:bind(?DRIVER, fun(T) -> {ok, dht_routing_meta:is_member(Node, T), T} end).
+member_state(Node, _) ->
+    eqc_lib:bind(?DRIVER, fun(T) -> {ok, dht_routing_meta:member_state(Node, T), T} end).
 
-is_member_callers() -> [dht_state_eqc].
+member_state_callers() -> [dht_state_eqc].
 
-is_member_pre(S) -> initialized(S).
+member_state_pre(S) -> initialized(S).
 
-is_member_args(_S) -> [dht_eqc:peer(), 'ROUTING_TABLE'].
+member_state_args(_S) -> [dht_eqc:peer(), 'ROUTING_TABLE'].
     
 %% This is simply a forward to the underlying routing table, so it should return whatever
 %% The RT returns.
-is_member_callouts(S, [Node, _]) ->
-    ?MATCH(R, ?CALLOUT(dht_routing_table, is_member, [Node, ?WILDCARD],
-        lists:member(Node, current_nodes(S)))),
+member_state_callouts(_S, [Node, _]) ->
+    ?MATCH(R, ?CALLOUT(dht_routing_table, member_state, [Node, ?WILDCARD],
+        oneof([unknown, member, roaming_member]))),
     ?RET(R).
 
-is_member_features(_S, _A, Bool) -> [{is_member, Bool}].
+member_state_features(_S, _A, Bool) -> [{member_state, Bool}].
 
 %% NEIGHBORS
 %% --------------------------------------------------
@@ -764,7 +763,7 @@ replace_callouts(_S, [OldNode, NewNode]) ->
 adjoin_callouts(#state { time = T }, [Node]) ->
     ?CALLOUT(dht_time, monotonic_time, [], T),
     ?CALLOUT(dht_routing_table, insert, [Node, ?WILDCARD], 'ROUTING_TABLE'),
-    ?CALLOUT(dht_routing_table, is_member, [Node, ?WILDCARD], true),
+    ?CALLOUT(dht_routing_table, member_state, [Node, ?WILDCARD], member),
     ?MATCH(Before, ?APPLY(obtain_ranges, [])),
     ?APPLY(insert_node, [Node, T]),
     ?MATCH(After, ?APPLY(obtain_ranges, [])),

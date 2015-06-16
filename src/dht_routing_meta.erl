@@ -31,7 +31,7 @@
 
 %% Query the state of the routing table and its meta-data
 -export([
-	is_member/2,
+	member_state/2,
 	neighbors/3,
 	node_list/1,
 	node_state/2,
@@ -63,7 +63,7 @@ new(Tbl) ->
     },
     {ok, ID, State}.
 
-is_member(Node, #routing { table = T }) -> dht_routing_table:is_member(Node, T).
+member_state(Node, #routing { table = T }) -> dht_routing_table:member_state(Node, T).
 range_members({_, _, _} = Node, #routing { table = T }) -> dht_routing_table:members(Node, T);
 range_members({_, _} = Range, #routing { table = T }) -> dht_routing_table:members(Range, T).
 
@@ -74,7 +74,7 @@ range_members({_, _} = Range, #routing { table = T }) -> dht_routing_table:membe
 %% @end
 replace(Old, New, #routing { nodes = Ns, table = Tbl } = State) ->
     bad = timer_state(Old, Ns),
-    false = is_member(New, State),
+    unknown = member_state(New, State),
     Deleted = State#routing {
         table = dht_routing_table:delete(Old, Tbl),
         nodes = maps:remove(Old, Ns)
@@ -88,7 +88,7 @@ replace(Old, New, #routing { nodes = Ns, table = Tbl } = State) ->
 insert(Node, #routing { table = Tbl, nodes = NT } = Routing) ->
     Now = dht_time:monotonic_time(),
     T = dht_routing_table:insert(Node, Tbl),
-    true =  dht_routing_table:is_member(Node, T),
+    member = dht_routing_table:member_state(Node, T),
     %% Update the timers, if they need to change
     NewState = Routing#routing { nodes = node_update({reachable, Node}, Now, NT) },
     {ok, update_ranges(Tbl, Now, NewState)}.

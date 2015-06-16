@@ -127,6 +127,8 @@ start_link_callouts(#state { id = ID }, [ID, []]) ->
 start_link_next(State, _, _) ->
     State#state { init = true }.
 
+start_link_features(_S, _A, _R) -> [start_link].
+
 %% CLOSEST TO
 %% ------------------------
 
@@ -145,6 +147,9 @@ closest_to_callouts(_S, [ID, Num]) ->
         list(dht_eqc:peer()))),
     ?RET(Ns).
 
+closest_to_features(_S, [_, Num], _) when Num >= 8 -> {closest_to, '>=8'};
+closest_to_features(_S, [_, Num], _) -> {closest_to, Num}.
+
 %% NODE ID
 %% ---------------------
 
@@ -156,6 +161,8 @@ node_id_pre(S) -> initialized(S).
 node_id_args(_S) -> [].
 	
 node_id_callouts(#state { id = ID }, []) -> ?RET(ID).
+
+node_id_features(_S, _A, _R) -> [node_id].
 
 %% INSERT
 %% ---------------------
@@ -203,6 +210,9 @@ insert_node_callouts(_S, [Node]) ->
             ?APPLY(insert_node, [Node])
     end.
 
+insert_features(_S, [{_IP, _Port}], _) -> [{insert, 'ip/port'}];
+insert_features(_S, [{_ID, _IP, _Port}], _) -> [{insert, node}].
+
 %% REQUEST_SUCCESS
 %% ----------------
 
@@ -224,6 +234,9 @@ request_success_callouts(_S, [Node, Opts]) ->
           ?CALLOUT(dht_routing_meta, node_touch, [Node, Opts, rt_ref], rt_ref),
           ?RET(ok)
     end.
+
+request_success_features(_S, [_, #{reachable := true }], _R) -> [{request_success, reachable}];
+request_success_features(_S, [_, #{reachable := false }], _R) -> [{request_success, non_reachable}].
 
 %% REQUEST_TIMEOUT
 %% ----------------
@@ -247,6 +260,8 @@ request_timeout_callouts(_S, [Node]) ->
           ?RET(ok)
     end.
 
+request_timeout_features(_S, [_], _) -> [request_timeout].
+
 %% REFRESH_NODE
 %% ------------------------------
 
@@ -264,13 +279,12 @@ refresh_node_args(_S) -> [dht_eqc:peer()].
 refresh_node_callouts(_S, [{ID, IP, Port} = Node]) ->
     ?MATCH(PingRes, ?APPLY(ping, [IP, Port])),
     case PingRes of
-        pang ->
-            ?APPLY(request_timeout, [Node]);
-        {ok, ID} ->
-            ?APPLY(request_success, [Node, #{ reachable => true }]);
-        {ok, _WrongID} ->
-            ?APPLY(request_timeout, [Node])
+        pang -> ?APPLY(request_timeout, [Node]);
+        {ok, ID} -> ?APPLY(request_success, [Node, #{ reachable => true }]);
+        {ok, _WrongID} -> ?APPLY(request_timeout, [Node])
     end.
+
+refresh_node_features(_S, _A, _R) -> [refresh_node].
 
 %% PING (Internal call to the network stack)
 %% ---------------------
@@ -279,6 +293,8 @@ refresh_node_callouts(_S, [{ID, IP, Port} = Node]) ->
 ping_callouts(_S, [IP, Port]) ->
     ?MATCH(R, ?CALLOUT(dht_net, ping, [{IP, Port}], oneof([pang, {ok, dht_eqc:id()}]))),
     ?RET(R).
+
+ping_features(_S, _A, _R) -> [ping].
 
 %% INACTIVE_RANGE (GenServer Message)
 %% --------------------------------
@@ -318,6 +334,8 @@ inactive_range_callouts(_S, [{inactive_range, Range}]) ->
     end,
     ?RET(ok).
 
+inactive_range_features(_S, _A, _R) -> [inactive_range].
+
 %% REFRESH_RANGE (Internal private call)
 
 %% This encodes the invariant that once we have found nodes close to the refreshing, they are
@@ -330,6 +348,8 @@ refresh_range_callouts(_S, [ID]) ->
         {_, Near} ->
             ?SEQ([?APPLY(insert_node, [N]) || N <- Near])
     end.
+    
+refresh_range_features(_S, _A, _R) -> [refresh_range].
 
 %% INSERT_NODE (GenServer Internal Call)
 %% --------------------------------
@@ -377,6 +397,8 @@ insert_node_gs_callouts(_S, [Node]) ->
         false -> ?APPLY(adjoin_node, [Node])
     end.
     
+insert_node_gs_features(_S, _A, _R) -> [insert_node_gs].
+
 %% Internal helper call for adjoining a new node
 adjoin_node_callouts(_S, [Node]) ->
     ?MATCH(Near, ?CALLOUT(dht_routing_meta, range_members, [Node, rt_ref],
@@ -422,11 +444,13 @@ prop_component_correct() ->
     ?FORALL(Cmds, commands(?MODULE, StartState),
         begin
             ok = reset(),
-            {H, S, R} = run_commands(?MODULE, Cmds),
-            pretty_commands(?MODULE, Cmds, {H, S, R},
-                collect(eqc_lib:summary('Length'), length(Cmds),
-                aggregate(command_names(Cmds),
-                  R == ok)))
+            {H,S,R} = run_commands(?MODULE, Cmds),
+        pretty_commands(?MODULE, Cmds, {H,S,R},
+            aggregate(with_title('Commands'), command_names(Cmds),
+            collect(eqc_lib:summary('Length'), length(Cmds),
+            aggregate(with_title('Features'), eqc_statem:call_features(H),
+            features(eqc_statem:call_features(H),
+                R == ok)))))
         end))).
 
 %% Helper for showing states of the output:
