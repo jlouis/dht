@@ -39,7 +39,7 @@ new_return(_S, [_Self, _, _]) -> 'ROUTING_TABLE'.
 
 new_next(S, _, [Self, Low, High]) -> S#state { self = Self, init = true, tree = initial_tree(Low, High) }.
 
-new_features(_S, _, _) -> new.
+new_features(_S, _, _) -> [{table, new}].
 
 %% Insertion of new entries into the routing table
 %% -----------------------------------------------
@@ -69,8 +69,8 @@ insert_callouts(_S, [Node, _]) ->
 insert_features(_State, [Node, _], _Return) ->
     Ns = routing_table:node_list(),
     case lists:member(Node, Ns) of
-        true -> {insert, success};
-        false -> {insert, full_bucket}
+        true -> [{table, {insert, success}}];
+        false -> [{table, {insert, full_bucket}}]
     end.
 
 %% Ask the system for the current state table ranges
@@ -89,7 +89,7 @@ ranges_args(_S) -> ['ROUTING_TABLE'].
 ranges_return(S, [_Dummy]) ->
     lists:sort(current_ranges(S)).
 
-ranges_features(_S, _A, _Res) -> ranges.
+ranges_features(_S, _A, _Res) -> [{table, ranges}].
 
 %% Delete a node from the routing table
 %% If the node is not present, this is a no-op.
@@ -121,8 +121,8 @@ delete_return(_S, [_, _]) -> 'ROUTING_TABLE'.
 
 delete_features(S, [Node, _], _R) ->
     case has_node(Node, S) of
-        true -> {delete, member};
-        false -> {delete, non_member}
+        true -> [{table, {delete, member}}];
+        false -> [{table, {delete, non_member}}]
     end.
 
 %% Ask for members of a given ID
@@ -164,13 +164,13 @@ members_return(S, [{node, Node}, _]) ->
 
 members_features(S, [{range, R}, _], _Res) ->
     case has_range(R, S) of
-        true -> {members, existing_range};
-        false -> {members, nonexisting_range}
+        true -> [{table, {members, existing_range}}];
+        false -> [{table, {members, nonexisting_range}}]
     end;
 members_features(S, [{node, Node}, _], _Res) ->
     case has_node(Node, S) of
-        true -> {members, existing_node};
-        false -> {members, nonexisting_node}
+        true -> [{table, {members, existing_node}}];
+        false -> [{table, {members, nonexisting_node}}]
     end.
 
 %% Ask for membership of the Routing Table
@@ -198,9 +198,9 @@ member_state_return(S, [{ID, IP, Port}, _]) ->
         {ID, _, _} -> roaming_member
     end.
 
-member_state_features(_S, [_, _], unknown) -> {member_state, unknown};
-member_state_features(_S, [_, _], member) -> {member_state, member};
-member_state_features(_S, [_, _], roaming_member) -> {member_state, roaming}.
+member_state_features(_S, [_, _], unknown) -> [{table, {member_state, unknown}}];
+member_state_features(_S, [_, _], member) -> [{table, {member_state, member}}];
+member_state_features(_S, [_, _], roaming_member) -> [{{member_state, roaming}}].
 
 %% Ask for the node id
 %% --------------------------
@@ -214,7 +214,7 @@ node_id_args(_S) -> ['ROUTING_TABLE'].
 
 node_id_return(#state { self = Self }, _) -> Self.
 
-node_id_features(_S, [_], _R) -> node_id.
+node_id_features(_S, [_], _R) -> [{table, node_id}].
 
 %% Ask for the node list
 %% -----------------------
@@ -231,7 +231,7 @@ node_list_args(_S) -> ['ROUTING_TABLE'].
 node_list_return(S, [_], _) ->
     lists:sort(current_nodes(S)).
 
-node_list_features(_S, _A, _R) -> node_list.
+node_list_features(_S, _A, _R) -> [{table, node_list}].
 
 %% Ask if the routing table has a bucket
 %% -------------------------------------
@@ -250,8 +250,8 @@ is_range_args(S) ->
 is_range_return(S, [Range, _]) ->
     lists:member(Range, current_ranges(S)).
 
-is_range_features(_S, _, true) -> {is_range, existing};
-is_range_features(_S, _, false) -> {is_range, nonexisting}.
+is_range_features(_S, _, true) -> [{table, {is_range, existing}}];
+is_range_features(_S, _, false) -> [{table, {is_range, nonexisting}}].
 
 %% Ask who is closest to a given ID
 %% --------------------------------
@@ -276,8 +276,8 @@ take(0, _) -> [];
 take(_, []) -> [];
 take(K, [X|Xs]) when K > 0 -> [X | take(K-1, Xs)].
 
-closest_to_features(_S, [_, _, N, _], _R) when N >= 8 -> {closest_to, '>=8'};
-closest_to_features(_S, [_, _, N, _], _R) -> {closest_to, N}.
+closest_to_features(_S, [_, _, N, _], _R) when N >= 8 -> [{table, {closest_to, '>=8'}}];
+closest_to_features(_S, [_, _, N, _], _R) -> [{table, {closest_to, N}}].
 
 %% INSERT_SPLIT_RANGE / SPLIT_RANGE (Internal calls)
 

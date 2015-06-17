@@ -308,7 +308,7 @@ new_callouts(#state { id = ID, time = T } = S, [ID, L, H, Nodes]) ->
 %% Track that we initialized the system
 new_next(S, _, _) -> S#state { init = true }.
 
-new_features(_S, _A, _R) -> [new].
+new_features(_S, _A, _R) -> [{meta, new}].
 
 %% INSERT
 %% --------------------------------------------------
@@ -358,7 +358,7 @@ insert_callouts(_S, [Node, _]) ->
         Else -> ?FAIL(Else)
     end.
 
-insert_features(_S, _A, _R) -> [insert].
+insert_features(_S, _A, _R) -> [{meta, insert}].
 
 %% IS_MEMBER
 %% --------------------------------------------------
@@ -380,7 +380,7 @@ member_state_callouts(_S, [Node, _]) ->
         oneof([unknown, member, roaming_member]))),
     ?RET(R).
 
-member_state_features(_S, _A, Bool) -> [{member_state, Bool}].
+member_state_features(_S, _A, Bool) -> [{meta, {member_state, Bool}}].
 
 %% NEIGHBORS
 %% --------------------------------------------------
@@ -433,8 +433,8 @@ neighbors_callouts(_S, [ID, K, _]) ->
 
 neighbors_features(_S, _A, R) ->
     case R of
-        [] -> [{neighbors, empty}];
-        L when is_list(L) -> [{neighbors, cons}]
+        [] -> [{meta, {neighbors, empty}}];
+        L when is_list(L) -> [{meta, {neighbors, cons}}]
     end.
 
 %% NODE_LIST
@@ -455,7 +455,7 @@ node_list_callouts(S, [_]) ->
     ?MATCH(R, ?CALLOUT(dht_routing_table, node_list, [?WILDCARD], rt_nodes(S))),
     ?RET(R).
     
-node_list_features(_S, _A, _R) -> [node_list].
+node_list_features(_S, _A, _R) -> [{meta, node_list}].
 
 %% NODE_STATE
 %% --------------------------------------------------
@@ -494,8 +494,8 @@ node_state_callouts(#state { time = T, node_timers = NTs }, [Nodes, _]) ->
 node_state_features(_S, _A, Result) ->
     lists:usort([
       case R of
-        {questionable, _} -> {node_state, questionable};
-        X -> {node_state, X}
+        {questionable, _} -> {meta, {node_state, questionable}};
+        X -> {meta, {node_state, X}}
       end || R <- Result]).
 
 %% NODE_TIMEOUT
@@ -532,7 +532,7 @@ node_timeout_next(#state { node_timers = NT } = S, _, [Node, _]) ->
             S
     end.
 
-node_timeout_features(_S, _A, _R) -> [node_timeout].
+node_timeout_features(_S, _A, _R) -> [{meta, node_timeout}].
 
 %% RANGE_MEMBERS
 %% --------------------------------------------------
@@ -561,8 +561,8 @@ range_members_callouts(S, [{ID, _, _} = Node, _]) ->
     		nodes_in_range(S, ID))),
     ?RET(R).
 
-range_members_features(_S, [{_, _, _} = _Node, _], _) -> [{range_members, node}];
-range_members_features(_S, [{_, _} = _Range, _], _) -> [{range_members, range}].
+range_members_features(_S, [{_, _, _} = _Node, _], _) -> [{meta, {range_members, node}}];
+range_members_features(_S, [{_, _} = _Range, _], _) -> [{meta, {range_members, range}}].
 
 %% NODE_TOUCH
 %% --------------------------------------------------
@@ -610,7 +610,7 @@ node_touch_next(#state { node_timers = NTs, time = T } = S, _, [Node, #{ reachab
             S
     end.
 
-node_touch_features(_S, _A, _R) -> [node_touch].
+node_touch_features(_S, _A, _R) -> [{meta, node_touch}].
 
 %% RANGE_STATE
 %% --------------------------------------------------
@@ -656,10 +656,10 @@ range_state_callouts(#state{ time = T } = S, [Range, _]) ->
         Ret -> ?FAIL({wrong_result, Ret})
     end.
                
-range_state_features(_S, _A, empty) -> [{range_state, empty}];
-range_state_features(_S, _A, {error, not_member}) -> [{range_state, non_existing_range}];
-range_state_features(_S, _A, ok) -> [{range_state, ok}];
-range_state_features(_S, _A, {needs_refresh, _}) -> [{range_state, needs_refresh}].
+range_state_features(_S, _A, empty) -> [{meta, {range_state, empty}}];
+range_state_features(_S, _A, {error, not_member}) -> [{meta, {range_state, non_existing_range}}];
+range_state_features(_S, _A, ok) -> [{meta, {range_state, ok}}];
+range_state_features(_S, _A, {needs_refresh, _}) -> [{meta, {range_state, needs_refresh}}].
     
 %% RESET_RANGE_TIMER
 %% --------------------------------------------------
@@ -696,7 +696,7 @@ reset_range_timer_callouts(_S, [Range, #{ force := false }, _]) ->
     ?RET(ok).
 
 reset_range_timer_features(_S, [_Range, #{ force := Force }, _], _R) ->
-    [{reset_range_timer, case Force of true -> forced; false -> normal end}].
+    [{meta, {reset_range_timer, case Force of true -> forced; false -> normal end}}].
     
 %% RANGE_LAST_ACTIVITY (Internal call)
 %% ---------------------------------------------------------
@@ -714,6 +714,8 @@ range_last_activity_callouts(#state { time = T } = S, [Range]) ->
         [{_, At, _, _} | _] ->
           ?RET(At)
     end.
+
+range_last_activity_features(_S, _A, _R) -> [{meta, range_last_activity}].
 
 %% INIT_RANGE_TIMERS (Internal call)
 %% --------------------------------------------------
@@ -757,7 +759,7 @@ remove_callouts(_S, [Node]) ->
 remove_next(#state { tree = Tree } = State, _, [Node]) ->
     State#state { tree = delete_node(Node, Tree) }.
 
-remove_features(_S, _A, _R) -> [remove].
+remove_features(_S, _A, _R) -> [{meta, remove}].
 
 %% REPLACE (Internal call)
 %% --------------------------------------------------
@@ -786,7 +788,7 @@ adjoin_callouts(#state { time = T }, [Node]) ->
     ?APPLY(fold_ranges, [lists:sort(Ops)]),
     ?RET(ok).
     
-adjoin_features(_S, _A, _R) -> [adjoin].
+adjoin_features(_S, _A, _R) -> [{meta, adjoin}].
 
 obtain_ranges_callouts(S, []) ->
     ?MATCH(R, ?CALLOUT(dht_routing_table, ranges, [?WILDCARD], ?LET(Rs, current_ranges(S), lists:sort(Rs)))),
@@ -830,7 +832,7 @@ split_range_callouts(S, [Node]) ->
            ?EMPTY
     end.
 
-split_range_features(_S, _A, _R) -> [split_range].
+split_range_features(_S, _A, _R) -> [{meta, split_range}].
 
 %% PERFORM_SPLIT (Model Internal Call)
 %% --------------------------------------------
