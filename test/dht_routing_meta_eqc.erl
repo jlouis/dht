@@ -256,15 +256,14 @@ pick_id([#{ lo := L, hi := H, split := true } | _]) -> choose(L, H);
 pick_id([_ | Rs]) -> pick_id(Rs).
 
 gen_state() ->
-    ?LET(Tree, routing_tree(),
       #state {
-        tree = Tree,
+        tree = [#{ lo => 0, hi => 128, nodes => [], split => true }],
         init = false,
-        id = pick_id(Tree),
+        id = dht_eqc:id(),
         time = int(),
         node_timers = [],
         range_timers = []
-      }).
+      }.
 
 initial_state() -> #state{}.
 
@@ -274,9 +273,10 @@ initial_state() -> #state{}.
 %% When the system initializes,  the routing table may be loaded from disk. When
 %% that happens, we have to re-instate the timers by query of the routing table, and
 %% then construct those timers.
-new(ID, L, H) ->
+new(ID, L, H, Nodes) ->
     eqc_lib:reset(?DRIVER),
-    Tbl = dht_routing_table:new(ID, L, H),
+    InitTbl = dht_routing_table:new(ID, L, H),
+    Tbl = lists:foldl(fun(N, T) -> dht_routing_table:insert(N, T) end, InitTbl, Nodes),
     eqc_lib:bind(?DRIVER, fun(_T) ->
       {ok, ID, Routing} = dht_routing_meta:new(Tbl),
       {ok, {ok, ID, 'ROUTING_TABLE'}, Routing}
@@ -289,14 +289,15 @@ new_callers() -> [dht_state_eqc].
 new_pre(S) -> not initialized(S).
 
 %% Construct a Table entry for injection.
-new_args(#state { id = ID }) -> [ID, ?ID_MIN, ?ID_MAX].
+new_args(#state { id = ID } = S) -> [ID, ?ID_MIN, ?ID_MAX, current_nodes(S)].
 
 %% When new is called, the system calls out to the routing_table. We feed the
 %% Nodes and Ranges we generated into the system. The assumption is that
 %% these Nodes and Ranges are ones which are initialized via the internal calls
 %% init_range_timers and init_node_timers.
-new_callouts(#state { id = ID, time = T } = S, [ID, L, H]) ->
+new_callouts(#state { id = ID, time = T } = S, [ID, L, H, Nodes]) ->
     ?MATCH(Tbl, ?CALLOUT(dht_routing_table, new, [ID, L, H], 'ROUTING_TABLE')),
+    ?SEQ([?CALLOUT(dht_routing_table, insert, [N, Tbl], 'ROUTING_TABLE') || N <- Nodes]),
     ?CALLOUT(dht_time, monotonic_time, [], T),
     ?CALLOUT(dht_routing_table, node_list, [Tbl], current_nodes(S)),
     ?CALLOUT(dht_routing_table, node_id, [Tbl], ID),
@@ -397,7 +398,19 @@ neighbors_callers() -> [dht_state_eqc].
       
 neighbors_pre(S) -> initialized(S).
 
-neighbors_args(_S) -> [dht_eqc:id(), nat(), 'ROUTING_TABLE'].
+neighbors_args(_S) -> [dht_eqc:id(), choose(0, 8), 'ROUTING_TABLE'].
+
+take(0, _) -> [];
+take(_, []) -> [];
+take(K, [X|Xs]) when K > 0 -> [X | take(K-1, Xs)].
+
+closest_to_callouts(#state { time = T} = S, [ID, K]) ->
+    ?MATCH([_, Result],
+      ?PAR(
+        ?REPLICATE(?CALLOUT(dht_time, monotonic_time, [], T)),        
+        ?CALLOUT(dht_routing_table, closest_to, [ID, ?WILDCARD, K, ?WILDCARD],
+            ?LET(Ns, rt_nodes(S), take(K, Ns))))),
+    ?RET(Result).
 
 %% Neighbors calls out twice currently, because it has two filter functions it runs in succession.
 %% First it queries for the known good nodes, and then it queries for the questionable nodes.
@@ -405,17 +418,17 @@ neighbors_args(_S) -> [dht_eqc:id(), nat(), 'ROUTING_TABLE'].
 %% Note that we don't care if we return the right nodes here. We are only interested in the
 %% behavior of this call, and assumes that the routing table underneath is doing the right
 %% thing.
-neighbors_callouts(S, [ID, K, _]) ->
-    ?MATCH(GoodNodes,
-      ?CALLOUT(dht_routing_table, closest_to, [ID, ?WILDCARD, K, ?WILDCARD],
-    	  rt_nodes(S))),
+neighbors_callouts(_S, [ID, K, _]) ->
+    ?MATCH(GoodNodes, ?APPLY(closest_to, [ID, K])),
     case GoodNodes of
-       GoodNodes when length(GoodNodes) == K -> ?RET(GoodNodes);
-       GoodNodes ->
-         ?MATCH(QuestionableNodes,
-           ?CALLOUT(dht_routing_table, closest_to, [ID, ?WILDCARD, K-length(GoodNodes), ?WILDCARD],
-             rt_nodes(S))),
-         ?RET(GoodNodes ++ QuestionableNodes)
+       GoodNodes when length(GoodNodes) == K ->
+         ?RET(GoodNodes);
+       GoodNodes when length (GoodNodes) =< K ->
+         ?MATCH(QuestionableNodes, ?APPLY(closest_to, [ID, K-length(GoodNodes)])),
+         ?WHEN(length(GoodNodes ++ QuestionableNodes) > 8, ?FAIL(too_many_nodes_returned_1)),
+         ?RET(GoodNodes ++ QuestionableNodes);
+       GoodNodes when length(GoodNodes) > K ->
+         ?FAIL(too_many_nodes_returned_2)
     end.
 
 neighbors_features(_S, _A, R) ->
@@ -693,7 +706,7 @@ reset_range_timer_features(_S, [_Range, #{ force := Force }, _], _R) ->
 %% not allowed.
 range_last_activity_callouts(#state { time = T } = S, [Range]) ->
     ?MATCH(Members,
-        ?CALLOUT(dht_routing_table, members, [Range, ?WILDCARD], rt_nodes(S))),
+        ?CALLOUT(dht_routing_table, members, [{range, Range}, ?WILDCARD], rt_nodes(S))),
     case last_active(S, Members) of
         [] ->
           ?MATCH(R, ?CALLOUT(dht_time, monotonic_time, [], T)),
@@ -762,21 +775,21 @@ replace_callouts(_S, [OldNode, NewNode]) ->
 %% Adjoin a new node to the routing table, tracking meta-data information as well
 adjoin_callouts(#state { time = T }, [Node]) ->
     ?CALLOUT(dht_time, monotonic_time, [], T),
+    ?MATCH(Before, ?APPLY(obtain_ranges, [])),
     ?CALLOUT(dht_routing_table, insert, [Node, ?WILDCARD], 'ROUTING_TABLE'),
     ?CALLOUT(dht_routing_table, member_state, [Node, ?WILDCARD], member),
-    ?MATCH(Before, ?APPLY(obtain_ranges, [])),
-    ?APPLY(insert_node, [Node, T]),
+    ?APPLY(insert_node, [Node]),
     ?MATCH(After, ?APPLY(obtain_ranges, [])),
     Ops = lists:append(
         [{del, R} || R <- ordsets:subtract(Before, After)],
         [{add, R} || R <- ordsets:subtract(After, Before)]),
-    ?APPLY(fold_ranges, [Ops]),
+    ?APPLY(fold_ranges, [lists:sort(Ops)]),
     ?RET(ok).
     
 adjoin_features(_S, _A, _R) -> [adjoin].
 
 obtain_ranges_callouts(S, []) ->
-    ?MATCH(R, ?CALLOUT(dht_routing_table, ranges, [?WILDCARD], current_ranges(S))),
+    ?MATCH(R, ?CALLOUT(dht_routing_table, ranges, [?WILDCARD], ?LET(Rs, current_ranges(S), lists:sort(Rs)))),
     ?RET(R).
 
 fold_ranges_callouts(_S, [[]]) -> ?EMPTY;
@@ -789,11 +802,12 @@ fold_ranges_callouts(S, [[{add, R} | Ops]]) ->
     fold_ranges_callouts(S, [Ops]).
 
 %% TODO: Split too large ranges!
-insert_node_callouts(_S, [Node, T]) ->
-    ?APPLY(split_range, [Node, T]),
+insert_node_callouts(#state { time = T }, [Node]) ->
+    ?APPLY(split_range, [Node]),
+    ?APPLY(insert_node_2, [Node]),
     ?APPLY(add_node_timer, [Node, T, true]).
 
-insert_node_next(S, _, [Node, _T]) ->
+insert_node_2_next(S, _, [Node]) ->
     { #{ nodes := Nodes } = R, Rs} = take_range(S, Node),
     NR = R#{ nodes := Nodes ++ [Node] },
     S#state{ tree = Rs ++ [NR] }.
@@ -803,15 +817,15 @@ insert_node_next(S, _, [Node, _T]) ->
 
 %% This call is used by the model to figure out if a range needs to split when
 %% inserting a new node.
-split_range_callouts(S, [Node, T]) ->
+split_range_callouts(S, [Node]) ->
     { #{ split := Split, lo := Lo, hi := Hi, nodes := Nodes }, _Rs} = take_range(S, Node),
     case length(Nodes) +1 of
        L when L =< ?K ->
            ?EMPTY;
        L when L > ?K, Split ->
-           ?MATCH_GEN(P, choose(Lo+1, Hi-1)),
-           ?APPLY(perform_split, [Node, P]),
-           ?APPLY(split_range, [Node, T]);
+           Half = Lo + ((Hi - Lo) bsr 1),
+           ?APPLY(perform_split, [Node, Half]),
+           ?APPLY(split_range, [Node]);
        L when L > ?K, not Split ->
            ?EMPTY
     end.
@@ -839,7 +853,7 @@ perform_split_next(#state { id = Own } = S, _, [Node, P]) ->
         true ->
             {LowNodes, HighNodes} = lists:partition(F, Nodes),
             Low = #{ lo => L, hi => P, nodes => LowNodes, split => within(L, Own, P) },
-            High = #{ lo => P+1, hi => H, nodes => HighNodes, split => within(P+1, Own, H) },
+            High = #{ lo => P, hi => H, nodes => HighNodes, split => within(P, Own, H) },
             S#state { tree = Rs ++ [Low, High] };
         false ->
             S
@@ -1110,6 +1124,6 @@ dedup([X | Xs], M) ->
         false -> [X | dedup(Xs, M#{ X => true })]
     end.
 
-%% within(L, X, H) checks that L ≤ X ≤ H
-within(L, X, H) when L =< X, X =< H -> true;
+%% within(L, X, H) checks that L ≤ X < H
+within(L, X, H) when L =< X, X < H -> true;
 within(_, _, _) -> false.

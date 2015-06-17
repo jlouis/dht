@@ -87,11 +87,14 @@ replace(Old, New, #routing { nodes = Ns, table = Tbl } = State) ->
 %% @end
 insert(Node, #routing { table = Tbl, nodes = NT } = Routing) ->
     Now = dht_time:monotonic_time(),
-    T = dht_routing_table:insert(Node, Tbl),
-    member = dht_routing_table:member_state(Node, T),
+    PrevRanges = dht_routing_table:ranges(Tbl),
+    NextTbl = dht_routing_table:insert(Node, Tbl),
+    member = dht_routing_table:member_state(Node, NextTbl),
     %% Update the timers, if they need to change
-    NewState = Routing#routing { nodes = node_update({reachable, Node}, Now, NT) },
-    {ok, update_ranges(Tbl, Now, NewState)}.
+    NewState = Routing#routing {
+    	table = NextTbl,
+    	nodes = node_update({reachable, Node}, Now, NT) },
+    {ok, update_ranges(PrevRanges, Now, NewState)}.
 
 %% @doc remove/2 removes a node from the routing table
 %% @end
@@ -146,10 +149,11 @@ range_state(Range, #routing{ table = Tbl } = Routing) ->
             range_state_members(range_members(Range, Routing), Routing)
    end.
    
-reset_range_timer(Range, #{ force := Force }, #routing { ranges = RT, nodes = Nodes } = Routing) ->
+reset_range_timer(Range, #{ force := Force },
+	#routing { ranges = RT, nodes = Nodes, table = Tbl } = Routing) ->
     TS =
        case Force of
-           false -> range_last_activity(Range, Nodes, Routing);
+           false -> range_last_activity(Range, Nodes, Tbl);
            true -> dht_time:monotonic_time()
        end,
 
@@ -204,27 +208,26 @@ range_state_members(Members, Routing) ->
 %% Insertion may invoke splitting of ranges. If this happens, we need to
 %% update the timers for ranges: The old range gets removed. The new
 %% ranges gets added.
-update_ranges(OldTbl, Now, #routing { ranges = Ranges, nodes = NT, table = NewTbl } = State) ->
-    PrevRanges = dht_routing_table:ranges(OldTbl),
+update_ranges(PrevRanges, Now, #routing { ranges = Ranges, nodes = NT, table = NewTbl } = State) ->
     NewRanges = dht_routing_table:ranges(NewTbl),
     Operations = lists:append(
         [{del, R} || R <- ordsets:subtract(PrevRanges, NewRanges)],
         [{add, R} || R <- ordsets:subtract(NewRanges, PrevRanges)]),
-    State#routing { ranges = fold_ranges(Operations, Now, NT, Ranges) }.
+    State#routing { ranges = fold_ranges(lists:sort(Operations), Now, NT, Ranges, NewTbl) }.
     
 %% Carry out a sequence of operations over the ranges in a fold.
-fold_ranges([{del, R} | Ops], Now, Nodes, Ranges) ->
-    fold_ranges(Ops, Now, Nodes,timer_delete(R, Ranges));
-fold_ranges([{add, R} | Ops], Now, Nodes, Ranges) ->
-    Recent = range_last_activity(R, Nodes, Ranges),
+fold_ranges([{del, R} | Ops], Now, Nodes, Ranges, Tbl) ->
+    fold_ranges(Ops, Now, Nodes, timer_delete(R, Ranges), Tbl);
+fold_ranges([{add, R} | Ops], Now, Nodes, Ranges, Tbl) ->
+    Recent = range_last_activity(R, Nodes, Tbl),
     TRef = mk_timer(Recent, ?RANGE_TIMEOUT, {inactive_range, R}),
-    fold_ranges(Ops, Now, Nodes, range_timer_add(R, Now, TRef, Ranges));
-fold_ranges([], _Now, _Nodes, Ranges) -> Ranges.
+    fold_ranges(Ops, Now, Nodes, range_timer_add(R, Now, TRef, Ranges), Tbl);
+fold_ranges([], _Now, _Nodes, Ranges, _Tbl) -> Ranges.
 
 %% Find the oldest member in the range and use that as the last activity
 %% point for the range.
 range_last_activity(Range, Nodes, Tbl) ->
-    Members = dht_routing_table:members(Range, Tbl),
+    Members = dht_routing_table:members({range, Range}, Tbl),
     timer_newest(Members, Nodes).
 
 last_activity(Members, #routing { nodes = NTs } ) ->

@@ -98,7 +98,7 @@ insert_split_bucket(#bucket{ low = Min, high = Max, members = Members }) ->
 %%
 -spec ranges(t()) -> list({dht:id(), dht:id()}).
 ranges(#routing_table { table = Entries }) ->
-    [{Min, Max} || #bucket{ low = Min, high = Max } <- Entries].
+    lists:sort([{Min, Max} || #bucket{ low = Min, high = Max } <- Entries]).
 
 %%
 %% Delete a node from a bucket list
