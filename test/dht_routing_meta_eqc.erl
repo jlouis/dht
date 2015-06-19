@@ -182,6 +182,7 @@ api_spec() ->
         #api_module {
           name = dht_routing_table,
           functions = [
+
             #api_fun { name = closest_to, arity = 4, classify = dht_routing_table_eqc },
             #api_fun { name = delete, arity = 2, classify = dht_routing_table_eqc },
             #api_fun { name = insert, arity = 2, classify = dht_routing_table_eqc },
@@ -254,11 +255,11 @@ split_tree(Sz, Lo, Hi, Point, r) ->
 pick_id([#{ lo := L, hi := H, split := true } | _]) -> choose(L, H);
 pick_id([_ | Rs]) -> pick_id(Rs).
 
-gen_state() ->
+gen_state(ID) ->
       #state {
         tree = [#{ lo => 0, hi => 128, nodes => [], split => true }],
         init = false,
-        id = dht_eqc:id(),
+        id = ID,
         time = int(),
         node_timers = [],
         range_timers = []
@@ -272,7 +273,11 @@ initial_state() -> #state{}.
 %% When the system initializes,  the routing table may be loaded from disk. When
 %% that happens, we have to re-instate the timers by query of the routing table, and
 %% then construct those timers.
-new(Tbl) ->
+new(Arg) ->
+    Tbl = case Arg of
+        'GRAB' -> routing_table:grab();
+        Other -> Other
+    end,
     eqc_lib:reset(?DRIVER),
     eqc_lib:bind(?DRIVER, fun(_T) ->
       {ok, ID, Routing} = dht_routing_meta:new(Tbl),
@@ -286,19 +291,20 @@ new_callers() -> [dht_state_eqc].
 new_pre(S) -> not initialized(S).
 
 %% Construct a Table entry for injection.
-new_args(#state { id = ID }) -> ['ROUTING_TABLE'].
+new_args(#state {}) -> ['ROUTING_TABLE'].
 
 %% When new is called, the system calls out to the routing_table. We feed the
 %% Nodes and Ranges we generated into the system. The assumption is that
 %% these Nodes and Ranges are ones which are initialized via the internal calls
 %% init_range_timers and init_node_timers.
 new_callouts(#state { id = ID, time = T } = S, [Tbl]) ->
+    ?APPLY(dht_routing_table, ensure_started, []),
     ?CALLOUT(dht_time, monotonic_time, [], T),
     ?CALLOUT(dht_routing_table, node_list, [Tbl], current_nodes(S)),
     ?CALLOUT(dht_routing_table, node_id, [Tbl], ID),
     ?APPLY(init_range_timers, [current_ranges(S)]),
     ?APPLY(init_nodes, [current_nodes(S)]),
-    ?RET({ok, ID, Tbl}).
+    ?RET({ok, ID, 'ROUTING_TABLE'}).
   
 %% Track that we initialized the system
 new_next(S, _, _) -> S#state { init = true }.
@@ -988,7 +994,8 @@ prop_component_correct() ->
         eqc_mocking:start_mocking(api_spec()),
         fun() -> ok end
     end,
-    ?FORALL(State, gen_state(),
+    ?FORALL(ID, dht_eqc:id(),
+    ?FORALL(State, gen_state(ID),
     ?FORALL(Cmds, commands(?MODULE, State),
       begin
         {H,S,R} = run_commands(?MODULE, Cmds),
@@ -998,7 +1005,7 @@ prop_component_correct() ->
             aggregate(with_title('Features'), eqc_statem:call_features(H),
             features(eqc_statem:call_features(H),
                 R == ok)))))
-      end))).
+      end)))).
 
 self(#state { id = ID }) -> ID.
 

@@ -21,18 +21,25 @@ api_spec() ->
 
 %% Generators
 %% ----------
+gen_state(ID) -> #state { self = ID }.
 initial_state() -> #state {}.
 
 initial_tree(Low, High) ->
     K = {Low, High},
     #{ K => [] }.
 
+%% Construction of a new table
+%% --------------
+
 new(Self, Low, High) ->
     routing_table:reset(Self, Low, High),
     'ROUTING_TABLE'.
 
 new_pre(S) -> not initialized(S).
-new_args(_S) -> [dht_eqc:id(), ?ID_MIN, ?ID_MAX].
+
+new_args(#state { self = undefined }) -> [dht_eqc:id(), ?ID_MIN, ?ID_MAX];
+new_args(#state { self = Self }) -> [Self, ?ID_MIN, ?ID_MAX].
+
 new_pre(_S, _) -> true.
 
 new_return(_S, [_Self, _, _]) -> 'ROUTING_TABLE'.
@@ -304,7 +311,13 @@ take(K, [X|Xs]) when K > 0 -> [X | take(K-1, Xs)].
 closest_to_features(_S, [_, _, N, _], _R) when N >= 8 -> [{table, {closest_to, '>=8'}}];
 closest_to_features(_S, [_, _, N, _], _R) -> [{table, {closest_to, N}}].
 
-%% Determine if we may split a range
+%% Preconditions
+%% --------------------------------------
+ensure_started_pre(S) -> initialized(S).
+    
+%% Determine if we may split a range (Internal call)
+%% --------------------------------------
+
 may_split(#state { self = Self, tree = TR } = S, Node, K) when K > 0 ->
     {{Lo, Hi}, Members} = find_range({node, Node}, S),
     case length(Members) of
@@ -322,6 +335,8 @@ may_split(#state { self = Self, tree = TR } = S, Node, K) when K > 0 ->
     end.
 
 %% INSERT_SPLIT_RANGE / SPLIT_RANGE (Internal calls)
+%% ----------------------------------------
+
 insert_split_range_callouts(_S, [_, 0]) ->
     ?FAIL('recursion depth');
 insert_split_range_callouts(#state { self = Self } = S, [Node, K]) ->

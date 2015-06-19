@@ -34,7 +34,8 @@ metric_group() -> [{metric, [shuffle], [
 state_group() -> [{state, [shuffle], [
 	check_routing_table,
 	check_routing_meta,
-	check_state
+	check_state,
+	check_state_cluster
     ]}].
     
 network_group() -> [{network, [shuffle], [
@@ -84,3 +85,6 @@ check_routing_meta(_Config) ->
     
 check_state(_Config) ->
     ?quickcheck((dht_state_eqc:prop_component_correct())).
+    
+check_state_cluster(_Config) ->
+    ?quickcheck((dht_state_eqc:prop_cluster_correct())).

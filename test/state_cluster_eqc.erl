@@ -21,14 +21,18 @@ prop_cluster_correct() ->
         eqc_mocking:start_mocking(api_spec(), components()),
         fun() -> ok end
     end,
-    ?FORALL(MetaState, dht_routing_meta_eqc:gen_state(),
-    ?FORALL(StartState, dht_state_eqc:gen_initial_state(dht_routing_meta_eqc:self(MetaState)),
+    ?FORALL(ID, dht_eqc:id(),
+    ?FORALL({MetaState, TableState, State},
+            {dht_routing_meta_eqc:gen_state(ID),
+             dht_routing_table_eqc:gen_state(ID),
+             dht_state_eqc:gen_state(ID)},
     ?FORALL(Cmds, eqc_cluster:commands(?MODULE, [
-    		{dht_state_eqc, StartState},
-    		{dht_routing_meta_eqc, MetaState}]),
+    		{dht_state_eqc, State},
+    		{dht_routing_meta_eqc, MetaState},
+    		{dht_routing_table_eqc, TableState}]),
       begin
         ok = dht_state_eqc:reset(),
-        ok = routing_table:reset(dht_routing_meta_eqc:self(MetaState), ?ID_MIN, ?ID_MAX),
+        ok = routing_table:reset(ID, ?ID_MIN, ?ID_MAX),
         {H,S,R} = run_commands(?MODULE, Cmds),
         pretty_commands(?MODULE, Cmds, {H,S,R},
             aggregate(with_title('Commands'), command_names(Cmds),
@@ -47,5 +51,16 @@ recheck() ->
     eqc:recheck(eqc_statem:show_states(prop_cluster_correct())).
 
 cmds() ->
-  ?LET(MS, dht_routing_meta_eqc:gen_state(),
-    eqc_cluster:commands(?MODULE, [{dht_routing_meta_eqc, MS}])).
+    ?LET(ID, dht_eqc:id(),
+    ?LET({MetaState, TableState, State},
+            {dht_routing_meta_eqc:gen_state(ID),
+             dht_routing_table_eqc:gen_state(ID),
+             dht_state_eqc:gen_state(ID)},
+    eqc_cluster:commands(?MODULE, [
+    		{dht_state_eqc, State},
+    		{dht_routing_meta_eqc, MetaState},
+    		{dht_routing_table_eqc, TableState}]))).
+    		
+sample() ->
+    eqc_gen:sample(cmds()).
+   

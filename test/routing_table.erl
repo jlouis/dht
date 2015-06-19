@@ -4,7 +4,7 @@
 -include("dht_eqc.hrl").
 
 -export([start_link/0]).
--export([reset/3]).
+-export([reset/3, grab/0]).
 -export([
 	closest_to/3,
 	delete/1,
@@ -27,6 +27,9 @@
 
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+grab() ->
+    gen_server:call(?MODULE, grab).
 
 reset(Self, L, H) ->
     case whereis(?MODULE) of
@@ -76,6 +79,8 @@ init([]) ->
 handle_cast(_Msg, State) ->
 	{noreply, State}.
 	
+handle_call(grab, _From, #state { table = RT } = State) ->
+	{reply, RT, State};
 handle_call({space, N}, _From, #state { table = RT } = State) ->
 	{reply, dht_routing_table:space(N, RT), State};
 handle_call({reset, Self, L, H}, _From, State) ->

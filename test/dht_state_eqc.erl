@@ -51,7 +51,7 @@ api_spec() ->
 		  		name = dht_routing_table,
 		  		functions = [
 		  			#api_fun { name = new, arity = 1, classify =
-		  			    {dht_routing_table_eqc, new, fun(ID) -> [ID, ?ID_MIN, ?ID_MAX] end } }
+		  			    {dht_routing_table_eqc, new, fun([ID]) -> [ID, ?ID_MIN, ?ID_MAX] end } }
 		  		]
 		  	},
 		  	#api_module {
@@ -97,11 +97,7 @@ api_spec() ->
 %% INITIAL STATE
 %% -----------------------
 
-gen_initial_state(ID) -> #state { id = ID, init = false }.
-
-gen_initial_state() ->
-    ?LET(NodeID, dht_eqc:id(), gen_initial_state(NodeID)).
-
+gen_state(ID) -> #state { id = ID, init = false }.
 initial_state() -> #state{}.
 
 %% START_LINK
@@ -448,7 +444,8 @@ prop_component_correct() ->
         eqc_mocking:start_mocking(api_spec()),
         fun() -> ok end
     end,
-    ?FORALL(StartState, gen_initial_state(),
+    ?FORALL(ID, dht_eqc:id(),
+    ?FORALL(StartState, gen_state(ID),
     ?FORALL(Cmds, commands(?MODULE, StartState),
         begin
             ok = reset(),
@@ -459,7 +456,7 @@ prop_component_correct() ->
             aggregate(with_title('Features'), eqc_statem:call_features(H),
             features(eqc_statem:call_features(H),
                 R == ok)))))
-        end))).
+        end)))).
 
 %% Helper for showing states of the output:
 t() -> t(5).
