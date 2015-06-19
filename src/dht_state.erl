@@ -217,9 +217,10 @@ init([RequestedNodeID, StateFile, BootstrapNodes]) ->
 
 %% @private
 handle_call({insert_node, Node}, _From, #state { routing = R } = State) ->
-    case dht_routing_meta:is_member(Node, R) of
-        true -> {reply, already_member, State};
-        false ->
+    case dht_routing_meta:member_state(Node, R) of
+        member -> {reply, already_member, State};
+        roaming_member -> {reply, already_member, State};
+        unknown ->
             {Reply, NR} = adjoin(Node, R),
             {reply, Reply, State#state { routing = NR }}
     end;
@@ -227,18 +228,18 @@ handle_call({closest_to, ID, NumNodes}, _From, #state{routing = Routing } = Stat
     Neighbors = dht_routing_meta:neighbors(ID, NumNodes, Routing),
     {reply, Neighbors, State};
 handle_call({request_timeout, Node}, _From, #state{ routing = Routing } = State) ->
-    case dht_routing_meta:is_member(Node, Routing) of
-        false -> {reply, ok, State};
-        true ->
+    case dht_routing_meta:member_state(Node, Routing) of
+        unknown -> {reply, ok, State};
+        member ->
             R = dht_routing_meta:node_timeout(Node, Routing),
             {reply, ok, State#state { routing = R }}
     end;
 handle_call({request_success, Node, Opts}, _From, #state{ routing = Routing } = State) ->
-    case dht_routing_meta:is_member(Node, Routing) of
-	    false -> {reply, ok, State};
-	    true ->
-	        R = dht_routing_meta:node_touch(Node, Opts, Routing),
-	        {reply, ok, State#state { routing = R }}
+    case dht_routing_meta:member_state(Node, Routing) of
+        unknown -> {reply, ok, State};
+        member ->
+            R = dht_routing_meta:node_touch(Node, Opts, Routing),
+            {reply, ok, State#state { routing = R }}
     end;
 handle_call(dump_state, From, #state{ state_file = StateFile } = State) ->
     handle_call({dump_state, StateFile}, From, State);
@@ -295,9 +296,10 @@ handle_info({stop, Caller}, #state{} = State) ->
 	{stop, normal, State}.
 
 %% @private
-terminate(Reason, #state{ routing = Routing, state_file=StateFile}) ->
-	error_logger:error_report({exiting, Reason}),
-	dump_state(StateFile, dht_routing_meta:export(Routing)).
+terminate(_Reason, #state{ routing = _Routing, state_file=_StateFile}) ->
+	%%error_logger:error_report({exiting, Reason}),
+	%%dump_state(StateFile, dht_routing_meta:export(Routing))
+	ok.
 
 %% @private
 code_change(_, State, _) ->

@@ -85,16 +85,21 @@ replace(Old, New, #routing { nodes = Ns, table = Tbl } = State) ->
 %% Precondition: The node inserted is not a member
 %% Postcondition: The inserted node is now a member
 %% @end
+-spec insert(Node, #routing{}) -> {ok, #routing{}} | not_inserted
+	when Node :: dht:peer().
 insert(Node, #routing { table = Tbl, nodes = NT } = Routing) ->
     Now = dht_time:monotonic_time(),
     PrevRanges = dht_routing_table:ranges(Tbl),
-    NextTbl = dht_routing_table:insert(Node, Tbl),
-    member = dht_routing_table:member_state(Node, NextTbl),
-    %% Update the timers, if they need to change
-    NewState = Routing#routing {
-    	table = NextTbl,
-    	nodes = node_update({reachable, Node}, Now, NT) },
-    {ok, update_ranges(PrevRanges, Now, NewState)}.
+    case dht_routing_table:space(Node, Tbl) of
+        false -> not_inserted;
+        true ->
+            NextTbl = dht_routing_table:insert(Node, Tbl),
+            member = dht_routing_table:member_state(Node, NextTbl),
+            NewState = Routing#routing {
+                    	table = NextTbl,
+                    	nodes = node_update({reachable, Node}, Now, NT) },
+            {ok, update_ranges(PrevRanges, Now, NewState)}
+    end.
 
 %% @doc remove/2 removes a node from the routing table
 %% @end

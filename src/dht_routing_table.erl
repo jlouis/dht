@@ -30,7 +30,8 @@
 	members/2,
 	node_id/1,
 	node_list/1,
-	ranges/1
+	ranges/1,
+	space/2
 ]).
 
 -define(in_range(Dist, Min, Max), ((Dist >= Min) andalso (Dist < Max))).
@@ -62,6 +63,17 @@ new(Self, Lo, Hi) when is_integer(Self), Self >= 0 ->
 
 -spec node_id(t()) -> dht:id().
 node_id(#routing_table { self = ID }) -> ID.
+
+%%
+%% Space - determine if there is space for a node
+%%
+-spec space(dht:peer(), t()) -> boolean().
+space(N, T) ->
+    TestTable = insert(N, T),
+    case member_state(N, TestTable) of
+        unknown -> false;
+        member -> true
+    end.
 
 %%
 %% Insert a new node into a bucket list

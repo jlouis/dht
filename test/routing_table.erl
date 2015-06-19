@@ -4,6 +4,7 @@
 -include("dht_eqc.hrl").
 
 -export([start_link/0]).
+-export([reset/3]).
 -export([
 	closest_to/3,
 	delete/1,
@@ -15,7 +16,7 @@
 	node_id/0,
 	node_list/0,
 	ranges/0,
-	reset/3
+	space/1
 ]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2, code_change/3]).
@@ -64,6 +65,9 @@ closest_to(ID, Filter, Num) ->
 invariant() ->
 	gen_server:call(?MODULE, invariant).
 
+space(Node) ->
+	gen_server:call(?MODULE, {space, Node}).
+
 %% Callbacks
 
 init([]) ->
@@ -72,6 +76,8 @@ init([]) ->
 handle_cast(_Msg, State) ->
 	{noreply, State}.
 	
+handle_call({space, N}, _From, #state { table = RT } = State) ->
+	{reply, dht_routing_table:space(N, RT), State};
 handle_call({reset, Self, L, H}, _From, State) ->
 	{reply, ok, State#state { table = dht_routing_table:new(Self, L, H) }};
 handle_call(ranges, _From, #state { table = RT } = State) ->

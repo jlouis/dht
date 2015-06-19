@@ -32,6 +32,9 @@ t() -> t(15).
 t(Secs) ->
     eqc:quickcheck(eqc:testing_time(Secs, eqc_statem:show_states(prop_cluster_correct()))).
 
+recheck() ->
+    eqc:recheck(eqc_statem:show_states(prop_cluster_correct())).
+
 cmds() ->
   ?LET(MS, dht_routing_meta_eqc:gen_state(),
     eqc_cluster:commands(?MODULE, [{dht_routing_meta_eqc, MS}])).

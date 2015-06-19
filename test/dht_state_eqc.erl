@@ -29,6 +29,8 @@
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_component.hrl").
 
+-include("dht_eqc.hrl").
+
 -record(state,{
 	init = false, %% true when the model has been initialized
 	id %% The NodeID the node is currently running under
@@ -48,7 +50,8 @@ api_spec() ->
 		  	#api_module {
 		  		name = dht_routing_table,
 		  		functions = [
-		  			#api_fun { name = new, arity = 1, classify = dht_routing_table_eqc }
+		  			#api_fun { name = new, arity = 1, classify =
+		  			    {dht_routing_table_eqc, new, fun(ID) -> [ID, ?ID_MIN, ?ID_MAX] end } }
 		  		]
 		  	},
 		  	#api_module {
@@ -64,9 +67,9 @@ api_spec() ->
 		  			#api_fun { name = node_timeout, arity = 2, classify = dht_routing_meta_eqc },
 		  			#api_fun { name = reset_range_timer, arity = 3, classify = dht_routing_meta_eqc },
 		  		
-		  			#api_fun { name = is_member, arity = 2, classify = dht_routing_meta_eqc },
+		  			#api_fun { name = member_state, arity = 2, classify = dht_routing_meta_eqc },
 		  			#api_fun { name = neighbors, arity = 3, classify = dht_routing_meta_eqc },
-		  			#api_fun { name = node_list, arity = 1},
+		  			#api_fun { name = node_list, arity = 1, classify = dht_routing_meta_eqc },
 		  			#api_fun { name = node_state, arity = 2, classify = dht_routing_meta_eqc },
 		  			#api_fun { name = range_members, arity = 2, classify = dht_routing_meta_eqc },
 		  			#api_fun { name = range_state, arity = 2, classify = dht_routing_meta_eqc }
@@ -117,17 +120,17 @@ start_link_args(#state { id = ID }) ->
     [ID, BootStrapNodes].
 
 %% Starting the routing state tracker amounts to initializing the routing meta-data layer
-start_link_callouts(#state { id = ID }, [ID, []]) ->
-    ?SEQ(
-      ?CALLOUT(dht_routing_table, new, [ID], rt_ref_2),
-      ?CALLOUT(dht_routing_meta, new, [?WILDCARD], {ok, ID, rt_ref})),
+start_link_callouts(#state { id = ID }, [ID, Nodes]) ->
+    ?MATCH(Tbl, ?CALLOUT(dht_routing_table, new, [ID], 'ROUTING_TABLE')),
+    ?CALLOUT(dht_routing_meta, new, [Tbl], {ok, ID, 'META'}),
+    ?PAR([?APPLY(insert_node, [N]) || N <- Nodes]),
     ?RET(true).
 
 %% Once started, we can't start the State system again.
 start_link_next(State, _, _) ->
     State#state { init = true }.
 
-start_link_features(_S, _A, _R) -> [start_link].
+start_link_features(_S, _A, _R) -> [{state, start_link}].
 
 %% CLOSEST TO
 %% ------------------------
@@ -143,12 +146,12 @@ closest_to_args(_S) ->
 	
 %% This call is likewise just served by the underlying system
 closest_to_callouts(_S, [ID, Num]) ->
-    ?MATCH(Ns, ?CALLOUT(dht_routing_meta, neighbors, [ID, Num, rt_ref],
+    ?MATCH(Ns, ?CALLOUT(dht_routing_meta, neighbors, [ID, Num, 'META'],
         list(dht_eqc:peer()))),
     ?RET(Ns).
 
-closest_to_features(_S, [_, Num], _) when Num >= 8 -> {closest_to, '>=8'};
-closest_to_features(_S, [_, Num], _) -> {closest_to, Num}.
+closest_to_features(_S, [_, Num], _) when Num >= 8 -> [{state, {closest_to, '>=8'}}];
+closest_to_features(_S, [_, Num], _) -> [{state, {closest_to, Num}}].
 
 %% NODE ID
 %% ---------------------
@@ -162,7 +165,7 @@ node_id_args(_S) -> [].
 	
 node_id_callouts(#state { id = ID }, []) -> ?RET(ID).
 
-node_id_features(_S, _A, _R) -> [node_id].
+node_id_features(_S, _A, _R) -> [{state, node_id}].
 
 %% INSERT
 %% ---------------------
@@ -210,8 +213,8 @@ insert_node_callouts(_S, [Node]) ->
             ?APPLY(insert_node, [Node])
     end.
 
-insert_features(_S, [{_IP, _Port}], _) -> [{insert, 'ip/port'}];
-insert_features(_S, [{_ID, _IP, _Port}], _) -> [{insert, node}].
+insert_features(_S, [{_IP, _Port}], _) -> [{state, {insert, 'ip/port'}}];
+insert_features(_S, [{_ID, _IP, _Port}], _) -> [{state, {insert, node}}].
 
 %% REQUEST_SUCCESS
 %% ----------------
@@ -226,17 +229,19 @@ request_success_args(_S) ->
     [dht_eqc:peer(), #{ reachable => bool() }].
     
 request_success_callouts(_S, [Node, Opts]) ->
-    ?MATCH(Member,
-      ?CALLOUT(dht_routing_meta, is_member, [Node, rt_ref], bool())),
-    case Member of
-        false -> ?RET(ok);
-        true ->
-          ?CALLOUT(dht_routing_meta, node_touch, [Node, Opts, rt_ref], rt_ref),
+    ?MATCH(MState,
+      ?CALLOUT(dht_routing_meta, member_state, [Node, 'META'], oneof([unknown, member]))),
+    case MState of
+        unknown -> ?RET(ok);
+        member ->
+          ?CALLOUT(dht_routing_meta, node_touch, [Node, Opts, 'META'], 'META'),
           ?RET(ok)
     end.
 
-request_success_features(_S, [_, #{reachable := true }], _R) -> [{request_success, reachable}];
-request_success_features(_S, [_, #{reachable := false }], _R) -> [{request_success, non_reachable}].
+request_success_features(_S, [_, #{reachable := true }], _R) ->
+	[{state, {request_success, reachable}}];
+request_success_features(_S, [_, #{reachable := false }], _R) ->
+	[{state, {request_success, non_reachable}}].
 
 %% REQUEST_TIMEOUT
 %% ----------------
@@ -251,16 +256,17 @@ request_timeout_args(_S) ->
     [dht_eqc:peer()].
 
 request_timeout_callouts(_S, [Node]) ->
-    ?MATCH(Member,
-      ?CALLOUT(dht_routing_meta, is_member, [Node, rt_ref], bool())),
-    case Member of
-        false -> ?RET(ok);
-        true ->
-          ?CALLOUT(dht_routing_meta, node_timeout, [Node, rt_ref], rt_ref),
-          ?RET(ok)
+    ?MATCH(MState,
+      ?CALLOUT(dht_routing_meta, member_state, [Node, 'META'], oneof([unknown, member]))),
+    case MState of
+        unknown -> ?RET(ok);
+        member ->
+          ?CALLOUT(dht_routing_meta, node_timeout, [Node, 'META'], 'META'),
+          ?RET(ok);
+        roaming_member -> ?FAIL(invariant)
     end.
 
-request_timeout_features(_S, [_], _) -> [request_timeout].
+request_timeout_features(_S, [_], _) -> [{state, request_timeout}].
 
 %% REFRESH_NODE
 %% ------------------------------
@@ -284,7 +290,7 @@ refresh_node_callouts(_S, [{ID, IP, Port} = Node]) ->
         {ok, _WrongID} -> ?APPLY(request_timeout, [Node])
     end.
 
-refresh_node_features(_S, _A, _R) -> [refresh_node].
+refresh_node_features(_S, _A, _R) -> [{state, refresh_node}].
 
 %% PING (Internal call to the network stack)
 %% ---------------------
@@ -294,7 +300,8 @@ ping_callouts(_S, [IP, Port]) ->
     ?MATCH(R, ?CALLOUT(dht_net, ping, [{IP, Port}], oneof([pang, {ok, dht_eqc:id()}]))),
     ?RET(R).
 
-ping_features(_S, _A, _R) -> [ping].
+ping_features(_S, _A, pang) -> [{state, {ping, pang}}];
+ping_features(_S, _A, {ok, _}) -> [{state, {ping, ok}}].
 
 %% INACTIVE_RANGE (GenServer Message)
 %% --------------------------------
@@ -320,21 +327,21 @@ inactive_range_args(_S) ->
     
 %% Analyze the state of the range and let the result guide what happens.
 inactive_range_callouts(_S, [{inactive_range, Range}]) ->
-    ?MATCH(RS, ?CALLOUT(dht_routing_meta, range_state, [Range, rt_ref],
+    ?MATCH(RS, ?CALLOUT(dht_routing_meta, range_state, [Range, 'META'],
         oneof([{error, not_member}, ok, empty, {needs_refresh, dht_eqc:id()}]))),
     case RS of
         {error, not_member} -> ?EMPTY;
         ok ->
-            ?CALLOUT(dht_routing_meta, reset_range_timer, [Range, #{ force => false }, rt_ref], rt_ref);
+            ?CALLOUT(dht_routing_meta, reset_range_timer, [Range, #{ force => false }, 'META'], 'META');
         empty ->
-            ?CALLOUT(dht_routing_meta, reset_range_timer, [Range, #{ force => true }, rt_ref], rt_ref);
+            ?CALLOUT(dht_routing_meta, reset_range_timer, [Range, #{ force => true }, 'META'], 'META');
         {needs_refresh, ID} ->
-            ?CALLOUT(dht_routing_meta, reset_range_timer, [Range, #{ force => true }, rt_ref], rt_ref),
+            ?CALLOUT(dht_routing_meta, reset_range_timer, [Range, #{ force => true }, 'META'], 'META'),
             ?APPLY(refresh_range, [ID])
     end,
     ?RET(ok).
 
-inactive_range_features(_S, _A, _R) -> [inactive_range].
+inactive_range_features(_S, _A, _R) -> [{state, inactive_range}].
 
 %% REFRESH_RANGE (Internal private call)
 
@@ -349,7 +356,7 @@ refresh_range_callouts(_S, [ID]) ->
             ?SEQ([?APPLY(insert_node, [N]) || N <- Near])
     end.
     
-refresh_range_features(_S, _A, _R) -> [refresh_range].
+refresh_range_features(_S, _A, _R) -> [{state, refresh_range}].
 
 %% INSERT_NODE (GenServer Internal Call)
 %% --------------------------------
@@ -390,30 +397,31 @@ analyze_node_state([], _, [Q | _Qs]) -> {questionable, Q}.
 %%		insert_node/1)
 %%
 insert_node_gs_callouts(_S, [Node]) ->
-    ?MATCH(IsMember, ?CALLOUT(dht_routing_meta, is_member, [Node, rt_ref],
-        bool())),
-    case IsMember of
-        true -> ?RET(already_member);
-        false -> ?APPLY(adjoin_node, [Node])
+    ?MATCH(MState, ?CALLOUT(dht_routing_meta, member_state, [Node, 'META'],
+        oneof([unknown, member, roaming_member]))),
+    case MState of
+        member -> ?RET(already_member);
+        roaming_member -> ?RET(already_member); %% TODO: For now. I'm not sure this is right.
+        unknown -> ?APPLY(adjoin_node, [Node])
     end.
     
-insert_node_gs_features(_S, _A, _R) -> [insert_node_gs].
+insert_node_gs_features(_S, _A, _R) -> [{state, insert_node_gs}].
 
 %% Internal helper call for adjoining a new node
 adjoin_node_callouts(_S, [Node]) ->
-    ?MATCH(Near, ?CALLOUT(dht_routing_meta, range_members, [Node, rt_ref],
+    ?MATCH(Near, ?CALLOUT(dht_routing_meta, range_members, [Node, 'META'],
         bucket_members())),
-    ?MATCH(NodeState, ?CALLOUT(dht_routing_meta, node_state, [Near, rt_ref],
+    ?MATCH(NodeState, ?CALLOUT(dht_routing_meta, node_state, [Near, 'META'],
         g_node_state(Near))),
     R = analyze_node_state(NodeState),
     case R of
         range_full -> ?RET(range_full);
         room ->
             %% TODO: Alter the return here so it is also possible to fail
-            ?CALLOUT(dht_routing_meta, insert, [Node, rt_ref], {ok, rt_ref}),
+            ?CALLOUT(dht_routing_meta, insert, [Node, 'META'], {ok, 'META'}),
             ?RET(ok);
         {bad, Bad} ->
-            ?CALLOUT(dht_routing_meta, replace, [Bad, Node, rt_ref], {ok, rt_ref}),
+            ?CALLOUT(dht_routing_meta, replace, [Bad, Node, 'META'], {ok, 'META'}),
             ?RET(ok);
         {questionable, Q} -> ?RET({verify, Q})
     end.

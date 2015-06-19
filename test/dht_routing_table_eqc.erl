@@ -39,7 +39,32 @@ new_return(_S, [_Self, _, _]) -> 'ROUTING_TABLE'.
 
 new_next(S, _, [Self, Low, High]) -> S#state { self = Self, init = true, tree = initial_tree(Low, High) }.
 
+new_callers() -> [dht_state_eqc].
+
 new_features(_S, _, _) -> [{table, new}].
+
+%% Do we have space for insertion of a node
+%% -----------------------------------------------
+space(Node, _) ->
+    routing_table:space(Node).
+
+space_pre(S) -> initialized(S).
+
+space_args(#state{}) ->
+    [dht_eqc:peer(), 'ROUTING_TABLE'].
+
+space_pre(#state { self = Self } = S, [{NodeID, _, _} = Node, _]) ->
+    (not has_node(Node, S)) andalso has_space(Node, S) andalso (Self /= NodeID).
+
+space_callouts(S, [Node, _]) ->
+    case may_split(S, Node, 7) of
+        true -> ?RET(true);
+        false -> ?RET(false)
+    end.
+
+space_callers() -> [dht_routing_meta_eqc].
+
+space_features(_State, [_, _], Return) -> [{table, {space, Return}}].
 
 %% Insertion of new entries into the routing table
 %% -----------------------------------------------
@@ -279,8 +304,24 @@ take(K, [X|Xs]) when K > 0 -> [X | take(K-1, Xs)].
 closest_to_features(_S, [_, _, N, _], _R) when N >= 8 -> [{table, {closest_to, '>=8'}}];
 closest_to_features(_S, [_, _, N, _], _R) -> [{table, {closest_to, N}}].
 
-%% INSERT_SPLIT_RANGE / SPLIT_RANGE (Internal calls)
+%% Determine if we may split a range
+may_split(#state { self = Self, tree = TR } = S, Node, K) when K > 0 ->
+    {{Lo, Hi}, Members} = find_range({node, Node}, S),
+    case length(Members) of
+        L when L < ?MAX_RANGE_SZ -> true;
+        L when L == ?MAX_RANGE_SZ ->
+            case between(Lo, Self, Hi) of
+                false -> false;
+                true ->
+                    Half = ((Hi - Lo) bsr 1) + Lo,
+                    {Lower, Upper} = lists:partition(fun({ID, _, _}) -> ID < Half end, Members),
+                    SplitTree =
+                        (maps:remove({Lo, Hi}, TR))#{ {Lo, Half} => Lower, {Half, Hi} => Upper },
+                    may_split(S#state { tree = SplitTree }, Node, K-1)
+            end
+    end.
 
+%% INSERT_SPLIT_RANGE / SPLIT_RANGE (Internal calls)
 insert_split_range_callouts(_S, [_, 0]) ->
     ?FAIL('recursion depth');
 insert_split_range_callouts(#state { self = Self } = S, [Node, K]) ->
@@ -341,10 +382,7 @@ initialized(#state { init = I }) -> I.
 %% Use a common postcondition for all commands, so we can utilize the valid return
 %% of each command.
 postcondition_common(S, Call, Res) ->
-    case eq(Res, return_value(S, Call)) of
-        true -> true;
-        Otherwise -> {Otherwise, sys:get_state(routing_table)}
-    end.
+    eq(Res, return_value(S, Call)).
 
 prop_component_correct() ->
     ?SETUP(fun() ->

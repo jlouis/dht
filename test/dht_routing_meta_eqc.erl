@@ -182,8 +182,6 @@ api_spec() ->
         #api_module {
           name = dht_routing_table,
           functions = [
-            #api_fun { name = new, arity = 3, classify = dht_routing_table_eqc},
-
             #api_fun { name = closest_to, arity = 4, classify = dht_routing_table_eqc },
             #api_fun { name = delete, arity = 2, classify = dht_routing_table_eqc },
             #api_fun { name = insert, arity = 2, classify = dht_routing_table_eqc },
@@ -192,7 +190,8 @@ api_spec() ->
             #api_fun { name = members, arity = 2, classify = dht_routing_table_eqc },
             #api_fun { name = node_id, arity = 1, classify = dht_routing_table_eqc },
             #api_fun { name = node_list, arity = 1, classify = dht_routing_table_eqc },
-            #api_fun { name = ranges, arity = 1, classify = dht_routing_table_eqc }
+            #api_fun { name = ranges, arity = 1, classify = dht_routing_table_eqc },
+            #api_fun { name = space, arity = 2, classify = dht_routing_table_eqc }
           ]}
        ]}.
 
@@ -273,10 +272,8 @@ initial_state() -> #state{}.
 %% When the system initializes,  the routing table may be loaded from disk. When
 %% that happens, we have to re-instate the timers by query of the routing table, and
 %% then construct those timers.
-new(ID, L, H, Nodes) ->
+new(Tbl) ->
     eqc_lib:reset(?DRIVER),
-    InitTbl = dht_routing_table:new(ID, L, H),
-    Tbl = lists:foldl(fun(N, T) -> dht_routing_table:insert(N, T) end, InitTbl, Nodes),
     eqc_lib:bind(?DRIVER, fun(_T) ->
       {ok, ID, Routing} = dht_routing_meta:new(Tbl),
       {ok, {ok, ID, 'ROUTING_TABLE'}, Routing}
@@ -289,15 +286,13 @@ new_callers() -> [dht_state_eqc].
 new_pre(S) -> not initialized(S).
 
 %% Construct a Table entry for injection.
-new_args(#state { id = ID } = S) -> [ID, ?ID_MIN, ?ID_MAX, current_nodes(S)].
+new_args(#state { id = ID }) -> ['ROUTING_TABLE'].
 
 %% When new is called, the system calls out to the routing_table. We feed the
 %% Nodes and Ranges we generated into the system. The assumption is that
 %% these Nodes and Ranges are ones which are initialized via the internal calls
 %% init_range_timers and init_node_timers.
-new_callouts(#state { id = ID, time = T } = S, [ID, L, H, Nodes]) ->
-    ?MATCH(Tbl, ?CALLOUT(dht_routing_table, new, [ID, L, H], 'ROUTING_TABLE')),
-    ?SEQ([?CALLOUT(dht_routing_table, insert, [N, Tbl], 'ROUTING_TABLE') || N <- Nodes]),
+new_callouts(#state { id = ID, time = T } = S, [Tbl]) ->
     ?CALLOUT(dht_time, monotonic_time, [], T),
     ?CALLOUT(dht_routing_table, node_list, [Tbl], current_nodes(S)),
     ?CALLOUT(dht_routing_table, node_id, [Tbl], ID),
@@ -308,7 +303,7 @@ new_callouts(#state { id = ID, time = T } = S, [ID, L, H, Nodes]) ->
 %% Track that we initialized the system
 new_next(S, _, _) -> S#state { init = true }.
 
-new_features(_S, _A, _R) -> [{meta, new}].
+new_features(_S, [_Tbl], _R) -> [{meta, new}].
 
 %% INSERT
 %% --------------------------------------------------
@@ -327,8 +322,10 @@ new_features(_S, _A, _R) -> [{meta, new}].
 insert(Node, _) ->
     eqc_lib:bind(?DRIVER,
       fun(T) ->
-          {R, S} = dht_routing_meta:insert(Node, T),
-          {ok, R, S}
+          case dht_routing_meta:insert(Node, T) of
+              {ok, S} -> {ok, ok, S};
+              not_inserted -> {ok, not_inserted, T}
+          end
       end).
 
 insert_callers() -> [dht_state_eqc].
@@ -352,9 +349,9 @@ insert_pre(S, [Peer, _]) -> initialized(S) andalso (not has_peer(Peer, S)).
 %% • The bucket may actually split more than once in this call, and we don't track it!
 insert_callouts(_S, [Node, _]) ->
     ?MATCH(R, ?APPLY(adjoin, [Node])),
-    R = ok,
     case R of
         ok -> ?RET(ok);
+        not_inserted -> ?RET(not_inserted);
         Else -> ?FAIL(Else)
     end.
 
@@ -555,11 +552,17 @@ range_members_args(S) ->
 range_members_callouts(S, [{Lo, Hi} = Range, _]) ->
     ?MATCH(R, ?CALLOUT(dht_routing_table, members, [Range, ?WILDCARD],
     		nodes_in_range(S, {Lo, Hi}))),
-    ?RET(R);
+    case R of
+        error -> ?FAIL(range_invariant_broken);
+        Res -> ?RET(Res)
+    end;
 range_members_callouts(S, [{ID, _, _} = Node, _]) ->
     ?MATCH(R, ?CALLOUT(dht_routing_table, members, [Node, ?WILDCARD],
     		nodes_in_range(S, ID))),
-    ?RET(R).
+    case R of
+        error -> ?FAIL(range_invariant_broken);
+        Res -> ?RET(Res)
+    end.
 
 range_members_features(_S, [{_, _, _} = _Node, _], _) -> [{meta, {range_members, node}}];
 range_members_features(_S, [{_, _} = _Range, _], _) -> [{meta, {range_members, range}}].
@@ -778,17 +781,24 @@ replace_callouts(_S, [OldNode, NewNode]) ->
 adjoin_callouts(#state { time = T }, [Node]) ->
     ?CALLOUT(dht_time, monotonic_time, [], T),
     ?MATCH(Before, ?APPLY(obtain_ranges, [])),
-    ?CALLOUT(dht_routing_table, insert, [Node, ?WILDCARD], 'ROUTING_TABLE'),
-    ?CALLOUT(dht_routing_table, member_state, [Node, ?WILDCARD], member),
-    ?APPLY(insert_node, [Node]),
-    ?MATCH(After, ?APPLY(obtain_ranges, [])),
-    Ops = lists:append(
-        [{del, R} || R <- ordsets:subtract(Before, After)],
-        [{add, R} || R <- ordsets:subtract(After, Before)]),
-    ?APPLY(fold_ranges, [lists:sort(Ops)]),
-    ?RET(ok).
+    ?MATCH(HasSpace, ?CALLOUT(dht_routing_table, space, [Node, ?WILDCARD], bool() )),
+    case HasSpace of
+        true ->
+            ?CALLOUT(dht_routing_table, insert, [Node, ?WILDCARD], 'ROUTING_TABLE'),
+            ?CALLOUT(dht_routing_table, member_state, [Node, ?WILDCARD], member),
+            ?APPLY(insert_node, [Node]),
+            ?MATCH(After, ?APPLY(obtain_ranges, [])),
+            Ops = lists:append(
+                [{del, R} || R <- ordsets:subtract(Before, After)],
+                [{add, R} || R <- ordsets:subtract(After, Before)]),
+            ?APPLY(fold_ranges, [lists:sort(Ops)]),
+            ?RET(ok);
+        false ->
+            ?RET(not_inserted)
+    end.
     
-adjoin_features(_S, _A, _R) -> [{meta, adjoin}].
+adjoin_features(_S, _A, ok) -> [{meta, {adjoin, ok}}];
+adjoin_features(_S, _A, not_inserted) -> [{meta, {adjoin, not_inserted}}].
 
 obtain_ranges_callouts(S, []) ->
     ?MATCH(R, ?CALLOUT(dht_routing_table, ranges, [?WILDCARD], ?LET(Rs, current_ranges(S), lists:sort(Rs)))),
@@ -1070,12 +1080,16 @@ delete_node(Node, [R | Rs]) ->
 %% One returns the nodes neighboring the ID or that particular range, which must exist.
 nodes_in_range(#state { tree = Tree }, {L, H}) ->
     %% This MUST return exactly one target, or the Tree is broken
-    [Ns] = [Nodes || #{ lo := Lo, hi := Hi, nodes := Nodes } <- Tree, Lo == L, Hi == H],
-    Ns;
+    case [Nodes || #{ lo := Lo, hi := Hi, nodes := Nodes } <- Tree, Lo == L, Hi == H] of
+        [Ns] -> Ns;
+        _ -> error
+    end;
 nodes_in_range(#state { tree = Tree }, ID) ->
     %% This MUST return exactly one target, or the Tree is broken
-    [Ns] = [Nodes || #{ lo := Lo, hi := Hi, nodes := Nodes } <- Tree, Lo =< ID, ID =< Hi],
-    Ns.
+    case [Nodes || #{ lo := Lo, hi := Hi, nodes := Nodes } <- Tree, Lo =< ID, ID < Hi] of
+        [Ns] -> Ns;
+        _ -> error
+    end.
 
 %% Timer manipulation
 %% -----------------------------
