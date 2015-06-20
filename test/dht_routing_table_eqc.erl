@@ -10,8 +10,13 @@
 api_spec() ->
     #api_spec {
       language = erlang,
-      modules = []
-    }.
+      modules = [
+        #api_module {
+          name = dht_time,
+          functions = [
+           #api_fun { name = monotonic_time, arity = 0 }
+          ]}
+      ] }.
 
 -record(state,
     { self,
@@ -298,11 +303,13 @@ closest_to_pre(S) -> initialized(S).
 closest_to_args(#state { filter_fun = F }) ->
     [dht_eqc:id(), F, nat(), 'ROUTING_TABLE'].
 
-closest_to_return(#state { filter_fun = F } = S, [TargetID, _, K, _]) ->
+closest_to_callouts(#state { filter_fun = F } = S, [TargetID, _, K, _]) ->
     Ns = [N || N <- current_nodes(S), F(N)],
     D = fun({ID, _IP, _Port}) -> dht_metric:d(TargetID, ID) end,
     Sorted = lists:sort(fun(X, Y) -> D(X) < D(Y) end, Ns),
-    lists:sort(take(K, Sorted)).
+    ?MATCH_GEN(Time, ?LET(N, nat(), N*100)),
+    ?REPLICATE(?CALLOUT(dht_time, monotonic_time, [], Time)),
+    ?RET(lists:sort(take(K, Sorted))).
     
 take(0, _) -> [];
 take(_, []) -> [];

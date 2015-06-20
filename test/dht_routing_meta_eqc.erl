@@ -404,12 +404,10 @@ take(0, _) -> [];
 take(_, []) -> [];
 take(K, [X|Xs]) when K > 0 -> [X | take(K-1, Xs)].
 
-closest_to_callouts(#state { time = T} = S, [ID, K]) ->
-    ?MATCH([_, Result],
-      ?PAR(
-        ?REPLICATE(?CALLOUT(dht_time, monotonic_time, [], T)),        
-        ?CALLOUT(dht_routing_table, closest_to, [ID, ?WILDCARD, K, ?WILDCARD],
-            ?LET(Ns, rt_nodes(S), take(K, Ns))))),
+closest_to_callouts(S, [ID, K]) ->
+    ?MATCH(Result,
+      ?CALLOUT(dht_routing_table, closest_to, [ID, ?WILDCARD, K, 'ROUTING_TABLE'],
+            ?LET(Ns, rt_nodes(S), take(K, Ns)))),
     ?RET(Result).
 
 %% Neighbors calls out twice currently, because it has two filter functions it runs in succession.
