@@ -182,6 +182,7 @@ api_spec() ->
         #api_module {
           name = dht_routing_table,
           functions = [
+            #api_fun { name = new, arity = 1, classify = dht_routing_table_eqc },
 
             #api_fun { name = closest_to, arity = 4, classify = dht_routing_table_eqc },
             #api_fun { name = delete, arity = 2, classify = dht_routing_table_eqc },
@@ -273,11 +274,7 @@ initial_state() -> #state{}.
 %% When the system initializes,  the routing table may be loaded from disk. When
 %% that happens, we have to re-instate the timers by query of the routing table, and
 %% then construct those timers.
-new(Arg) ->
-    Tbl = case Arg of
-        'GRAB' -> routing_table:grab();
-        Other -> Other
-    end,
+new(Tbl) ->
     eqc_lib:reset(?DRIVER),
     eqc_lib:bind(?DRIVER, fun(_T) ->
       {ok, ID, Routing} = dht_routing_meta:new(Tbl),
@@ -298,7 +295,7 @@ new_args(#state {}) -> ['ROUTING_TABLE'].
 %% these Nodes and Ranges are ones which are initialized via the internal calls
 %% init_range_timers and init_node_timers.
 new_callouts(#state { id = ID, time = T } = S, [Tbl]) ->
-    ?APPLY(dht_routing_table, ensure_started, []),
+    ?APPLY(dht_routing_table_eqc, ensure_started, []),
     ?CALLOUT(dht_time, monotonic_time, [], T),
     ?CALLOUT(dht_routing_table, node_list, [Tbl], current_nodes(S)),
     ?CALLOUT(dht_routing_table, node_id, [Tbl], ID),
@@ -470,7 +467,7 @@ node_state(Nodes, _) ->
 
 node_state_callers() -> [dht_state_eqc].
     
-node_state_pre(S) -> initialized(S) andalso has_nodes(S).
+node_state_pre(S) -> initialized(S).
 
 %% We currently generate output for known nodes only. The obvious
 %% thing to do when a node is unknown is to ignore it.

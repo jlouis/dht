@@ -50,8 +50,7 @@ api_spec() ->
 		  	#api_module {
 		  		name = dht_routing_table,
 		  		functions = [
-		  			#api_fun { name = new, arity = 1, classify =
-		  			    {dht_routing_table_eqc, new, fun([ID]) -> [ID, ?ID_MIN, ?ID_MAX] end } }
+		  			#api_fun { name = new, arity = 1, classify = dht_routing_table_eqc }
 		  		]
 		  	},
 		  	#api_module {
@@ -143,7 +142,7 @@ closest_to_args(_S) ->
 %% This call is likewise just served by the underlying system
 closest_to_callouts(_S, [ID, Num]) ->
     ?MATCH(Ns, ?CALLOUT(dht_routing_meta, neighbors, [ID, Num, 'META'],
-        list(dht_eqc:peer()))),
+       list(dht_eqc:peer()))),
     ?RET(Ns).
 
 closest_to_features(_S, [_, Num], _) when Num >= 8 -> [{state, {closest_to, '>=8'}}];
@@ -209,8 +208,8 @@ insert_node_callouts(_S, [Node]) ->
             ?APPLY(insert_node, [Node])
     end.
 
-insert_features(_S, [{_IP, _Port}], _) -> [{state, {insert, 'ip/port'}}];
-insert_features(_S, [{_ID, _IP, _Port}], _) -> [{state, {insert, node}}].
+insert_node_features(_S, [{_IP, _Port}], Res) -> [{state, {insert, 'ip/port'}, Res}];
+insert_node_features(_S, [{_ID, _IP, _Port}], Res) -> [{state, {insert, node}, Res}].
 
 %% REQUEST_SUCCESS
 %% ----------------

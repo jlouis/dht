@@ -42,7 +42,7 @@ prop_cluster_correct() ->
                 R == ok)))))
       end)))).
     
-t() -> t(15).
+t() -> t(5).
 
 t(Secs) ->
     eqc:quickcheck(eqc:testing_time(Secs, eqc_statem:show_states(prop_cluster_correct()))).
