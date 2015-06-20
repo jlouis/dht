@@ -405,7 +405,7 @@ insert_node_gs_features(_S, _A, _R) -> [{state, insert_node_gs}].
 %% Internal helper call for adjoining a new node
 adjoin_node_callouts(_S, [Node]) ->
     ?MATCH(Near, ?CALLOUT(dht_routing_meta, range_members, [Node, 'META'],
-        bucket_members())),
+       bucket_members())),
     ?MATCH(NodeState, ?CALLOUT(dht_routing_meta, node_state, [Near, 'META'],
         g_node_state(Near))),
     R = analyze_node_state(NodeState),

@@ -217,14 +217,13 @@ member_state(Node, _) ->
     
 member_state_callers() -> [dht_routing_meta_eqc].
 
-member_state_pre(S) ->
-    initialized(S) andalso has_nodes(S).
+member_state_pre(S) -> initialized(S).
     
 member_state_args(S) ->
-    Node = oneof([
-        elements(current_nodes(S)),
-        dht_eqc:peer()
-    ]),
+    Node = oneof(
+        lists:append(
+          [elements(current_nodes(S)) || has_nodes(S)],
+          [dht_eqc:peer()]) ),
     [Node, 'ROUTING_TABLE'].
     
 member_state_return(S, [{ID, IP, Port}, _]) ->

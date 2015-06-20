@@ -376,11 +376,11 @@ member_state_args(_S) -> [dht_eqc:peer(), 'ROUTING_TABLE'].
 %% This is simply a forward to the underlying routing table, so it should return whatever
 %% The RT returns.
 member_state_callouts(_S, [Node, _]) ->
-    ?MATCH(R, ?CALLOUT(dht_routing_table, member_state, [Node, ?WILDCARD],
+    ?MATCH(R, ?CALLOUT(dht_routing_table, member_state, [Node, 'ROUTING_TABLE'],
         oneof([unknown, member, roaming_member]))),
     ?RET(R).
 
-member_state_features(_S, _A, Bool) -> [{meta, {member_state, Bool}}].
+member_state_features(_S, _A, Res) -> [{meta, {member_state, Res}}].
 
 %% NEIGHBORS
 %% --------------------------------------------------
@@ -551,22 +551,22 @@ range_members_args(S) ->
 %% This is simply a forward to the underlying routing table, so it should return whatever
 %% The RT returns.
 range_members_callouts(S, [{Lo, Hi} = Range, _]) ->
-    ?MATCH(R, ?CALLOUT(dht_routing_table, members, [Range, ?WILDCARD],
+    ?MATCH(R, ?CALLOUT(dht_routing_table, members, [{range, Range}, 'ROUTING_TABLE'],
     		nodes_in_range(S, {Lo, Hi}))),
     case R of
         error -> ?FAIL(range_invariant_broken);
         Res -> ?RET(Res)
     end;
 range_members_callouts(S, [{ID, _, _} = Node, _]) ->
-    ?MATCH(R, ?CALLOUT(dht_routing_table, members, [Node, ?WILDCARD],
+    ?MATCH(R, ?CALLOUT(dht_routing_table, members, [{node, Node}, 'ROUTING_TABLE'],
     		nodes_in_range(S, ID))),
     case R of
         error -> ?FAIL(range_invariant_broken);
         Res -> ?RET(Res)
     end.
 
-range_members_features(_S, [{_, _, _} = _Node, _], _) -> [{meta, {range_members, node}}];
-range_members_features(_S, [{_, _} = _Range, _], _) -> [{meta, {range_members, range}}].
+range_members_features(_S, [{_, _, _}, _], _) -> [{meta, {range_members, node}}];
+range_members_features(_S, [{_, _}, _], _) -> [{meta, {range_members, range}}].
 
 %% NODE_TOUCH
 %% --------------------------------------------------
