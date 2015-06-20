@@ -83,7 +83,7 @@ space_features(_State, [_, _], Return) -> [{table, {space, Return}}].
 insert(Node, _) ->
     routing_table:insert(Node).
 
-insert_callers() -> [dht_routing_meta_eqc].
+insert_callers() -> [dht_routing_meta_eqc, dht_state_eqc].
 insert_pre(S) -> initialized(S).
 
 insert_args(#state {}) ->

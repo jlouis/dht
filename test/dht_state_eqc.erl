@@ -118,7 +118,7 @@ start_link_args(#state { id = ID }) ->
 start_link_callouts(#state { id = ID }, [ID, Nodes]) ->
     ?MATCH(Tbl, ?CALLOUT(dht_routing_table, new, [ID], 'ROUTING_TABLE')),
     ?CALLOUT(dht_routing_meta, new, [Tbl], {ok, ID, 'META'}),
-    ?PAR([?APPLY(insert_node, [N]) || N <- Nodes]),
+    ?SEQ([?APPLY(insert_node, [N]) || N <- Nodes]),
     ?RET(true).
 
 %% Once started, we can't start the State system again.
