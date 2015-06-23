@@ -1,4 +1,4 @@
--module(rt_cluster).
+-module(meta_cluster).
 
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_cluster.hrl").

@@ -14,8 +14,8 @@ api_spec() ->
         #api_module {
           name = dht_time,
           functions = [
-           #api_fun { name = monotonic_time, arity = 0, classify = dht_time_eqc },
-           #api_fun { name = convert_time_unit, arity = 3, classify = dht_time_eqc }
+           #api_fun { name = monotonic_time, arity = 0 },
+           #api_fun { name = convert_time_unit, arity = 3 }
           ]}
       ] }.
 
@@ -310,8 +310,8 @@ closest_to_callouts(#state { filter_fun = F } = S, [TargetID, _, K, _]) ->
     ?MATCH_GEN(Time, ?LET(N, nat(), N*100)),
     ?REPLICATE(
         ?SEQ(
-            ?CALLOUT(dht_time, monotonic_time, [], Time),
-            ?CALLOUT(dht_time, convert_time_unit, [Time, native, milli_seconds], Time))),
+            ?APPLY(dht_time_eqc, monotonic_time, []),
+            ?APPLY(dht_time_eqc, convert_time_unit, [Time, native, milli_seconds]))),
     ?RET(lists:sort(take(K, Sorted))).
     
 take(0, _) -> [];
