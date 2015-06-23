@@ -169,7 +169,7 @@ api_spec() ->
         #api_module {
           name = dht_routing_table,
           functions = [
-            #api_fun { name = new, arity = 1, classify = dht_routing_table_eqc },
+            #api_fun { name = new, arity = 3, classify = dht_routing_table_eqc },
 
             #api_fun { name = closest_to, arity = 4, classify = dht_routing_table_eqc },
             #api_fun { name = delete, arity = 2, classify = dht_routing_table_eqc },

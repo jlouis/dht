@@ -50,7 +50,7 @@ api_spec() ->
 		  	#api_module {
 		  		name = dht_routing_table,
 		  		functions = [
-		  			#api_fun { name = new, arity = 1, classify = dht_routing_table_eqc }
+		  			#api_fun { name = new, arity = 3, classify = dht_routing_table_eqc }
 		  		]
 		  	},
 		  	#api_module {
@@ -104,7 +104,7 @@ initial_state() -> #state{}.
 
 %% Start up a new routing state tracker:
 start_link(NodeID, Nodes) ->
-    {ok, Pid} = dht_state:start_link(NodeID, no_state_file, Nodes),
+    {ok, Pid} = dht_state:start_link(NodeID, {no_state_file, ?ID_MIN, ?ID_MAX}, Nodes),
     unlink(Pid),
     erlang:is_process_alive(Pid).
     
@@ -116,7 +116,7 @@ start_link_args(#state { id = ID }) ->
 
 %% Starting the routing state tracker amounts to initializing the routing meta-data layer
 start_link_callouts(#state { id = ID }, [ID, Nodes]) ->
-    ?MATCH(Tbl, ?CALLOUT(dht_routing_table, new, [ID], 'ROUTING_TABLE')),
+    ?MATCH(Tbl, ?CALLOUT(dht_routing_table, new, [ID, ?ID_MIN, ?ID_MAX], 'ROUTING_TABLE')),
     ?CALLOUT(dht_routing_meta, new, [Tbl], {ok, ID, 'META'}),
     ?SEQ([?APPLY(insert_node, [N]) || N <- Nodes]),
     ?RET(true).

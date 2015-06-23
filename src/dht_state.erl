@@ -357,6 +357,8 @@ dump_state(no_state_file, _) -> ok;
 dump_state(Filename, RoutingTable) ->
     ok = file:write_file(Filename, term_to_binary(RoutingTable, [compressed])).
 
+load_state(RequestedNodeID, {no_state_file, L, H}) ->
+	dht_routing_table:new(RequestedNodeID, L, H);
 load_state(RequestedNodeID, no_state_file) ->
 	dht_routing_table:new(RequestedNodeID);
 load_state(RequestedNodeID, Filename) ->

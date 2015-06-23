@@ -37,20 +37,20 @@ initial_tree(Low, High) ->
 %% Construction of a new table
 %% --------------
 
-new(Self) ->
-    routing_table:reset(Self, ?ID_MIN, ?ID_MAX),
+new(Self, Min, Max) ->
+    routing_table:reset(Self, Min, Max),
     'ROUTING_TABLE'.
 
 new_pre(S) -> not initialized(S).
 
-new_args(#state { self = undefined }) -> [dht_eqc:id()];
-new_args(#state { self = Self }) -> [Self].
+new_args(#state { self = undefined }) -> [dht_eqc:id(), ?ID_MIN, ?ID_MAX];
+new_args(#state { self = Self }) -> [Self, ?ID_MIN, ?ID_MAX].
 
 new_pre(_S, _) -> true.
 
-new_return(_S, [_Self]) -> 'ROUTING_TABLE'.
+new_return(_S, [_Self, _, _]) -> 'ROUTING_TABLE'.
 
-new_next(S, _, [Self]) -> S#state { self = Self, init = true, tree = initial_tree(?ID_MIN, ?ID_MAX) }.
+new_next(S, _, [Self, Min, Max]) -> S#state { self = Self, init = true, tree = initial_tree(Min, Max) }.
 
 new_callers() -> [dht_state_eqc].
 
