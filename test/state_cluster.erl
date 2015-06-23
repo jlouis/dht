@@ -1,4 +1,4 @@
--module(state_cluster_eqc).
+-module(state_cluster).
 
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_cluster.hrl").

@@ -16,7 +16,16 @@
 api_spec() ->
     #api_spec {
       language = erlang,
-      modules = [ ]
+      modules = [
+        #api_module {
+          name = dht_time,
+          functions = [
+            #api_fun { name = convert_time_unit, arity = 3 },
+            #api_fun { name = monotonic_time, arity = 0 },
+            #api_fun { name = send_after, arity = 3 },
+            #api_fun { name = cancel_timer, arity = 1 }
+          ]}
+      ]
     }.
     
 gen_initial_state() ->
@@ -36,8 +45,18 @@ advance_time_args(_S) ->
     ]),
     [T].
 
+%% Advancing time transitions the system into a state where the time is incremented
+%% by A.
+advance_time_next(#state { time = T } = State, _, [A]) -> State#state { time = T+A }.
+advance_time_return(_S, [_]) -> ok.
+
 %% TRIGGERING OF TIMERS
 %% ------------------------------------
+%%
+%% This is to be used by another component as:
+%% ?APPLY(dht_time, trigger, []) in a callout specification. This ensures the given command can
+%% only be picked if you can trigger the timer.
+
 can_fire(#state { time = T, timers = TS }) ->
      [X || X = {TP, _, _, _} <- TS, T >= TP].
    
@@ -53,30 +72,47 @@ trigger_next(#state { timers = TS } = S, _, []) ->
         [{_, TRef, _, _} | _] -> S#state{ timers = lists:keydelete(2, TRef, TS) }
     end.
     
-%% Advancing time transitions the system into a state where the time is incremented
-%% by A.
-advance_time_next(#state { time = T } = State, _, [A]) -> State#state { time = T+A }.
-advance_time_return(_S, [_]) -> ok.
-
 %% INTERNAL CALLS IN THE MODEL
 %% -------------------------------------------
+%%
+%% All these calls are really "wrappers" such that if you call into the timing model, you obtain
+%% faked time.
 
 monotonic_time_callers() -> [dht_routing_meta_eqc, dht_routing_table_eqc, dht_state_eqc].
+
+monotonic_time_callouts(#state {time = T }, []) ->
+    ?CALLOUT(dht_time, monotonic_time, [], T),
+    ?RET(T).
+
 monotonic_time_return(#state { time = T }, []) -> T.
 
-convert_time_unit_return() -> [dht_routing_meta_eqc, dht_routing_table_eqc, dht_state_eqc].
-convert_time_unit_return(_S, [T, native, milli_seconds]) -> T;
-convert_time_unit_return(_S, [T, milli_seconds, native]) -> T.
+convert_time_unit_callers() -> [dht_routing_meta_eqc, dht_routing_table_eqc, dht_state_eqc].
 
-send_after_return(#state { time_ref = Ref }, [_Timeout, _Pid, _Msg]) -> {tref, Ref}.
+convert_time_unit_callouts(_S, [T, From, To]) ->
+    ?CALLOUT(dht_time, convert_time_unit, [T, From, To], T),
+    case {From, To} of
+        {native, milli_seconds} -> ?RET(T);
+        {milli_seconds, native} -> ?RET(T);
+        FT -> ?FAIL({convert_time_unit, FT})
+    end.
+
+send_after_callers() -> [dht_routing_meta_eqc, dht_routing_table_eqc, dht_state_eqc].
+
+send_after_callouts(#state { time_ref = Ref}, [Timeout, Pid, Msg]) ->
+    ?CALLOUT(dht_time, send_after, [Timeout, Pid, Msg], {tref, Ref}),
+    ?RET({tref, Ref}).
 
 send_after_next(#state { time = T, time_ref = Ref, timers = TS } = S, _, [Timeout, Pid, Msg]) ->
     TriggerPoint = T + Timeout,
     S#state { time_ref = Ref + 1, timers = TS ++ [{TriggerPoint, Ref, Pid, Msg}] }.
 
 cancel_timer_callers() -> [dht_routing_meta_eqc].
+cancel_timer_callouts(S, [{tref, TRef}]) ->
+    Return = cancel_timer_rv(S, TRef),
+    ?CALLOUT(dht_time, cancel_timer, [{tref, TRef}], Return),
+    ?RET(Return).
 
-cancel_timer_return(#state { time = T, timers = TS }, [{tref, TRef}]) ->
+cancel_timer_rv(#state { time = T, timers = TS }, TRef) ->
     case lists:keyfind(TRef, 2, TS) of
         false -> false;
         {TriggerPoint, TRef, _Pid, _Msg} -> monus(TriggerPoint, T)

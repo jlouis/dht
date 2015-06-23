@@ -167,14 +167,6 @@ api_spec() ->
             #api_fun { name = pick, arity = 1 }
           ]},
         #api_module {
-          name = dht_time,
-          functions = [
-            #api_fun { name = convert_time_unit, arity = 3, classify = dht_time_eqc },
-            #api_fun { name = monotonic_time, arity = 0, classify = dht_time_eqc },
-            #api_fun { name = send_after, arity = 3, classify = dht_time_eqc },
-            #api_fun { name = cancel_timer, arity = 1, classify = dht_time_eqc }
-          ]},
-        #api_module {
           name = dht_routing_table,
           functions = [
             #api_fun { name = new, arity = 1, classify = dht_routing_table_eqc },
@@ -290,7 +282,7 @@ new_args(#state {}) -> ['ROUTING_TABLE'].
 %% init_range_timers and init_node_timers.
 new_callouts(#state { id = ID } = S, [Tbl]) ->
     ?APPLY(dht_routing_table_eqc, ensure_started, []),
-    ?MATCH(T, ?CALLOUT(dht_time, monotonic_time, [], 0)),
+    ?MATCH(T, ?APPLY(dht_time_eqc, monotonic_time, [])),
     ?CALLOUT(dht_routing_table, node_list, [Tbl], current_nodes(S)),
     ?CALLOUT(dht_routing_table, node_id, [Tbl], ID),
     ?APPLY(init_range_timers, [current_ranges(S), T]),
@@ -494,8 +486,8 @@ node_state_callouts(#state { node_timers = NTs }, [[N|Ns], X]) ->
           ?MATCH(Rest, ?APPLY(node_state, [Ns, X])),
           ?RET([{N, bad} | Rest]);
         {_, Tau, _, _} ->
-            ?MATCH(T, ?CALLOUT(dht_time, monotonic_time, [], 0)),
-            ?CALLOUT(dht_time, convert_time_unit, [T - Tau, native, milli_seconds], T-Tau),
+            ?MATCH(T, ?APPLY(dht_time_eqc, monotonic_time, [])),
+            ?APPLY(dht_time_eqc, convert_time_unit, [T - Tau, native, milli_seconds]),
             NodeState = node_questionability(T, Tau),
             ?MATCH(Rest, ?APPLY(node_state, [Ns, X])),
             ?RET([{N, NodeState} | Rest])
@@ -609,7 +601,7 @@ node_replace_next(#state{ node_timers = NTs } = S, _, [Node, Tuple]) ->
 node_touch_callouts(#state { node_timers = NTs }, [Node, #{ reachable := R2}, _]) ->
     case lists:keyfind(Node, 1, NTs) of
         {_, _, _, R1} when R1 or R2 -> 
-            ?MATCH(T, ?CALLOUT(dht_time, monotonic_time, [], 0)),
+            ?MATCH(T, ?APPLY(dht_time_eqc, monotonic_time, [])),
             ?APPLY(node_replace, [Node, {Node, T, 0, true}]),
             ?RET(ok);
         {_, _, _, _} ->
@@ -648,12 +640,12 @@ range_state_callouts(S, [Range, _]) ->
         false -> ?RET({error, not_member});
         true ->
             ?MATCH(Members, ?APPLY(range_members, [Range, ?WILDCARD])),
-            ?MATCH(T, ?CALLOUT(dht_time, monotonic_time, [], 0)),
+            ?MATCH(T, ?APPLY(dht_time_eqc, monotonic_time, [])),
             case last_active(S, Members) of
                {error, Reason} -> ?FAIL({error, Reason});
                [] -> ?RET(empty);
                [{_M, TS, _, _} | _] ->
-                   ?CALLOUT(dht_time, convert_time_unit, [T - TS, native, milli_seconds], T - TS),
+                   ?APPLY(dht_time_eqc, convert_time_unit, [T - TS, native, milli_seconds]),
                    case (T - TS) =< ?RANGE_TIMEOUT of
                      true -> ?RET(ok);
                      false ->
@@ -694,7 +686,7 @@ reset_range_timer_args(S) ->
 reset_range_timer_pre(S, [Range, _ ,_]) -> has_range(Range, S).
 
 reset_range_timer_callouts(#state {}, [Range, #{ force := true }, _]) ->
-    ?MATCH(T, ?CALLOUT(dht_time, monotonic_time, [], 0)),
+    ?MATCH(T, ?APPLY(dht_time_eqc, monotonic_time, [])),
     ?APPLY(remove_range_timer, [Range]),
     ?APPLY(add_range_timer_at, [Range, T]),
     ?RET(ok);
@@ -718,7 +710,7 @@ range_last_activity_callouts(S, [Range]) ->
         ?CALLOUT(dht_routing_table, members, [{range, Range}, ?WILDCARD], rt_nodes(S))),
     case last_active(S, Members) of
         [] ->
-          ?MATCH(R, ?CALLOUT(dht_time, monotonic_time, [], 0)),
+          ?MATCH(R, ?APPLY(dht_time_eqc, monotonic_time, [])),
           ?RET(R);
         [{_, At, _, _} | _] ->
           ?RET(At)
@@ -746,8 +738,7 @@ init_range_timers_callouts(#state {} = S, [Ranges, T]) ->
 %% if they are already, this will be a no-op, and no timer will be added. Figure
 %% out what is wrong here and fix it.
 init_nodes_callouts(_, [_Nodes, _T]) ->
-    ?CALLOUT(dht_time, convert_time_unit, [?NODE_TIMEOUT, milli_seconds, native],
-          ?NODE_TIMEOUT).
+    ?APPLY(dht_time_eqc, convert_time_unit, [?NODE_TIMEOUT, milli_seconds, native]).
 
 %% We start out by making every node questionable, so the system will catch up to
 %% the game imediately.
@@ -785,7 +776,7 @@ replace_callouts(_S, [OldNode, NewNode]) ->
 
 %% Adjoin a new node to the routing table, tracking meta-data information as well
 adjoin_callouts(#state {}, [Node]) ->
-    ?MATCH(T, ?CALLOUT(dht_time, monotonic_time, [], 0)),
+    ?MATCH(T, ?APPLY(dht_time_eqc, monotonic_time, [])),
     ?MATCH(Before, ?APPLY(obtain_ranges, [])),
     ?MATCH(HasSpace, ?CALLOUT(dht_routing_table, space, [Node, ?WILDCARD], bool() )),
     case HasSpace of
@@ -901,11 +892,11 @@ rev_append([S|Ss], Ls) -> rev_append(Ss, [S|Ls]).
 %%   out yet. It is necessary to do correctly to handle the model.
 
 add_range_timer_at_callouts(#state { }, [Range, At]) ->
-    ?MATCH(T, ?CALLOUT(dht_time, monotonic_time, [], 0)),
+    ?MATCH(T, ?APPLY(dht_time_eqc, monotonic_time, [])),
     Point = T - At,
-    ?CALLOUT(dht_time, convert_time_unit, [Point, native, milli_seconds], Point),
+    ?APPLY(dht_time_eqc, convert_time_unit, [Point, native, milli_seconds]),
     ?MATCH(Timer,
-      ?CALLOUT(dht_time, send_after, [monus(?RANGE_TIMEOUT, Point), ?WILDCARD, ?WILDCARD], tref)),
+      ?APPLY(dht_time_eqc, send_after, [monus(?RANGE_TIMEOUT, Point), self(), {inactive_range, Range}])),
     ?APPLY(add_timer_for_range, [Range, Timer]).
     
 add_timer_for_range_next(#state { range_timers = RT } = State, _, [Range, Timer]) ->
@@ -914,7 +905,7 @@ add_timer_for_range_next(#state { range_timers = RT } = State, _, [Range, Timer]
 remove_range_timer_callouts(#state { range_timers = RT }, [Range]) ->
     case lists:keyfind(Range, 1, RT) of
         {Range, TRef} ->
-            ?CALLOUT(dht_time, cancel_timer, [TRef], false);
+            ?APPLY(dht_time_eqc, cancel_timer, [TRef]);
         false ->
             ?FAIL(remove_non_existing_range)
     end.
