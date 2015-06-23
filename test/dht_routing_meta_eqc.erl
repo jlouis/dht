@@ -169,10 +169,10 @@ api_spec() ->
         #api_module {
           name = dht_time,
           functions = [
-            #api_fun { name = convert_time_unit, arity = 3 },
-            #api_fun { name = monotonic_time, arity = 0 },
-            #api_fun { name = send_after, arity = 3 },
-            #api_fun { name = cancel_timer, arity = 1 }
+            #api_fun { name = convert_time_unit, arity = 3, classify = dht_time_eqc },
+            #api_fun { name = monotonic_time, arity = 0, classify = dht_time_eqc },
+            #api_fun { name = send_after, arity = 3, classify = dht_time_eqc },
+            #api_fun { name = cancel_timer, arity = 1, classify = dht_time_eqc }
           ]},
         #api_module {
           name = dht_routing_table,

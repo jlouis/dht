@@ -14,8 +14,8 @@ api_spec() ->
         #api_module {
           name = dht_time,
           functions = [
-           #api_fun { name = monotonic_time, arity = 0 },
-           #api_fun { name = convert_time_unit, arity = 3 }
+           #api_fun { name = monotonic_time, arity = 0, classify = dht_time_eqc },
+           #api_fun { name = convert_time_unit, arity = 3, classify = dht_time_eqc }
           ]}
       ] }.
 
