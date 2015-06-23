@@ -14,7 +14,8 @@ api_spec() ->
         #api_module {
           name = dht_time,
           functions = [
-           #api_fun { name = monotonic_time, arity = 0 }
+           #api_fun { name = monotonic_time, arity = 0 },
+           #api_fun { name = convert_time_unit, arity = 3 }
           ]}
       ] }.
 
@@ -307,7 +308,10 @@ closest_to_callouts(#state { filter_fun = F } = S, [TargetID, _, K, _]) ->
     D = fun({ID, _IP, _Port}) -> dht_metric:d(TargetID, ID) end,
     Sorted = lists:sort(fun(X, Y) -> D(X) < D(Y) end, Ns),
     ?MATCH_GEN(Time, ?LET(N, nat(), N*100)),
-    ?REPLICATE(?CALLOUT(dht_time, monotonic_time, [], Time)),
+    ?REPLICATE(
+        ?SEQ(
+            ?CALLOUT(dht_time, monotonic_time, [], Time),
+            ?CALLOUT(dht_time, convert_time_unit, [Time, native, milli_seconds], Time))),
     ?RET(lists:sort(take(K, Sorted))).
     
 take(0, _) -> [];

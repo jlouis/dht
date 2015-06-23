@@ -138,11 +138,6 @@
 	tree = [] :: [#{ atom() => any() }],
 	%% The tree models ranges and nodes within each range
 	
-	%%% MODEL OF TIMERS
-	%%
-	time = 0:: time(),
-	timers = [] :: [{time(), time_ref()}],
-	tref = 0 :: time_ref(),
 	%% The fields time, timers and tref models time. The idea is that `time' is the
 	%% monotonic time on the system, timers is an (ordered) list of the current timers
 	%% and tref is used to draw unique timer references in the system.
@@ -261,7 +256,6 @@ gen_state(ID) ->
         tree = [#{ lo => 0, hi => 128, nodes => [], split => true }],
         init = false,
         id = ID,
-        time = int(),
         node_timers = [],
         range_timers = []
       }.
@@ -294,13 +288,13 @@ new_args(#state {}) -> ['ROUTING_TABLE'].
 %% Nodes and Ranges we generated into the system. The assumption is that
 %% these Nodes and Ranges are ones which are initialized via the internal calls
 %% init_range_timers and init_node_timers.
-new_callouts(#state { id = ID, time = T } = S, [Tbl]) ->
+new_callouts(#state { id = ID } = S, [Tbl]) ->
     ?APPLY(dht_routing_table_eqc, ensure_started, []),
-    ?CALLOUT(dht_time, monotonic_time, [], T),
+    ?MATCH(T, ?CALLOUT(dht_time, monotonic_time, [], 0)),
     ?CALLOUT(dht_routing_table, node_list, [Tbl], current_nodes(S)),
     ?CALLOUT(dht_routing_table, node_id, [Tbl], ID),
-    ?APPLY(init_range_timers, [current_ranges(S)]),
-    ?APPLY(init_nodes, [current_nodes(S)]),
+    ?APPLY(init_range_timers, [current_ranges(S), T]),
+    ?APPLY(init_nodes, [current_nodes(S), T]),
     ?RET({ok, ID, 'ROUTING_TABLE'}).
   
 %% Track that we initialized the system
@@ -476,24 +470,42 @@ node_state_pre(S, [Nodes, _]) ->
     Current = current_nodes(S),
     lists:all(fun(N) -> lists:member(N, Current) end, Nodes).
     
+%% Node state value (Internal call)
+%% --------------------------------------
+
+%% Given a time T and a node state tuple, compute the expected node state value
+%% for that tuple.
+node_questionability(T, Tau) ->
+    Age = T - Tau,
+    case Age < ?NODE_TIMEOUT of
+        true -> good;
+        false -> {questionable, Age - ?NODE_TIMEOUT}
+    end.
+
 %% We simply expect this call to carry out queries on each given node in the member list.
 %% And we expect the return to be computed in the same order as the query itself.
-node_state_callouts(#state { time = T, node_timers = NTs }, [Nodes, _]) ->
-    Returns = [node_state_value(T, lists:keyfind(N, 1, NTs)) || N <- Nodes],
-    ?SEQ(
-      [case R of
-          bad -> ?EMPTY;
-          _ -> ?SEQ(
-              ?CALLOUT(dht_time, monotonic_time, [], T),
-              ?CALLOUT(dht_time, convert_time_unit, [T - LA, native, milli_seconds], T-LA) )
-        end || {R, LA} <- Returns]),
-    ?RET([R || {R, _LA} <- Returns]).
+node_state_callouts(_S, [[], _X]) -> ?RET([]);
+node_state_callouts(#state { node_timers = NTs }, [[N|Ns], X]) ->
+    case lists:keyfind(N, 1, NTs) of
+        false ->
+          ?MATCH(Rest, ?APPLY(node_state, [Ns, X])),
+          ?RET([{N, not_member} | Rest]);
+        {_, _, Errs, _} when Errs > 1 ->
+          ?MATCH(Rest, ?APPLY(node_state, [Ns, X])),
+          ?RET([{N, bad} | Rest]);
+        {_, Tau, _, _} ->
+            ?MATCH(T, ?CALLOUT(dht_time, monotonic_time, [], 0)),
+            ?CALLOUT(dht_time, convert_time_unit, [T - Tau, native, milli_seconds], T-Tau),
+            NodeState = node_questionability(T, Tau),
+            ?MATCH(Rest, ?APPLY(node_state, [Ns, X])),
+            ?RET([{N, NodeState} | Rest])
+    end.
 
 node_state_features(_S, _A, Result) ->
     lists:usort([
       case R of
-        {questionable, _} -> {meta, {node_state, questionable}};
-        X -> {meta, {node_state, X}}
+        {_, {questionable, _}} -> {meta, {node_state, questionable}};
+        {_, X} -> {meta, {node_state, X}}
       end || R <- Result]).
 
 %% NODE_TIMEOUT
@@ -591,30 +603,23 @@ node_touch_pre(S, [Node, _, _]) ->
     Ns = current_nodes(S),
     lists:member(Node, Ns).
 
-node_touch_callouts(#state { time = T } = S, [Node, _Opts, _]) ->
-    case has_peer(Node, S) of
-        true ->
-            ?CALLOUT(dht_time, monotonic_time, [], T),
+node_replace_next(#state{ node_timers = NTs } = S, _, [Node, Tuple]) ->
+    S#state { node_timers = lists:keyreplace(Node, 1, NTs, Tuple) }.
+
+node_touch_callouts(#state { node_timers = NTs }, [Node, #{ reachable := R2}, _]) ->
+    case lists:keyfind(Node, 1, NTs) of
+        {_, _, _, R1} when R1 or R2 -> 
+            ?MATCH(T, ?CALLOUT(dht_time, monotonic_time, [], 0)),
+            ?APPLY(node_replace, [Node, {Node, T, 0, true}]),
+            ?RET(ok);
+        {_, _, _, _} ->
             ?RET(ok);
         false ->
             ?FAIL({node_touch, {unknown_node, Node}})
     end.
 
-%% Refreshing a node depends on its current reachability and if the new refresh is for a
-%% reply, in which case the node is reachable. If the node is not reachable, this is a no-op.
-%% and if the node is reachable, the backend structure is updated.
-node_touch_next(#state { node_timers = NTs, time = T } = S, _, [Node, #{ reachable := R2}, _]) ->
-    case lists:keyfind(Node, 1, NTs) of
-        {_, _, _, R1} ->
-            case R1 or R2 of
-                false -> S;
-                true -> S#state { node_timers = lists:keyreplace(Node, 1, NTs, {Node, T, 0, true}) }
-            end;
-        false ->
-            S
-    end.
-
 node_touch_features(_S, _A, _R) -> [{meta, node_touch}].
+
 
 %% RANGE_STATE
 %% --------------------------------------------------
@@ -636,14 +641,14 @@ range_state_args(S) ->
     ]),
     [Range, 'ROUTING_TABLE'].
 
-range_state_callouts(#state{ time = T } = S, [Range, _]) ->
+range_state_callouts(S, [Range, _]) ->
     ?MATCH(IsRange, ?CALLOUT(dht_routing_table, is_range, [Range, ?WILDCARD],
         lists:member(Range, current_ranges(S)))),
     case IsRange of
         false -> ?RET({error, not_member});
         true ->
             ?MATCH(Members, ?APPLY(range_members, [Range, ?WILDCARD])),
-            ?CALLOUT(dht_time, monotonic_time, [], T),
+            ?MATCH(T, ?CALLOUT(dht_time, monotonic_time, [], 0)),
             case last_active(S, Members) of
                {error, Reason} -> ?FAIL({error, Reason});
                [] -> ?RET(empty);
@@ -688,8 +693,8 @@ reset_range_timer_args(S) ->
 
 reset_range_timer_pre(S, [Range, _ ,_]) -> has_range(Range, S).
 
-reset_range_timer_callouts(#state { time = T }, [Range, #{ force := true }, _]) ->
-    ?CALLOUT(dht_time, monotonic_time, [], T),
+reset_range_timer_callouts(#state {}, [Range, #{ force := true }, _]) ->
+    ?MATCH(T, ?CALLOUT(dht_time, monotonic_time, [], 0)),
     ?APPLY(remove_range_timer, [Range]),
     ?APPLY(add_range_timer_at, [Range, T]),
     ?RET(ok);
@@ -708,12 +713,12 @@ reset_range_timer_features(_S, [_Range, #{ force := Force }, _], _R) ->
 %% on the range.
 %% TODO: Assert that the range timer is already gone here, otherwise the call is
 %% not allowed.
-range_last_activity_callouts(#state { time = T } = S, [Range]) ->
+range_last_activity_callouts(S, [Range]) ->
     ?MATCH(Members,
         ?CALLOUT(dht_routing_table, members, [{range, Range}, ?WILDCARD], rt_nodes(S))),
     case last_active(S, Members) of
         [] ->
-          ?MATCH(R, ?CALLOUT(dht_time, monotonic_time, [], T)),
+          ?MATCH(R, ?CALLOUT(dht_time, monotonic_time, [], 0)),
           ?RET(R);
         [{_, At, _, _} | _] ->
           ?RET(At)
@@ -726,7 +731,7 @@ range_last_activity_features(_S, _A, _R) -> [{meta, range_last_activity}].
 
 %% Initialization of range timers follows the same general structure:
 %% we successively add a new range timer to the state.
-init_range_timers_callouts(#state { time = T } = S, [Ranges]) ->
+init_range_timers_callouts(#state {} = S, [Ranges, T]) ->
     ?CALLOUT(dht_routing_table, ranges, [?WILDCARD], current_ranges(S)),
     ?SEQ([?APPLY(add_range_timer_at, [R, T]) || R <- Ranges]).
       
@@ -740,13 +745,13 @@ init_range_timers_callouts(#state { time = T } = S, [Ranges]) ->
 %% will all say they are members! This means something is wrong, because
 %% if they are already, this will be a no-op, and no timer will be added. Figure
 %% out what is wrong here and fix it.
-init_nodes_callouts(_, [_Nodes]) ->
+init_nodes_callouts(_, [_Nodes, _T]) ->
     ?CALLOUT(dht_time, convert_time_unit, [?NODE_TIMEOUT, milli_seconds, native],
           ?NODE_TIMEOUT).
 
 %% We start out by making every node questionable, so the system will catch up to
 %% the game imediately.
-init_nodes_next(#state { time = T } = S, _, [Nodes]) ->
+init_nodes_next(#state {} = S, _, [Nodes, T]) ->
     NodeTimers = [{N, T-?NODE_TIMEOUT, 0, false} || N <- lists:reverse(Nodes)],
     S#state { node_timers = NodeTimers }.
 
@@ -779,15 +784,15 @@ replace_callouts(_S, [OldNode, NewNode]) ->
 %% --------------------------------------------------
 
 %% Adjoin a new node to the routing table, tracking meta-data information as well
-adjoin_callouts(#state { time = T }, [Node]) ->
-    ?CALLOUT(dht_time, monotonic_time, [], T),
+adjoin_callouts(#state {}, [Node]) ->
+    ?MATCH(T, ?CALLOUT(dht_time, monotonic_time, [], 0)),
     ?MATCH(Before, ?APPLY(obtain_ranges, [])),
     ?MATCH(HasSpace, ?CALLOUT(dht_routing_table, space, [Node, ?WILDCARD], bool() )),
     case HasSpace of
         true ->
             ?CALLOUT(dht_routing_table, insert, [Node, ?WILDCARD], 'ROUTING_TABLE'),
             ?CALLOUT(dht_routing_table, member_state, [Node, ?WILDCARD], member),
-            ?APPLY(insert_node, [Node]),
+            ?APPLY(insert_node, [Node, T]),
             ?MATCH(After, ?APPLY(obtain_ranges, [])),
             Ops = lists:append(
                 [{del, R} || R <- ordsets:subtract(Before, After)],
@@ -814,8 +819,7 @@ fold_ranges_callouts(S, [[{add, R} | Ops]]) ->
     ?APPLY(add_range_timer_at, [R, Activity]),
     fold_ranges_callouts(S, [Ops]).
 
-%% TODO: Split too large ranges!
-insert_node_callouts(#state { time = T }, [Node]) ->
+insert_node_callouts(#state {}, [Node, T]) ->
     ?APPLY(split_range, [Node]),
     ?APPLY(insert_node_2, [Node]),
     ?APPLY(add_node_timer, [Node, T, true]).
@@ -881,31 +885,6 @@ take_range([R | Rs], ID, Acc) -> take_range(Rs, ID, [R | Acc]).
 rev_append([], Ls) -> Ls;
 rev_append([S|Ss], Ls) -> rev_append(Ss, [S|Ls]).
 
-%% ADVANCING TIME (MODEL)
-%% --------------------------------------------------
-
-%% Time is part of the model state, and is represented as milli_seconds,
-%% because I think this is enough resolution to hit the fun corner cases.
-%%
-%% The call is a model-internal call, so there is just a simple 'ROUTING_TABLE' function
-%% which is called whenever time is advanced.
-advance_time(_A) -> ok.
-
-%% Advancing time is forced to be positive, so it always increases the current
-%% Time interval. 
-advance_time_args(_S) ->
-    T = oneof([
-        ?LET(K, nat(), K+1),
-        ?LET({K, N}, {nat(), nat()}, (N+1)*1000 + K),
-        ?LET({K, N, M}, {nat(), nat(), nat()}, (M+1)*60*1000 + N*1000 + K)
-    ]),
-    [T].
-
-%% Advancing time transitions the system into a state where the time is incremented
-%% by A.
-advance_time_next(#state { time = T } = State, _, [A]) -> State#state { time = T+A }.
-advance_time_return(_S, [_]) -> ok.
-
 %% ADDING/REMOVING Timers (model book-keeping)
 %% --------------------------------------------------
 
@@ -921,44 +900,27 @@ advance_time_return(_S, [_]) -> ok.
 %% TODO: The concept of adding a timer at a given time T, e.g., Tref@T, is not fleshed
 %%   out yet. It is necessary to do correctly to handle the model.
 
-add_range_timer_at_callouts(#state { tref = C, time = T }, [_Range, At]) ->
-    ?CALLOUT(dht_time, monotonic_time, [], T),
+add_range_timer_at_callouts(#state { }, [Range, At]) ->
+    ?MATCH(T, ?CALLOUT(dht_time, monotonic_time, [], 0)),
     Point = T - At,
     ?CALLOUT(dht_time, convert_time_unit, [Point, native, milli_seconds], Point),
-    ?CALLOUT(dht_time, send_after, [monus(?RANGE_TIMEOUT, Point), ?WILDCARD, ?WILDCARD], C).
+    ?MATCH(Timer,
+      ?CALLOUT(dht_time, send_after, [monus(?RANGE_TIMEOUT, Point), ?WILDCARD, ?WILDCARD], tref)),
+    ?APPLY(add_timer_for_range, [Range, Timer]).
     
-%% Adding a range timer transitions the system by keeping track of the timer state
-%% and the fact that a range timer was added.
-add_range_timer_at_next(#state { timers = TS, tref = C, range_timers = RT } = State, _, [Range, At]) ->
-    State#state {
-        tref = C+1,
-        range_timers = RT ++ [{Range, At, C}],
-        timers = orddict:store(At+?RANGE_TIMEOUT, C, TS)
-    }.
-
-remove_range_timer_callouts(#state { range_timers = RT } = S, [Range]) ->
+add_timer_for_range_next(#state { range_timers = RT } = State, _, [Range, Timer]) ->
+    State#state { range_timers = RT ++ [{Range, Timer}] }.
+    
+remove_range_timer_callouts(#state { range_timers = RT }, [Range]) ->
     case lists:keyfind(Range, 1, RT) of
-        {Range, _, TRef} ->
-            ?CALLOUT(dht_time, cancel_timer, [TRef], timer_state(S, TRef));
+        {Range, TRef} ->
+            ?CALLOUT(dht_time, cancel_timer, [TRef], false);
         false ->
             ?FAIL(remove_non_existing_range)
     end.
     
-remove_range_timer_next(#state { range_timers = RT, timers = Timers } = State, _, [Range]) ->
-    case lists:keyfind(Range, 1, RT) of
-        {Range, _, TRef} ->
-            State#state {
-                range_timers = lists:keydelete(TRef, 3, RT),
-                timers = lists:keydelete(TRef, 2, Timers)
-            };
-        false -> State
-    end.
-
-timer_state(#state { time = T, timers = Timers }, TRef) ->
-    case lists:keyfind(TRef, 2, Timers) of
-        false -> false;
-        {P, TRef} -> monus(P, T)
-    end.
+remove_range_timer_next(#state { range_timers = RT } = State, _, [Range]) ->
+    State#state { range_timers = lists:keydelete(Range, 1, RT) }.
 
 %% When updating node timers, we have the option of overriding the last activity point
 %% of that node. The last activity point is passed as an extra parameter in this call.
@@ -1063,9 +1025,9 @@ has_nodes(S) -> current_nodes(S) /= [].
 
 %% TODO: Lessen this restriction so peers may have the same ID, but different IP-addresses,
 %% or different IP-addresses, but the same ID.
-has_peer({ID, _, _}, S) ->
+has_peer(N, S) ->
     Nodes = current_nodes(S),
-    lists:keymember(ID, 1, Nodes).
+    lists:member(N, Nodes).
 
 has_range(R, S) ->
     Rs = current_ranges(S),
@@ -1109,16 +1071,6 @@ last_active(#state { node_timers = NTs }, Members) ->
 nodes_with_timers(#state { node_timers = NTs }) ->
     [N || {N, _, _, _} <- NTs].
 
-%% Given a time T and a node state tuple, compute the expected node state value
-%% for that tuple.
-node_state_value(_T, false) -> {not_member, undefined};
-node_state_value(_T, {_, _, Errs, _}) when Errs > 1 -> {bad, undefined};
-node_state_value(T, {_, Tau, _, _}) when T >= Tau ->
-    Age = T - Tau,
-    case Age < ?NODE_TIMEOUT of
-        true -> {good, Tau};
-        false -> {{questionable, Age - ?NODE_TIMEOUT}, Tau}
-    end.
 
 %% Various helpers
 %% --------------------

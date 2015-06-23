@@ -145,7 +145,7 @@ node_list(#routing { table = Tbl }) -> dht_routing_table:node_list(Tbl).
   when Peer :: dht:peer(), Routing :: #routing{}.
 
 node_state(Nodes, #routing { nodes = NT }) ->
-    [timer_state({node, N}, NT) || N <- Nodes].
+    [{N, timer_state({node, N}, NT)} || N <- Nodes].
 
 range_state(Range, #routing{ table = Tbl } = Routing) ->
     case dht_routing_table:is_range(Range, Tbl) of
