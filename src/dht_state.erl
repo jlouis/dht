@@ -230,6 +230,7 @@ handle_call({closest_to, ID, NumNodes}, _From, #state{routing = Routing } = Stat
 handle_call({request_timeout, Node}, _From, #state{ routing = Routing } = State) ->
     case dht_routing_meta:member_state(Node, Routing) of
         unknown -> {reply, ok, State};
+        roaming_member -> {reply, {error, roaming_member}, State};
         member ->
             R = dht_routing_meta:node_timeout(Node, Routing),
             {reply, ok, State#state { routing = R }}
@@ -237,6 +238,7 @@ handle_call({request_timeout, Node}, _From, #state{ routing = Routing } = State)
 handle_call({request_success, Node, Opts}, _From, #state{ routing = Routing } = State) ->
     case dht_routing_meta:member_state(Node, Routing) of
         unknown -> {reply, ok, State};
+        roaming_member -> {reply, {error, roaming_member}, State};
         member ->
             R = dht_routing_meta:node_touch(Node, Opts, Routing),
             {reply, ok, State#state { routing = R }}

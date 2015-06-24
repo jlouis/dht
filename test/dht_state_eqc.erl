@@ -228,6 +228,7 @@ request_success_callouts(_S, [Node, Opts]) ->
       ?CALLOUT(dht_routing_meta, member_state, [Node, 'META'], oneof([unknown, member]))),
     case MState of
         unknown -> ?RET(ok);
+        roaming_member -> ?FAIL({request_success, roaming_member});
         member ->
           ?CALLOUT(dht_routing_meta, node_touch, [Node, Opts, 'META'], 'META'),
           ?RET(ok)
@@ -258,7 +259,7 @@ request_timeout_callouts(_S, [Node]) ->
         member ->
           ?CALLOUT(dht_routing_meta, node_timeout, [Node, 'META'], 'META'),
           ?RET(ok);
-        roaming_member -> ?FAIL(invariant)
+        roaming_member -> ?FAIL({request_timeout, roaming_member})
     end.
 
 request_timeout_features(_S, [_], _) -> [{state, request_timeout}].
