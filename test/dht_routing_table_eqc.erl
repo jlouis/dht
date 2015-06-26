@@ -10,14 +10,7 @@
 api_spec() ->
     #api_spec {
       language = erlang,
-      modules = [
-        #api_module {
-          name = dht_time,
-          functions = [
-           #api_fun { name = monotonic_time, arity = 0 },
-           #api_fun { name = convert_time_unit, arity = 3 }
-          ]}
-      ] }.
+      modules = [] }.
 
 -record(state,
     { self,
@@ -292,34 +285,23 @@ is_range_features(_S, _, false) -> [{table, {is_range, nonexisting}}].
 
 %% Ask who is closest to a given ID
 %% --------------------------------
-closest_to(ID, F, Num, _) ->
-    lists:sort(
-      routing_table:closest_to(ID, F, Num) ).
+closest_to(ID, _) ->
+    routing_table:closest_to(ID).
     
 closest_to_callers() -> [dht_routing_meta_eqc].
 
 closest_to_pre(S) -> initialized(S).
 
-closest_to_args(#state { filter_fun = F }) ->
-    [dht_eqc:id(), F, nat(), 'ROUTING_TABLE'].
+closest_to_args(#state {}) ->
+    [dht_eqc:id(), 'ROUTING_TABLE'].
 
-closest_to_callouts(#state { filter_fun = F } = S, [TargetID, _, K, _]) ->
+closest_to_callouts(#state { filter_fun = F } = S, [TargetID, _]) ->
     Ns = [N || N <- current_nodes(S), F(N)],
     D = fun({ID, _IP, _Port}) -> dht_metric:d(TargetID, ID) end,
     Sorted = lists:sort(fun(X, Y) -> D(X) < D(Y) end, Ns),
-    ?MATCH_GEN(Time, ?LET(N, nat(), N*100)),
-    ?REPLICATE(
-        ?SEQ(
-            ?APPLY(dht_time_eqc, monotonic_time, []),
-            ?APPLY(dht_time_eqc, convert_time_unit, [Time, native, milli_seconds]))),
-    ?RET(lists:sort(take(K, Sorted))).
-    
-take(0, _) -> [];
-take(_, []) -> [];
-take(K, [X|Xs]) when K > 0 -> [X | take(K-1, Xs)].
+    ?RET(Sorted).
 
-closest_to_features(_S, [_, _, N, _], _R) when N >= 8 -> [{table, {closest_to, '>=8'}}];
-closest_to_features(_S, [_, _, N, _], _R) -> [{table, {closest_to, N}}].
+closest_to_features(_S, [_, _], _R) -> [{table, {closest_to}}].
 
 %% Preconditions
 %% --------------------------------------

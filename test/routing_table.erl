@@ -6,7 +6,7 @@
 -export([start_link/0]).
 -export([reset/3, grab/0]).
 -export([
-	closest_to/3,
+	closest_to/1,
 	delete/1,
 	insert/1,
 	invariant/0,
@@ -62,8 +62,8 @@ node_id() ->
 is_range(B) ->
 	gen_server:call(?MODULE, {is_range, B}).
 
-closest_to(ID, Filter, Num) ->
-	gen_server:call(?MODULE, {closest_to, ID, Filter, Num}).
+closest_to(ID) ->
+	gen_server:call(?MODULE, {closest_to, ID}).
 
 invariant() ->
 	gen_server:call(?MODULE, invariant).
@@ -101,8 +101,8 @@ handle_call(node_id, _From, #state { table = RT} = State) ->
 	{reply, dht_routing_table:node_id(RT), State};
 handle_call({is_range, B}, _From, #state { table = RT } = State) ->
 	{reply, dht_routing_table:is_range(B, RT), State};
-handle_call({closest_to, ID, Filter, Num}, _From, #state { table = RT } = State) ->
-	{reply, dht_routing_table:closest_to(ID, Filter, Num, RT), State};
+handle_call({closest_to, ID}, _From, #state { table = RT } = State) ->
+	{reply, dht_routing_table:closest_to(ID, RT), State};
 handle_call(invariant, _From, #state { table = RT } = State) ->
 	{reply, check_invariants(dht_routing_table:node_id(RT), RT), State};
 handle_call(_Msg, _From, State) ->

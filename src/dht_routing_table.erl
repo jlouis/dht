@@ -24,7 +24,7 @@
 
 %% Query
 -export([
-	closest_to/4,
+	closest_to/2,
 	member_state/2,
 	is_range/2,
 	members/2,
@@ -160,13 +160,11 @@ member_state({ID, IP, Port}, RT) ->
 -spec is_range({dht:id(), dht:id()}, t()) -> boolean().
 is_range(Range, RT) -> lists:member(Range, ranges(RT)).
 
--spec closest_to(dht:id(), fun ((dht:id()) -> boolean()), pos_integer(), t()) ->
-                        list(dht:peer()).
-closest_to(ID, NodeFilterF, Num, #routing_table { table = Buckets }) ->
-    Nodes = [N || N <- all_nodes(Buckets), NodeFilterF(N)],
+-spec closest_to(dht:id(), t()) -> list(dht:peer()).
+closest_to(ID, #routing_table { table = Buckets }) ->
+    Nodes = [N || N <- all_nodes(Buckets)],
     DF = fun({MID, _, _}) -> dht_metric:d(ID, MID) end,
-    Closest = lists:sort(fun(X, Y) -> DF(X) < DF(Y) end, Nodes),
-    take(Num, Closest).
+    lists:sort(fun(X, Y) -> DF(X) < DF(Y) end, Nodes).
 
 %%
 %% Return a list of all members, combined, in all buckets.
@@ -195,8 +193,3 @@ all_nodes([]) -> [];
 all_nodes([#bucket { members = Ns } | Bs]) ->
     Rest = all_nodes(Bs),
     Ns ++ Rest.
-
-take(0, _) -> [];
-take(_, []) -> [];
-take(K, [X|Xs]) when K > 0 -> [X | take(K-1, Xs)].
-
