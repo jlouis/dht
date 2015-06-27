@@ -456,13 +456,13 @@ node_state_pre(S, [Nodes, _]) ->
 %% Node state value (Internal call)
 %% --------------------------------------
 
-%% Given a time T and a node state tuple, compute the expected node state value
+%% Given a time T and a node last activity point, Tau, compute the expected node state value
 %% for that tuple.
 node_questionability(T, Tau) ->
     Age = T - Tau,
     case Age < ?NODE_TIMEOUT of
         true -> good;
-        false -> {questionable, Age - ?NODE_TIMEOUT}
+        false -> {questionable, Tau}
     end.
 
 %% We simply expect this call to carry out queries on each given node in the member list.

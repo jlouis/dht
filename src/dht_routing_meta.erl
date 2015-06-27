@@ -341,7 +341,7 @@ timer_state({node, N}, NTs) ->
             Age = age(LA),
             case Age < ?NODE_TIMEOUT of
               true -> good;
-              false -> {questionable, Age - ?NODE_TIMEOUT}
+              false -> {questionable, LA}
             end
     end;
 timer_state({range, R}, RTs) ->

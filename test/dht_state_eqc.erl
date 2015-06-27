@@ -362,7 +362,7 @@ refresh_range_features(_S, _A, _R) -> [{state, refresh_range}].
 %% range/bucket in which the node would fall. We generate random bucket data by
 %% means of the following calls:
 g_node_state(L) ->
-    ?LET(S, vector(length(L), oneof([good, bad, {questionable, largeint()}])),
+    ?LET(S, vector(length(L), oneof([good, bad, {questionable, nat()}])),
         lists:zip(L, S)).
 
 bucket_members() ->
