@@ -883,7 +883,7 @@ perform_split_callouts(#state {} = S, [Node, _P]) ->
     end.
 
 perform_split_next(#state { id = Own } = S, _, [Node, P]) ->
-    F = fun({ID, _, _}) -> ID =< P end,
+    F = fun({ID, _, _}) -> ID < P end,
     { #{ lo := L, hi := H, nodes := Nodes, split := Split }, Rs} = take_range(S, Node),
     Split = within(L, Own, H), %% Assert the state of the split
     case Split of
