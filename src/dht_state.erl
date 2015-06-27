@@ -144,7 +144,7 @@ insert_node({_ID, _IP, _Port} = Node) ->
     case call({insert_node, Node}) of
         ok -> ok;
         already_member -> already_member;
-        range_full -> range_full;
+        not_inserted -> not_inserted;
         {error, Reason} -> {error, Reason};
         {verify, QNode} ->
             %% There is an old questionable node, which needs refreshing. Execute a ping test on
@@ -325,7 +325,10 @@ adjoin(Node, Routing) ->
     case analyze_range(dht_routing_meta:node_state(Near, Routing)) of
       {[], [], Gs} when length(Gs) == ?MAX_RANGE_SZ ->
           %% Already enough nodes in that range/bucket
-          {range_full, Routing};
+          case dht_routing_meta:insert(Node, Routing) of
+              {ok, NewRouting} -> {ok, NewRouting};
+              not_inserted -> {not_inserted, Routing}
+          end;
       {Bs, Qs, Gs} when length(Gs) + length(Bs) + length(Qs) < ?MAX_RANGE_SZ ->
           %% There is room for the new node, insert it
           {ok, _NewRouting} = dht_routing_meta:insert(Node, Routing);

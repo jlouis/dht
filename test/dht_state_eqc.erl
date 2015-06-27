@@ -201,8 +201,8 @@ insert_node_callouts(_S, [Node]) ->
     ?MATCH(NodeState, ?APPLY(insert_node_gs, [Node])),
     case NodeState of
         ok -> ?RET(ok);
-        range_full -> ?RET(range_full);
         already_member -> ?RET(already_member);
+        not_inserted -> ?RET(not_inserted);
         {error, Reason} -> ?RET({error, Reason});
         {verify, QN} ->
             ?APPLY(refresh_node, [QN]),
@@ -413,9 +413,14 @@ adjoin_node_callouts(_S, [Node]) ->
         g_node_state(Near))),
     R = analyze_node_state(NodeState),
     case R of
-        range_full -> ?RET(range_full);
+        range_full ->
+            ?MATCH(IR, ?CALLOUT(dht_routing_meta, insert, [Node, 'META'],
+                    oneof([{ok, 'META'}, not_inserted]))),
+            case IR of
+                {ok, _} -> ?RET(ok);
+                not_inserted -> ?RET(not_inserted)
+            end;
         room ->
-            %% TODO: Alter the return here so it is also possible to fail
             ?CALLOUT(dht_routing_meta, insert, [Node, 'META'], {ok, 'META'}),
             ?RET(ok);
         {bad, Bad} ->
