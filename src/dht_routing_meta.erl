@@ -72,14 +72,27 @@ range_members({_, _} = Range, #routing { table = T }) -> dht_routing_table:membe
 %% • The removed node MUST be bad.
 %% • The added node MUST NOT be a member.
 %% @end
+-spec replace(Old, New, Meta) -> not_inserted | roaming_member | {error, Reason} | {ok, Meta}
+    when
+      Old :: dht:peer(),
+      New :: dht:peer(),
+      Meta :: #routing{},
+      Reason :: atom().
+
 replace(Old, New, #routing { nodes = Ns, table = Tbl } = State) ->
-    bad = timer_state(Old, Ns),
-    unknown = member_state(New, State),
-    Deleted = State#routing {
-        table = dht_routing_table:delete(Old, Tbl),
-        nodes = maps:remove(Old, Ns)
-    },
-    insert(New, Deleted).
+    bad = timer_state({node, Old}, Ns),
+    case member_state(New, State) of
+        unknown ->
+            Deleted = State#routing {
+              table = dht_routing_table:delete(Old, Tbl),
+              nodes = maps:remove(Old, Ns)
+            },
+            insert(New, Deleted);
+        roaming_member ->
+            roaming_member;
+        member ->
+            {error, member}
+    end.
     
 %% @doc insert/2 inserts a new node in the routing table
 %% Precondition: The node inserted is not a member
@@ -104,7 +117,7 @@ insert(Node, #routing { table = Tbl, nodes = NT } = Routing) ->
 %% @doc remove/2 removes a node from the routing table
 %% @end
 remove(Node, #routing { table = Tbl, nodes = NT} = State) ->
-    bad = timer_state(Node, NT),
+    bad = timer_state({node, Node}, NT),
     State#routing {
         table = dht_routing_table:delete(Node, Tbl),
         nodes = maps:remove(Node, NT)
