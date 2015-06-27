@@ -371,7 +371,8 @@ bucket_members() ->
 
 %% Given a set of pairs {Node, NodeState} we can analyze them and sort them into
 %% the good, bad, and questionable nodes. The sort order matter.
-analyze_node_state(Nodes) ->
+analyze_node_state(UnsortedNodes) ->
+    Nodes = lists:sort(UnsortedNodes), %% Force stable order
     GoodNodes = [N || {N, good} <- Nodes],
     BadNodes = lists:sort([N || {N, bad} <- Nodes]),
     QNodes = [{N,T} || {N, {questionable, T}} <- Nodes],
@@ -425,7 +426,6 @@ adjoin_node_callouts(_S, [Node]) ->
 
 %% MODEL CLEANUP
 %% ------------------------------
-
 reset() ->
 	case whereis(dht_state) of
 	    undefined -> ok;

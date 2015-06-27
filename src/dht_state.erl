@@ -343,11 +343,12 @@ adjoin(Node, Routing) ->
 %%
 %% In addition we sort the bad nodes, so there is a specific deterministic order in which
 %% we consume them.
-analyze_range(Nodes) when length(Nodes) =< ?MAX_RANGE_SZ -> analyze_range(Nodes, [], [], []).
+analyze_range(Nodes) when length(Nodes) =< ?MAX_RANGE_SZ ->
+    analyze_range(lists:sort(Nodes), [], [], []).
 
 analyze_range([], Bs, Qs, Gs) ->
-    SortedQs = [N || {N, _} <- lists:keysort(2, Qs)],
-    {lists:sort(Bs), SortedQs, Gs};
+    SortedQs = [N || {N, _} <- lists:keysort(2, lists:reverse(Qs))],
+    {lists:reverse(Bs), SortedQs, lists:reverse(Gs)};
 analyze_range([{B, bad} | Next], Bs, Qs, Gs) -> analyze_range(Next, [B | Bs], Qs, Gs);
 analyze_range([{G, good} | Next], Bs, Qs, Gs) -> analyze_range(Next, Bs, Qs, [G | Gs]);
 analyze_range([{_, {questionable, _}} = Q | Next], Bs, Qs, Gs) -> analyze_range(Next, Bs, [Q | Qs], Gs).

@@ -1,3 +1,7 @@
+# TODO list of mistakes
+
+* When we try to insert a node, and that node tries to cuckoo out another node N because N is questionable, then what should happen if that node returns another ID than the one we expected? In that case, we should probably mark the node as being bad.
+
 # Tests and specification of the DHT
 
 This directory contains tests for the DHT system. The tests are captured in the module `dht_SUITE` and running tests will run this suite. The way to run these is from the top-level:
