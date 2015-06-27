@@ -795,8 +795,8 @@ remove_callouts(_S, [Node]) ->
     ?CALLOUT(dht_routing_table, delete, [Node, ?WILDCARD], 'ROUTING_TABLE'),
     ?RET(ok).
 
-remove_next(#state { tree = Tree } = State, _, [Node]) ->
-    State#state { tree = delete_node(Node, Tree) }.
+remove_next(#state { tree = Tree, node_timers = NTs } = State, _, [Node]) ->
+    State#state { tree = delete_node(Node, Tree), node_timers = lists:keydelete(Node, 1, NTs) }.
 
 remove_features(_S, _A, _R) -> [{meta, remove}].
 
