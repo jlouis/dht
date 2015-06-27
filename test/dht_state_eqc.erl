@@ -201,6 +201,7 @@ insert_node_callouts(_S, [Node]) ->
     ?MATCH(NodeState, ?APPLY(insert_node_gs, [Node])),
     case NodeState of
         ok -> ?RET(ok);
+        range_full -> ?RET(range_full);
         already_member -> ?RET(already_member);
         {error, Reason} -> ?RET({error, Reason});
         {verify, QN} ->
@@ -228,7 +229,7 @@ request_success_callouts(_S, [Node, Opts]) ->
       ?CALLOUT(dht_routing_meta, member_state, [Node, 'META'], oneof([unknown, member]))),
     case MState of
         unknown -> ?RET(ok);
-        roaming_member -> ?FAIL({request_success, roaming_member});
+        roaming_member -> ?RET(roaming_member);
         member ->
           ?CALLOUT(dht_routing_meta, node_touch, [Node, Opts, 'META'], 'META'),
           ?RET(ok)
@@ -259,7 +260,7 @@ request_timeout_callouts(_S, [Node]) ->
         member ->
           ?CALLOUT(dht_routing_meta, node_timeout, [Node, 'META'], 'META'),
           ?RET(ok);
-        roaming_member -> ?FAIL({request_timeout, roaming_member})
+        roaming_member -> ?RET(roaming_member)
     end.
 
 request_timeout_features(_S, [_], _) -> [{state, request_timeout}].
