@@ -171,7 +171,7 @@ api_spec() ->
           functions = [
             #api_fun { name = new, arity = 3, classify = dht_routing_table_eqc },
 
-            #api_fun { name = closest_to, arity = 4, classify = dht_routing_table_eqc },
+            #api_fun { name = closest_to, arity = 2, classify = dht_routing_table_eqc },
             #api_fun { name = delete, arity = 2, classify = dht_routing_table_eqc },
             #api_fun { name = insert, arity = 2, classify = dht_routing_table_eqc },
             #api_fun { name = member_state, arity = 2, classify = dht_routing_table_eqc },
@@ -390,30 +390,21 @@ take(0, _) -> [];
 take(_, []) -> [];
 take(K, [X|Xs]) when K > 0 -> [X | take(K-1, Xs)].
 
-closest_to_callouts(S, [ID, K]) ->
-    ?MATCH(Result,
-      ?CALLOUT(dht_routing_table, closest_to, [ID, ?WILDCARD, K, 'ROUTING_TABLE'],
-            ?LET(Ns, rt_nodes(S), take(K, Ns)))),
-    ?RET(Result).
-
-%% Neighbors calls out twice currently, because it has two filter functions it runs in succession.
-%% First it queries for the known good nodes, and then it queries for the questionable nodes.
-%%
-%% Note that we don't care if we return the right nodes here. We are only interested in the
-%% behavior of this call, and assumes that the routing table underneath is doing the right
-%% thing.
-neighbors_callouts(_S, [ID, K, _]) ->
-    ?MATCH(GoodNodes, ?APPLY(closest_to, [ID, K])),
-    case GoodNodes of
-       GoodNodes when length(GoodNodes) == K ->
-         ?RET(GoodNodes);
-       GoodNodes when length (GoodNodes) =< K ->
-         ?MATCH(QuestionableNodes, ?APPLY(closest_to, [ID, K-length(GoodNodes)])),
-         ?WHEN(length(GoodNodes ++ QuestionableNodes) > 8, ?FAIL(too_many_nodes_returned_1)),
-         ?RET(GoodNodes ++ QuestionableNodes);
-       GoodNodes when length(GoodNodes) > K ->
-         ?FAIL(too_many_nodes_returned_2)
-    end.
+%% To figure out what nodes to return, we obtain a sorted order of nodes. Then we
+%% satisy the call by picking good nodes in preference, and then picking questionable
+%% nodes for the remainder if we can't satisfy our target with good nodes.
+neighbors_callouts(S, [ID, K, _]) ->
+    ?MATCH(Nodes, ?CALLOUT(dht_routing_table, closest_to, [ID, 'ROUTING_TABLE'],
+        rt_nodes(S))),
+    ?MATCH(State, ?APPLY(node_state, [Nodes, 'META'])),
+    {Good, _} = lists:partition(fun ({_, St}) -> St == good end, State),
+    {Questionable, _} = lists:partition(
+        fun
+          ({_, {questionable, _}}) -> true;
+          (_) -> false
+        end,
+        State),
+    ?RET(take(K, [N || {N, _} <- (Good ++ Questionable)])).
 
 neighbors_features(_S, _A, R) ->
     case R of
@@ -662,6 +653,47 @@ range_state_features(_S, _A, {error, not_member}) -> [{meta, {range_state, non_e
 range_state_features(_S, _A, ok) -> [{meta, {range_state, ok}}];
 range_state_features(_S, _A, {needs_refresh, _}) -> [{meta, {range_state, needs_refresh}}].
     
+%% REPLACE
+%% --------------------------------------------------
+replace(Old, New, _) ->
+  eqc_lib:bind(?DRIVER,
+    fun(T) ->
+      case dht_routing_meta:replace(Old, New, T) of
+          {ok, R} -> {ok, ok, R};
+          Other -> {ok, Other, T}
+      end
+    end).
+    
+bad_nodes(#state { node_timers = NTs }) -> [N || {N, _, Errs, _} <- NTs, Errs > 1].
+
+replace_pre(S) -> initialized(S) andalso (bad_nodes(S) /= []).
+
+replace_args(S) ->
+    [elements(bad_nodes(S)), dht_eqc:peer(), 'META'].
+
+replace_pre(S, [Old, New, _]) ->
+    has_peer(Old, S) andalso (not has_peer(New, S)).
+
+%% Replacing a node with another node amounts to deleting one node, then adjoining in
+%% the other node.
+%% TODO: Assert the node we are replacing is currently questionable!
+replace_callouts(_S, [OldNode, NewNode, Meta]) ->
+    ?MATCH(MS, ?APPLY(member_state, [NewNode, Meta])),
+    case MS of
+        unknown ->
+          ?APPLY(remove, [OldNode]),
+          ?MATCH(Res, ?APPLY(adjoin, [NewNode])),
+          ?RET(Res);
+        roaming_member -> ?RET(roaming_member);
+        member -> ?RET({error, member})
+    end.
+
+replace_features(_S, _A, ok) -> [{meta, {replace, ok}}];
+replace_features(_S, _A, not_inserted) -> [{meta, {replace, not_inserted}}];
+replace_features(_S, _A, roaming_member) -> [{meta, {replace, roaming_member}}];
+replace_features(_S, _A, {error, What}) -> [{meta, {replace, {error, What}}}].
+
+
 %% RESET_RANGE_TIMER
 %% --------------------------------------------------
 
@@ -752,6 +784,13 @@ init_nodes_next(#state {} = S, _, [Nodes, T]) ->
 %% Removing a node amounts to killing the node from the routing table
 %% and also remove its timer structure.
 %% TODO: Assert only bad nodes are removed because this is the rule of the system!
+remove_pre(#state { node_timers = NTs }, [Node]) ->
+    case lists:keyfind(Node, 1, NTs) of
+        false -> false;
+        {_, _, Errs, _} when Errs > 1 -> true;
+        _ -> false
+    end.
+
 remove_callouts(_S, [Node]) ->
     ?CALLOUT(dht_routing_table, delete, [Node, ?WILDCARD], 'ROUTING_TABLE'),
     ?RET(ok).
@@ -760,16 +799,6 @@ remove_next(#state { tree = Tree } = State, _, [Node]) ->
     State#state { tree = delete_node(Node, Tree) }.
 
 remove_features(_S, _A, _R) -> [{meta, remove}].
-
-%% REPLACE (Internal call)
-%% --------------------------------------------------
-
-%% Replacing a node with another node amounts to deleting one node, then adjoining in
-%% the other node.
-%% TODO: Assert the node we are replacing is currently questionable!
-replace_callouts(_S, [OldNode, NewNode]) ->
-    ?APPLY(remove, [OldNode]),
-    ?APPLY(adjoin, [NewNode]).
 
 %% ADJOIN (Internal call)
 %% --------------------------------------------------
