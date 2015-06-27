@@ -376,7 +376,7 @@ invariant(#state { init = true }) -> routing_table:invariant().
 %% -------
 %%
 %% It is more interesting to manipulate the structure than it is to query it:
-weight(_S, insert) -> 3;
+weight(_S, insert) -> 15;
 weight(_S, delete) -> 3;
 weight(_S, _Cmd) -> 1.
 
@@ -402,9 +402,10 @@ prop_component_correct() ->
         pretty_commands(?MODULE, Cmds, {H, S, R},
             aggregate(with_title('Commands'), command_names(Cmds),
             collect(eqc_lib:summary('Length'), length(Cmds),
+            collect(eqc_lib:summary('Routing table size'), length(current_nodes(S)),
             aggregate(with_title('Features'), eqc_statem:call_features(H),
             features(eqc_statem:call_features(H),
-                R == ok)))))
+                R == ok))))))
       end)).
 
 t() -> t(5).

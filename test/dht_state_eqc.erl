@@ -415,9 +415,9 @@ adjoin_node_callouts(_S, [Node]) ->
     case R of
         range_full ->
             ?MATCH(IR, ?CALLOUT(dht_routing_meta, insert, [Node, 'META'],
-                    oneof([{ok, 'META'}, not_inserted]))),
+                    oneof([ok, not_inserted]))),
             case IR of
-                {ok, _} -> ?RET(ok);
+                ok -> ?RET(ok);
                 not_inserted -> ?RET(not_inserted)
             end;
         room ->
@@ -444,6 +444,9 @@ reset() ->
 %% -----------------------
 postcondition_common(S, Call, Res) ->
     eq(Res, return_value(S, Call)).
+
+weight(_S, insert_node) -> 15;
+weight(_S, _) -> 1.
 
 prop_component_correct() ->
     ?SETUP(fun() ->

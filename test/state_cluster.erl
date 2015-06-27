@@ -38,11 +38,16 @@ prop_cluster_correct() ->
         pretty_commands(?MODULE, Cmds, {H,S,R},
             aggregate(with_title('Commands'), command_names(Cmds),
             collect(eqc_lib:summary('Length'), length(Cmds),
+            collect(eqc_lib:summary('Routing Table Size'), rt_size(S),
             aggregate(with_title('Features'), eqc_statem:call_features(H),
             features(eqc_statem:call_features(H),
-                R == ok)))))
+                R == ok))))))
       end)))).
     
+rt_size(Components) ->
+    V = proplists:get_value(dht_routing_table_eqc, Components),
+    length(dht_routing_table_eqc:current_nodes(V)).
+
 t() -> t(15).
 
 t(Secs) ->

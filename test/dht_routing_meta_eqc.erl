@@ -965,6 +965,10 @@ remove_node_timer_next(#state { node_timers = NT } = State, _, [Node]) ->
 postcondition_common(S, Call, Res) ->
     eq(Res, return_value(S, Call)).
 
+%% Weighting
+weight(_S, insert) -> 150;
+weight(_S, _) -> 10.
+
 %% Main property, just verify that the commands are in sync with reality.
 prop_component_correct() ->
     ?SETUP(fun() ->
