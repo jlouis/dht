@@ -131,7 +131,7 @@ node_id() ->
 %% this operation completes.
 %%
 %% @end
--spec insert_node(Node) -> true | false | {error, Reason}
+-spec insert_node(Node) -> ok | already_member | range_full | {error, Reason}
   when
       Node :: dht:peer() | {inet:ip_address(), inet:port_number()},
       Reason :: atom().
@@ -144,6 +144,7 @@ insert_node({_ID, _IP, _Port} = Node) ->
     case call({insert_node, Node}) of
         ok -> ok;
         already_member -> already_member;
+        range_full -> range_full;
         {error, Reason} -> {error, Reason};
         {verify, QNode} ->
             %% There is an old questionable node, which needs refreshing. Execute a ping test on
@@ -169,15 +170,15 @@ insert_nodes(NodeInfos) ->
 
 %% @private
 %% @doc refresh_node/1 makes sure a node is still available
--spec refresh_node(dht:node_t()) -> ok.
+-spec refresh_node(dht:node_t()) -> ok | roaming_member.
 refresh_node({ID, IP, Port} = Node) ->
     case dht_net:ping({IP, Port}) of
 	{ok, ID} ->
-	    ok = request_success({ID, IP, Port}, #{ reachable => true });
+	    request_success({ID, IP, Port}, #{ reachable => true });
 	{ok, _WrongID} ->
-	    ok = request_timeout(Node);
+	    request_timeout(Node);
 	pang ->
-	    ok = request_timeout(Node)
+	    request_timeout(Node)
     end.
 
 %% @private
@@ -230,7 +231,7 @@ handle_call({closest_to, ID, NumNodes}, _From, #state{routing = Routing } = Stat
 handle_call({request_timeout, Node}, _From, #state{ routing = Routing } = State) ->
     case dht_routing_meta:member_state(Node, Routing) of
         unknown -> {reply, ok, State};
-        roaming_member -> {reply, {error, roaming_member}, State};
+        roaming_member -> {reply, roaming_member, State};
         member ->
             R = dht_routing_meta:node_timeout(Node, Routing),
             {reply, ok, State#state { routing = R }}
@@ -238,7 +239,7 @@ handle_call({request_timeout, Node}, _From, #state{ routing = Routing } = State)
 handle_call({request_success, Node, Opts}, _From, #state{ routing = Routing } = State) ->
     case dht_routing_meta:member_state(Node, Routing) of
         unknown -> {reply, ok, State};
-        roaming_member -> {reply, {error, roaming_member}, State};
+        roaming_member -> {reply, roaming_member, State};
         member ->
             R = dht_routing_meta:node_touch(Node, Opts, Routing),
             {reply, ok, State#state { routing = R }}
