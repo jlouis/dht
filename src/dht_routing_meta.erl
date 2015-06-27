@@ -192,23 +192,30 @@ export(#routing { table = Tbl }) -> Tbl.
 %% The search returns a list of nodes, where the nodes toward the head
 %% are good nodes, and nodes further down are questionable nodes.
 %% @end
-neighbors(ID, K, #routing { table = Tbl, nodes = NT }) ->
-    GoodFilter = fun(N) -> timer_state({node, N}, NT) =:= good end,
-    QuestionableFilter = fun
-        (N) ->
-            case timer_state({node, N}, NT) of
-                {questionable, _} -> true;
-                _ -> false
-            end
-    end,
-    case dht_routing_table:closest_to(ID, GoodFilter, K, Tbl) of
-        L when length(L) == K -> L;
-        L -> L ++ dht_routing_table:closest_to(
-        			ID, QuestionableFilter, K-length(L), Tbl)
+neighbors(ID, K, #routing { table = Tbl } = Routing) ->
+    Nodes = dht_routing_table:closest_to(ID, Tbl),
+    States = node_state(Nodes, Routing),
+    {Good, QBNodes} = lists:partition(
+      fun({_, S}) -> S == good end, States),
+    case take(K, Good) of
+        L when length(L) == K -> [N || {N, _} <- L];
+        L when length(L) < K ->
+            Remaining = K - length(L),
+            {Questionable, _} = lists:partition(
+              fun
+                ({_, {questionable, _}}) -> true;
+                (_) -> false
+              end,
+              QBNodes),
+             [N || {N, _} <- L ++ take(Remaining, Questionable)]
     end.
 
 %% INTERNAL FUNCTIONS
 %% ------------------------------------------------------
+
+take(0, _) -> [];
+take(_, []) -> [];
+take(K, [X|Xs]) when K > 0 -> [X | take(K-1, Xs)].
 
 range_state_members(Members, Routing) ->
     T = dht_time:monotonic_time(),
