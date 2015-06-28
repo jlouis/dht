@@ -8,8 +8,14 @@
 	init = false,
 	port = 1729,
 	token = undefined,
+	
+	%% Callers currently blocked
 	blocked = []
 }).
+
+-define(TOKEN_LIFETIME, 300*1000).
+
+initial_state() -> #state{}.
 
 api_spec() ->
     #api_spec {
@@ -32,253 +38,59 @@ api_spec() ->
             functions = [
                  #api_fun { name = send, arity = 4 },
                  #api_fun { name = open,  arity = 2 },
-                 #api_fun { name = sockname, arity = 1 } ] }
+                 #api_fun { name = sockname, arity = 1 } ] },
+          #api_module {
+            name = dht_time,
+            functions = [
+                #api_fun { name = send_after, arity = 3 }
+            ] }
         ]
     }.
 
-%% Typical socket responses:
-r_socket_send() ->
-    elements([ok]).
+%% Return typical POSIX error codes here
+%% I'm not sure we hit them all, but...
+error_posix() ->
+  ?LET(PErr, elements([eagain]),
+      {error, PErr}).
+  	
+socket_response_send() ->
+    elements([ok, error_posix()]).
 
-%% INITIALIZATION
-init_pre(#state { init = false }) -> true;
-init_pre(#state {}) -> false.
+init_pre(S) -> not initialized(S).
 
 init(Port, Tokens) ->
-    {ok, _Pid} = dht_net:start_link(Port, #{ tokens => Tokens }),
-    ok.
+    {ok, Pid} = dht_net:start_link(Port, #{ tokens => Tokens }),
+    unlink(Pid),
+    erlang:is_process_alive(Pid).
 
-init_args(#state { }) ->
-    [dht_eqc:port(), [dht_eqc:token()]].
-
-init_next(State, _V, [Port, [Token]]) ->
-    State#state { init = true, token = Token, port = Port }.
-
-init_callouts(#state { }, [P, _T]) ->
-    ?CALLOUT(dht_socket, open, [P, ?WILDCARD], {ok, sock_ref}).
-
-init_return(_, [_]) -> ok.
-
-%% NODE_PORT
-node_port_pre(#state { init = I }) -> I.
-
-node_port() ->
-	dht_net:node_port().
-	
-node_port_args(_S) -> [].
-
-node_port_callouts(#state { }, []) ->
-    ?MATCH(R, ?CALLOUT(dht_socket, sockname, [sock_ref], {ok, dht_eqc:socket()})),
-    ?RET(R).
-
-%% QUERY of a PING message
-q_ping_pre(#state { init = I }) -> I.
-
-q_ping(Socket, IP, Port, Packet) ->
-	inject(Socket, IP, Port, Packet).
-
-q_ping_args(_S) ->
-      ?LET({IP, Port, Packet}, {dht_eqc:ip(), dht_eqc:port(), dht_proto_eqc:q(dht_proto_eqc:q_ping())},
-          [sock_ref, IP, Port, Packet]).
-
-q_ping_callouts(#state {}, [_Sock, IP, Port, _Packet]) ->
-    ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
-    ?PAR([
-      ?CALLOUT(dht_state, insert_node, [{?WILDCARD, IP, Port}], elements([{error, timeout}, true, false])),
-      ?CALLOUT(dht_socket, send, [sock_ref, IP, Port, ?WILDCARD], return(ok))
-    ]).
-
-%% QUERY of a FIND message for a node
-q_find_node_pre(#state { init = I }) -> I.
-
-q_find_node(Socket, IP, Port, Packet) ->
-	inject(Socket, IP, Port, Packet).
-	
-q_find_node_args(_S) ->
-	[sock_ref, dht_eqc:ip(), dht_eqc:port(), dht_proto_eqc:q(dht_proto_eqc:q_find_node())].
-	
-q_find_node_callouts(#state {}, [_Sock, IP, Port, _Packet]) ->
-    ?SEQ([
-        ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
-        ?PAR([
-            ?CALLOUT(dht_state, insert_node, [{?WILDCARD, IP, Port}], elements([{error, timeout}, true, false])),
-            ?SEQ([
-              ?CALLOUT(dht_state, closest_to, [?WILDCARD], return([])),
-              ?CALLOUT(dht_socket, send, [sock_ref, IP, Port, ?WILDCARD], return(ok))
-            ]) ])
-    ]).
-
-%% QUERY of a FIND message for a value
-q_find_value_pre(#state { init = I }) -> I.
-
-q_find_value(Socket, IP, Port, Packet) ->
-	inject(Socket, IP, Port, Packet).
-	
-q_find_value_args(_S) ->
-	[sock_ref, dht_eqc:ip(), dht_eqc:port(), dht_proto_eqc:q(dht_proto_eqc:q_find_value())].
-	
-q_find_value_callouts(#state {}, [_Sock, IP, Port, _Packet]) ->
-    ?SEQ([
-        ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
-        ?PAR([
-            ?CALLOUT(dht_state, insert_node, [{?WILDCARD, IP, Port}], elements([{error, timeout}, true, false])),
-            ?SEQ([
-              ?CALLOUT(dht_store, find, [?WILDCARD], list(dht_eqc:peer())),
-              ?OPTIONAL(?CALLOUT(dht_state, closest_to, [?WILDCARD], return([]))),
-              ?CALLOUT(dht_socket, send, [sock_ref, IP, Port, ?WILDCARD], return(ok))
-            ]) ])
-    ]).
-
-%% QUERY of a STORE message
-q_store_pre(#state { init = I }) -> I.
-
-q_store(Socket, IP, Port, Packet) ->
-	inject(Socket, IP, Port, Packet).
-	
-q_store_args(#state { token = BaseToken }) ->
-    ?LET([IP, Port], [dht_eqc:ip(), dht_eqc:port()],
-        begin
-          Token = erlang:phash2({IP, Port, BaseToken}),
-          [sock_ref, IP, Port, dht_proto_eqc:q(dht_proto_eqc:q_store(<<Token:32>>))]
-        end).
-
-q_store_callouts(#state {}, [_Sock, IP, Port, _Packet]) ->
-    ?SEQ([
-      ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
-      ?PAR([
-          ?CALLOUT(dht_state, insert_node, [{?WILDCARD, IP, Port}], elements([{error, timeout}, true, false])),
-          ?SEQ([
-              ?CALLOUT(dht_store, store, [?WILDCARD, {IP, ?WILDCARD}], ok),
-              ?CALLOUT(dht_socket, send, [sock_ref, IP, Port, ?WILDCARD], return(ok))])])
-    ]).
-
-%% QUERY of a STORE message with an invalid token
-q_store_invalid_pre(#state { init = I }) -> I.
-
-q_store_invalid(Socket, IP, Port, Packet) ->
-	inject(Socket, IP, Port, Packet).
-	
-invalid_token(Token) ->
-    ?SUCHTHAT(T, dht_eqc:token(),
-        T /= Token).
-
-q_store_invalid_args(#state { token = BaseToken }) ->
-    ?LET([IP, Port, Token], [dht_eqc:ip(), dht_eqc:port(), invalid_token(BaseToken)],
-        begin
-            [sock_ref, IP, Port, dht_proto_eqc:q(dht_proto_eqc:q_store(Token))]
-        end).
-
-q_store_invalid_callouts(#state {}, [_Sock, IP, Port, _Packet]) ->
-    ?SEQ([
-      ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
-      ?PAR([
-          ?CALLOUT(dht_state, insert_node, [{?WILDCARD, IP, Port}], elements([{error, timeout}, true, false])),
-          ?CALLOUT(dht_socket, send, [sock_ref, IP, Port, ?WILDCARD], return(ok))])
-    ]).
-
-%% STORE - execute
-store_pre(#state { init = I }) -> I.
-
-store(Peer, Token, IDKey, Port) ->
-    dht_net:store(Peer, Token, IDKey, Port).
     
-store_args(_S) ->
-    [dht_eqc:socket(), dht_eqc:token(), dht_eqc:id(), dht_eqc:port()].
+init_args(_S) ->
+  [dht_eqc:port(), [dht_eqc:token()]].
 
-store_callouts(#state{}, [_Peer, _Token, _IDKey, _Port]) ->
-    ?SEQ([
-        ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
-        ?CALLOUT(dht_socket, send, [sock_ref, ?WILDCARD, ?WILDCARD, ?WILDCARD], r_socket_send()),
-        ?SELFCALL(add_blocked, [?SELF, find_value]),
-        ?BLOCK,
-        ?SELFCALL(del_blocked, [?SELF])
-    ]).
+init_next(S, _, [Port, [Token]]) ->
+  S#state { init = true, token = Token, port = Port }.
 
-%% FIND_VALUE - execute find_value commands
-find_value_pre(#state { init = I }) -> I.
+init_callouts(_S, [P, _T]) ->
+    ?CALLOUT(dht_socket, open, [P, ?WILDCARD], {ok, 'SOCKET_REF'}),
+    ?CALLOUT(dht_time, send_after, [?TOKEN_LIFETIME, ?WILDCARD, renew_token], 'TOKEN'),
+    ?RET(true).
+    
+%% MAIN PROPERTY
+%% ---------------------------------------------------------
 
-find_value(Peer, IDKey) ->
-	dht_net:find_value(Peer, IDKey).
-	
-find_value_args(_S) ->
-	[dht_eqc:socket(), dht_eqc:id()].
-	
-find_value_callouts(#state{}, [_Node, _IDKey]) ->
-    ?SEQ([
-       ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
-       ?CALLOUT(dht_socket, send, [sock_ref, ?WILDCARD, ?WILDCARD, ?WILDCARD], r_socket_send()),
-       ?SELFCALL(add_blocked, [?SELF, find_value]),
-       ?BLOCK,
-       ?SELFCALL(del_blocked, [?SELF])
-   ]).
+%% Use a common postcondition for all commands, so we can utilize the valid return
+%% of each command.
+%%postcondition_common(S, Call, Res) ->
+%%    eq(Res, return_value(S, Call)).
 
-%% FIND_NODE - execute find_node commands
-find_node_pre(#state { init = I }) -> I.
-
-find_node(Node) ->
-	dht_net:find_node(Node).
-	
-find_node_args(_S) ->
-	[dht_eqc:peer()].
-	
-find_node_callouts(#state{}, [_Node]) ->
-    ?SEQ([
-        ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
-        ?CALLOUT(dht_socket, send, [sock_ref, ?WILDCARD, ?WILDCARD, ?WILDCARD], r_socket_send()),
-        ?SELFCALL(add_blocked, [?SELF, find_node]),
-        ?BLOCK,
-        ?SELFCALL(del_blocked, [?SELF])
-    ]).
-
-%% PING - execute ping commands
-ping_pre(#state { init = I }) -> I.
-
-ping(Peer) ->
-	dht_net:ping(Peer).
-	
-ping_args(_S) ->
-	[{dht_eqc:ip(), dht_eqc:port()}].
-	
-ping_callouts(#state{}, [{IP, Port}]) ->
-    ?SEQ([
-        ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
-        ?CALLOUT(dht_socket, send, [sock_ref, IP, Port, ?WILDCARD], r_socket_send()),
-        ?SELFCALL(add_blocked, [?SELF, ping]),
-        ?BLOCK,
-        ?SELFCALL(del_blocked, [?SELF])
-    ]).
-
-add_blocked_next(#state { blocked = Bs } = S, _V, [Pid, Op]) ->
-    S#state { blocked = [{Pid, Op} | Bs] }.
-
-del_blocked_next(#state { blocked = Bs } = S, _V, [Pid]) ->
-    S#state { blocked = lists:keydelete(Pid, 1, Bs) }.
-
-%% Packet Injection
-%% ------------------
-
-inject(Socket, IP, Port, Packet) ->
-    Enc = iolist_to_binary(dht_proto:encode(Packet)),
-    dht_net ! {udp, Socket, IP, Port, Enc},
-    timer:sleep(5),
-    dht_net:sync().
-
-
-cleanup() ->
-    process_flag(trap_exit, true),
+reset() ->
     case whereis(dht_net) of
         undefined -> ok;
-        Pid ->
-           Pid ! {stop, self()},
-           receive
-             stopped -> ok
-           end,
-           timer:sleep(1)
-   end,
-   process_flag(trap_exit, false),
-   ok.
-
-%% PROPERTY
+        Pid when is_pid(Pid) ->
+            exit(Pid, kill),
+            timer:sleep(1)
+    end,
+    ok.
 
 prop_net_correct() ->
    ?SETUP(fun() ->
@@ -286,13 +98,20 @@ prop_net_correct() ->
        eqc_mocking:start_mocking(api_spec()),
        fun() -> ok end
      end,
-     ?FORALL(Port, dht_eqc:port(),
-     ?FORALL(Cmds, commands(?MODULE, #state { port = Port}),
-     ?TIMEOUT(1000,
-     ?TRAPEXIT(
+     ?FORALL(Cmds, commands(?MODULE),
        begin
-           {H, S, R} = run_commands(?MODULE, Cmds),
-           ok = cleanup(),
-           pretty_commands(?MODULE, Cmds, {H, S, R},
-               aggregate(command_names(Cmds), R == ok))
-       end))))).
+        ok = reset(),
+        {H,S,R} = run_commands(?MODULE, Cmds),
+        pretty_commands(?MODULE, Cmds, {H,S,R},
+            aggregate(with_title('Commands'), command_names(Cmds),
+            collect(eqc_lib:summary('Length'), length(Cmds),
+            aggregate(with_title('Features'), eqc_statem:call_features(H),
+            features(eqc_statem:call_features(H),
+                R == ok)))))
+       end)).
+
+
+%% HELPER ROUTINES
+%% -----------------------------------------------
+
+initialized(#state { init = Init}) -> Init.
