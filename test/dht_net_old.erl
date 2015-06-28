@@ -243,6 +243,8 @@ ping_callouts(#state{}, [{IP, Port}]) ->
     ?SEQ([
         ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
         ?CALLOUT(dht_socket, send, [sock_ref, IP, Port, ?WILDCARD], r_socket_send()),
+        ?CALLOUT(dht_time, send_after, [2000, ?WILDCARD, {request_timeout, ?WILDCARD, IP, Port}],
+            'TIMEOUT_REF'),
         ?SELFCALL(add_blocked, [?SELF, ping]),
         ?BLOCK,
         ?SELFCALL(del_blocked, [?SELF])

@@ -14,6 +14,7 @@
 }).
 
 -define(TOKEN_LIFETIME, 300*1000).
+-define(QUERY_TIMEOUT, 2000).
 
 initial_state() -> #state{}.
 
@@ -38,12 +39,7 @@ api_spec() ->
             functions = [
                  #api_fun { name = send, arity = 4 },
                  #api_fun { name = open,  arity = 2 },
-                 #api_fun { name = sockname, arity = 1 } ] },
-          #api_module {
-            name = dht_time,
-            functions = [
-                #api_fun { name = send_after, arity = 3 }
-            ] }
+                 #api_fun { name = sockname, arity = 1 } ] }
         ]
     }.
 
@@ -54,7 +50,10 @@ error_posix() ->
       {error, PErr}).
   	
 socket_response_send() ->
-    elements([ok, error_posix()]).
+    fault(error_posix(), ok).
+
+%% INITIALIZATION
+%% -------------------------------------
 
 init_pre(S) -> not initialized(S).
 
@@ -72,16 +71,77 @@ init_next(S, _, [Port, [Token]]) ->
 
 init_callouts(_S, [P, _T]) ->
     ?CALLOUT(dht_socket, open, [P, ?WILDCARD], {ok, 'SOCKET_REF'}),
-    ?CALLOUT(dht_time, send_after, [?TOKEN_LIFETIME, ?WILDCARD, renew_token], 'TOKEN'),
+    ?APPLY(dht_time, send_after, [?TOKEN_LIFETIME, dht_net, renew_token]),
     ?RET(true).
     
+init_features(_S, _A, _R) -> [{dht_net, r00, initialized}].
+
+%% NODE_PORT
+%% -------------------------------------------
+node_port_pre(S) -> initialized(S).
+
+node_port() ->
+    dht_net:node_port().
+    
+node_port_args(_S) -> [].
+
+node_port_callouts(_S, []) ->
+    ?MATCH(R, ?CALLOUT(dht_socket, sockname, ['SOCKET_REF'], {ok, dht_eqc:socket()})),
+    case R of
+        {ok, NP} -> ?RET(NP);
+        Otherwise -> ?FAIL(Otherwise)
+    end.
+
+node_port_features(_S, _A, _R) -> [{dht_net, r01, queried_for_node_port}].
+
+%% PING
+%% ------------
+
+ping_pre(S) -> initialized(S).
+
+ping(Peer) ->
+    dht_net:ping(Peer).
+    
+ping_args(_S) ->
+    [{dht_eqc:ip(), dht_eqc:port()}].
+    
+ping_callouts(_S, [{IP, Port}]) ->
+    ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
+    ?MATCH(SocketResponse,
+        ?CALLOUT(dht_socket, send, ['SOCKET_REF', IP, Port, ?WILDCARD], socket_response_send())),
+    case SocketResponse of
+        {error, Reason} -> ?RET({error, Reason});
+        ok ->
+          ?APPLY(dht_time, send_after, [?QUERY_TIMEOUT, dht_net, {request_timeout, ?WILDCARD}]),
+          ?APPLY(add_blocked, [?SELF, {ping, IP, Port}]),
+          ?BLOCK,
+          ?APPLY(del_blocked, [?SELF])
+    end.
+
+    
+
+%% INTERNAL HANDLING OF BLOCKING
+%% -------------------------------------------
+
+%% When we block a Pid internally, we track it in the set of blocked operations,
+%% given by the following blocked setup:
+add_blocked_next(#state { blocked = Bs } = S, _V, [Pid, Op]) ->
+    S#state { blocked = Bs ++ [Pid, Op] }.
+    
+del_blocked_next(#state { blocked = Bs } = S, _V, [Pid]) ->
+    S#state { blocked = lists:keydelete(Pid, 1, Bs) }.
+
+
 %% MAIN PROPERTY
 %% ---------------------------------------------------------
 
 %% Use a common postcondition for all commands, so we can utilize the valid return
 %% of each command.
-%%postcondition_common(S, Call, Res) ->
-%%    eq(Res, return_value(S, Call)).
+postcondition_common(S, Call, Res) ->
+    eq(Res, return_value(S, Call)).
+
+weight(_S, node_port) -> 2;
+weight(_S, _) -> 10.
 
 reset() ->
     case whereis(dht_net) of
@@ -91,31 +151,6 @@ reset() ->
             timer:sleep(1)
     end,
     ok.
-
-prop_component_correct() ->
-   ?SETUP(fun() ->
-       application:load(dht),
-       eqc_mocking:start_mocking(api_spec()),
-       fun() -> ok end
-     end,
-     ?FORALL(Cmds, commands(?MODULE),
-       begin
-        ok = reset(),
-        {H,S,R} = run_commands(?MODULE, Cmds),
-        pretty_commands(?MODULE, Cmds, {H,S,R},
-            aggregate(with_title('Commands'), command_names(Cmds),
-            collect(eqc_lib:summary('Length'), length(Cmds),
-            aggregate(with_title('Features'), eqc_statem:call_features(H),
-            features(eqc_statem:call_features(H),
-                R == ok)))))
-       end)).
-
-%% Helper for showing states of the output:
-t() -> t(15).
-
-t(Secs) ->
-    eqc:quickcheck(eqc:testing_time(Secs, eqc_statem:show_states(prop_component_correct()))).
-
 
 %% HELPER ROUTINES
 %% -----------------------------------------------
