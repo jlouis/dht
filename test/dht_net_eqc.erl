@@ -92,7 +92,7 @@ reset() ->
     end,
     ok.
 
-prop_net_correct() ->
+prop_component_correct() ->
    ?SETUP(fun() ->
        application:load(dht),
        eqc_mocking:start_mocking(api_spec()),
@@ -109,6 +109,12 @@ prop_net_correct() ->
             features(eqc_statem:call_features(H),
                 R == ok)))))
        end)).
+
+%% Helper for showing states of the output:
+t() -> t(15).
+
+t(Secs) ->
+    eqc:quickcheck(eqc:testing_time(Secs, eqc_statem:show_states(prop_component_correct()))).
 
 
 %% HELPER ROUTINES
