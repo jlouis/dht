@@ -1,6 +1,7 @@
 # TODO list of mistakes
 
-* When we try to insert a node, and that node tries to cuckoo out another node N because N is questionable, then what should happen if that node returns another ID than the one we expected? In that case, we should probably mark the node as being bad.
+* The network stack needs to be combed for when it tells the state engine it got request_success.
+
 
 # Tests and specification of the DHT
 

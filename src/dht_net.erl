@@ -114,7 +114,7 @@ find_node({N, IP, Port} = Node)  ->
     case request({IP, Port}, {find, node, N}) of
         {error, E} -> {error, E};
         {response, _, _, {find, node, Nodes}} ->
-            dht_state:notify(Node, request_success),
+            dht_state:request_success(Node, #{reachable => true }),
             {nodes, N, Nodes}
     end.
 

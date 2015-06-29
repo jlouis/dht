@@ -31,6 +31,8 @@ peer() ->
     ?LET({ID, IP, Port}, {id(), ip(), port()},
         {ID, IP, Port}).
 
+value() -> peer().
+
 tag() ->
     ?LET(ID, choose(0, 16#FFFF),
         <<ID:16>>).

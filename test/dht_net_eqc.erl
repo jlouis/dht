@@ -42,7 +42,8 @@ api_spec() ->
             functions = [
                 #api_fun { name = node_id, arity = 0 },
                 #api_fun { name = closest_to, arity = 1 },
-                #api_fun { name = insert_node, arity = 1 } ] },
+                #api_fun { name = insert_node, arity = 1 },
+                #api_fun { name = request_success, arity = 2 } ] },
           #api_module {
             name = dht_store,
             functions = [
@@ -85,7 +86,6 @@ init(Port, Tokens) ->
     unlink(Pid),
     erlang:is_process_alive(Pid).
 
-    
 init_args(_S) ->
   [dht_eqc:port(), [dht_eqc:token()]].
 
@@ -117,17 +117,41 @@ node_port_callouts(_S, []) ->
 
 node_port_features(_S, _A, _R) -> [{dht_net, queried_for_node_port}].
 
-
-
 %% FIND_NODE
 %% -----------------------
 find_node(Node) ->
     dht_net:find_node(Node).
 
 find_node_pre(S) -> initialized(S).
-%%find_node_args(_S) -> [dht_eqc:peer()].
-find_node_callouts(_S, [{ID, IP, Port}]) ->
-    ?APPLY(request, [{IP, Port}, {find, node, ID}]).
+find_node_args(_S) -> [dht_eqc:peer()].
+find_node_callouts(_S, [{ID, IP, Port} = Node]) ->
+    ?MATCH(R, ?APPLY(request, [{IP, Port}, {find, node, ID}])),
+    case R of
+        {error, Reason} -> ?RET({error, Reason});
+        {response, _, _, {find, node, Nodes}} ->
+            ?CALLOUT(dht_state, request_success, [Node, #{ reachable => true }], list(dht_eqc:peer())),
+            ?RET({nodes, ID, Nodes})
+    end.
+
+find_node_features(_S, _A, _R) -> [{dht_net, find_node}].
+
+%% FIND_VALUE
+%% -------------------------
+find_value(Peer, IDKey) ->
+    dht_net:find_value(Peer, IDKey).
+    
+find_value_pre(S) -> initialized(S).
+find_value_args(_S) -> [{dht_eqc:ip(), dht_eqc:port()}, dht_eqc:id()].
+find_value_callouts(_S, [{IP, Port}, KeyID]) ->
+    ?MATCH(R, ?APPLY(request, [{IP, Port}, {find, value, KeyID}])),
+    case R of
+        {error, Reason} -> ?RET({error, Reason});
+        {response, _, ID, {find, node, Nodes}} ->
+            ?RET({nodes, ID, Nodes});
+        {response, _, ID, {find, value, Token, Values}} ->
+            ?RET({values, ID, Token, Values})
+    end.
+find_value_features(_S, _A, _R) -> [{dht_net, find_value}].
 
 %% PING
 %% ------------
@@ -188,7 +212,13 @@ response_to({_Pid, {request, {IP, Port}, Tag, Query}}) ->
 q2r(Q) ->
    q2r_ok(Q).
    
-q2r_ok(ping) -> ping.
+q2r_ok(ping) -> ping;
+q2r_ok({find, node, _ID}) -> {find, node, list(dht_eqc:peer())};
+q2r_ok({find, value, _KeyID}) ->
+    oneof([
+        {find, node, list(dht_eqc:peer())},
+        {find, value, dht_eqc:token(), list(dht_eqc:value())}
+    ]).
 
 universe_respond_pre(S) -> blocked(S) /= [].
 universe_respond_args(S) ->
@@ -201,7 +231,14 @@ universe_respond_callouts(_S, [{Pid, _Request}, Response]) ->
     ?UNBLOCK(Pid, Response),
     ?RET(ok).
         
-universe_respond_features(_S, _A, _R) -> [{dht_net, universe_respond_to_a_request}].
+universe_respond_features(_S, [{_, Request}, _], _R) -> [{dht_net, {universe_respond, canonicalize(Request)}}].
+
+canonicalize({request, _, _, Q}) ->
+    case Q of
+        ping -> ping;
+        {find, node, _ID} -> find_node;
+        {find, value, _Val} -> find_value
+    end.
 
 %% INTERNAL HANDLING OF BLOCKING
 %% -------------------------------------------
