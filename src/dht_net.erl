@@ -114,7 +114,6 @@ find_node({N, IP, Port} = Node)  ->
     case request({IP, Port}, {find, node, N}) of
         {error, E} -> {error, E};
         {response, _, _, {find, node, Nodes}} ->
-            dht_state:request_success(Node, #{reachable => true }),
             {nodes, N, Nodes}
     end.
 
@@ -139,9 +138,9 @@ find_value(Peer, IDKey)  ->
             {values, ID, Token, Values}
     end.
 
--spec store(SockName, Token, ID, Port) -> {error, timeout} | dht:node_id()
+-spec store(Peer, Token, ID, Port) -> {error, timeout} | dht:node_id()
   when
-    SockName :: {inet:ip_address(), inet:port_number()},
+    Peer :: {inet:ip_address(), inet:port_number()},
     ID :: dht:id(),
     Token :: dht:token(),
     Port :: inet:port_number().
@@ -217,7 +216,7 @@ handle_cast(_Msg, State) ->
     {noreply, State}.
 
 %% @private
-handle_info({request_timeout, _, Key}, State) ->
+handle_info({request_timeout, Key}, State) ->
     HandledState = handle_request_timeout(Key, State),
     {noreply, HandledState};
 handle_info(renew_token, State) ->
@@ -272,7 +271,7 @@ handle_packet({IP, Port} = Peer, Packet,
     case view_packet_decode(Packet) of
         invalid_decode ->
             State;
-        {valid_decode, Tag, M} ->
+        {valid_decode, PeerID, Tag, M} ->
             Key = {Peer, Tag},
             case {gb_trees:lookup(Key, Outstanding), M} of
                 {none, {response, _, _, _}} -> State; %% No recipient
@@ -285,6 +284,7 @@ handle_packet({IP, Port} = Peer, Packet,
                 {{value, {Client, TRef}}, _} ->
                   %% Handle blocked client process
                   dht_time:cancel_timer(TRef),
+                  dht_state:request_success({PeerID, IP, Port}, #{ reachable => true }),
                   respond(Client, M),
                   State#state { outstanding = gb_trees:delete(Key, Outstanding) }
             end
@@ -298,9 +298,9 @@ respond(Client, M) -> gen_server:reply(Client, M).
 %% view_packet_decode/1 is a view on the validity of an incoming packet
 view_packet_decode(Packet) ->
     try dht_proto:decode(Packet) of
-        {error, Tag, _ID, _Code, _Msg} = E -> {valid_decode, Tag, E};
-        {response, Tag, _ID, _Reply} = R -> {valid_decode, Tag, R};
-        {query, Tag, _ID, _Query} = Q -> {valid_decode, Tag, Q}
+        {error, Tag, ID, _Code, _Msg} = E -> {valid_decode, ID, Tag, E};
+        {response, Tag, ID, _Reply} = R -> {valid_decode, ID, Tag, R};
+        {query, Tag, ID, _Query} = Q -> {valid_decode, ID, Tag, Q}
     catch
        _Class:_Error ->
            invalid_decode

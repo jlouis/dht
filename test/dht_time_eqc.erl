@@ -57,20 +57,21 @@ advance_time_return(_S, [_]) -> ok.
 %% ?APPLY(dht_time, trigger, []) in a callout specification. This ensures the given command can
 %% only be picked if you can trigger the timer.
 
-can_fire(#state { time = T, timers = TS }) ->
-     [X || X = {TP, _, _, _} <- TS, T >= TP].
+can_fire(#state { time = T, timers = TS }, Ref) ->
+     case lists:keyfind(Ref, 2, TS) of
+         false -> false;
+         {TP, _, _, _} -> T >= TP
+     end.
    
-trigger_pre(S, []) -> can_fire(S) /= [].
+trigger_pre(S, [{tref, Ref}]) -> can_fire(S, Ref).
     
-trigger_return(S, []) ->
-    case lists:keysort(1, can_fire(S)) of
-        [{_TP, TRef, Pid, Msg} | _] -> {timeout, TRef, Pid, Msg}
+trigger_return(#state { timers = TS }, [{tref, Ref}]) ->
+    case lists:keyfind(Ref, 2, TS) of
+        {_TP, _Ref, _Pid, Msg} -> Msg
     end.
     
-trigger_next(#state { timers = TS } = S, _, []) ->
-    case lists:keysort(1, can_fire(S)) of
-        [{_, TRef, _, _} | _] -> S#state{ timers = lists:keydelete(2, TRef, TS) }
-    end.
+trigger_next(#state { timers = TS } = S, _, [{tref, Ref}]) ->
+    S#state{ timers = lists:keydelete(2, Ref, TS) }.
     
 %% INTERNAL CALLS IN THE MODEL
 %% -------------------------------------------
@@ -106,7 +107,8 @@ send_after_next(#state { time = T, time_ref = Ref, timers = TS } = S, _, [Timeou
     TriggerPoint = T + Timeout,
     S#state { time_ref = Ref + 1, timers = TS ++ [{TriggerPoint, Ref, Pid, Msg}] }.
 
-cancel_timer_callers() -> [dht_routing_meta_eqc].
+cancel_timer_callers() -> [dht_routing_meta_eqc, dht_net].
+
 cancel_timer_callouts(S, [{tref, TRef}]) ->
     Return = cancel_timer_rv(S, TRef),
     ?CALLOUT(dht_time, cancel_timer, [{tref, TRef}], Return),

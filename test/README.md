@@ -1,7 +1,8 @@
 # TODO list of mistakes
 
 * The network stack needs to be combed for when it tells the state engine it got request_success.
-
+* Make dht_state/request_* into casts
+* 
 
 # Tests and specification of the DHT
 

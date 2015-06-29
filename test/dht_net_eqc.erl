@@ -10,10 +10,7 @@
 	token = undefined,
 	
 	%% Callers currently blocked
-	blocked = [],
-	
-	%% Unique message ID's we have currently in use
-	unique_ids = []
+	blocked = []
 }).
 
 -record(response, {
@@ -141,12 +138,11 @@ find_node(Node) ->
 
 find_node_pre(S) -> initialized(S).
 find_node_args(_S) -> [dht_eqc:peer()].
-find_node_callouts(_S, [{ID, IP, Port} = Node]) ->
+find_node_callouts(_S, [{ID, IP, Port}]) ->
     ?MATCH(R, ?APPLY(request, [{IP, Port}, {find, node, ID}])),
     case R of
         {error, Reason} -> ?RET({error, Reason});
         {response, _, _, {find, node, Nodes}} ->
-            ?CALLOUT(dht_state, request_success, [Node, #{ reachable => true }], list(dht_eqc:peer())),
             ?RET({nodes, ID, Nodes})
     end.
 
@@ -189,6 +185,29 @@ ping_callouts(_S, [Target]) ->
 
 ping_features(_S, _A, _R) -> [{dht_net, ping}].
 
+%% REQUEST TIMEOUT
+%% ----------------------------
+
+request_timeout({_Ref, _Pid, Key}) ->
+    dht_net ! {request_timeout, Key},
+    dht_net:sync().
+    
+request_timeout_pre(S) ->
+    initialized(S) andalso blocked(S) /= [].
+
+request_timeout_args(S) ->
+    [elements(timeouts(S))].
+
+request_timeout_pre(S, [Timeout]) ->
+    lists:member(Timeout, timeouts(S)).
+
+request_timeout_callouts(_S, [{TRef, Pid, _Key}]) ->
+    ?APPLY(dht_time_eqc, trigger, [TRef]),
+    ?UNBLOCK(Pid, {error, timeout}),
+    ?RET(ok).
+    
+request_timeout_features(_S, _A, _R) -> [{dht_net, request_timeout}].
+    
 %% REQUEST (Internal call)
 %% --------------
 
@@ -201,15 +220,20 @@ request_callouts(S, [{IP, Port} = Target, Q]) ->
     case SocketResponse of
         {error, Reason} -> ?RET({error, Reason});
         ok ->
+          Key = {Target, <<Tag:16/integer>>},
           ?MATCH(TimerRef,
-              ?APPLY(dht_time_eqc, send_after, [?QUERY_TIMEOUT, dht_net, {request_timeout, ?WILDCARD}])),
-          ?APPLY(add_blocked, [?SELF, {request, Target, Tag, Q}]),
+              ?APPLY(dht_time_eqc, send_after, [?QUERY_TIMEOUT, dht_net, {request_timeout, Key}])),
+          ?APPLY(add_blocked, [?SELF, {request, TimerRef, Target, Tag, Q}]),
           ?MATCH(Response, ?BLOCK),
           ?APPLY(del_blocked, [?SELF]),
           ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
           ?APPLY(dht_time_eqc, cancel_timer, [TimerRef]),
           case Response of
-              {response, IP, Port, Resp} -> ?RET(Resp)
+              {error, timeout} ->
+                  ?RET({error, timeout});
+              #response { packet = {response, _Tag, PeerID, _} = Resp } ->
+                  ?CALLOUT(dht_state, request_success, [{PeerID, IP, Port}, #{ reachable => true }], ok),
+                  ?RET(Resp)
           end
     end.
 
@@ -218,13 +242,11 @@ request_callouts(S, [{IP, Port} = Target, Q]) ->
 universe_respond(_, #response {ip = IP, port = Port, packet = Packet }) ->
     inject('SOCKET_REF', IP, Port, Packet).
 
-response_to({_Pid, {request, {IP, Port}, Tag, Query}}) ->
-  ?LET(PeerNodeID, dht_eqc:id(),
-      #response {
+response_to({_Pid, {request, _TRef, {IP, Port}, Tag, Query}}) ->
+    #response {
         ip = IP,
         port = Port,
-        packet = {response, <<Tag:16/integer>>, PeerNodeID, q2r(Query)}
-      }).
+        packet = {response, <<Tag:16/integer>>, dht_eqc:id(), q2r(Query)} }.
 
 q2r(Q) ->
    q2r_ok(Q).
@@ -252,7 +274,7 @@ universe_respond_callouts(_S, [{Pid, _Request}, Response]) ->
         
 universe_respond_features(_S, [{_, Request}, _], _R) -> [{dht_net, {universe_respond, canonicalize(Request)}}].
 
-canonicalize({request, _, _, Q}) ->
+canonicalize({request, _, _, _, Q}) ->
     case Q of
         ping -> ping;
         {find, node, _ID} -> find_node;
@@ -270,12 +292,6 @@ add_blocked_next(#state { blocked = Bs } = S, _V, [Pid, Op]) ->
     
 del_blocked_next(#state { blocked = Bs } = S, _V, [Pid]) ->
     S#state { blocked = lists:keydelete(Pid, 1, Bs) }.
-
-add_unique_id_next(#state { unique_ids = Us } = S, _V, [Peer]) ->
-    S#state { unique_ids = Us ++ [Peer] }.
-    
-del_unique_id_next(#state { unique_ids = Us } = S, _V, [Peer]) ->
-    S#state { unique_ids = lists:keydelete(Peer, 1, Us) }.
 
 %% MAIN PROPERTY
 %% ---------------------------------------------------------
@@ -301,7 +317,11 @@ reset() ->
 %% -----------------------------------------------
 
 initialized(#state { init = Init}) -> Init.
-blocked(#state { blocked = B }) -> B.
+
+blocked(#state { blocked = Bs }) -> Bs.
+
+timeouts(#state { blocked = Bs }) ->
+    [{TRef, Pid, {Target, <<Tag:16/integer>>}} || {Pid, {request, TRef, Target, Tag, _Q}} <- Bs ].
 
 %% Sending an UDP packet into the system:
 inject(Socket, IP, Port, Packet) ->
