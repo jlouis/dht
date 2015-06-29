@@ -189,12 +189,13 @@ sync(Msg, Timeout) ->
 
 %% @doc refresh_range/1 refreshes a range for the system based on its ID
 %% @end
--spec refresh_range(dht:id()) -> ok.
-refresh_range(ID) ->
-    case dht_net:find_node(ID) of
+-spec refresh_range(dht:peer()) -> ok.
+refresh_range(Node) ->
+    case dht_net:find_node(Node) of
         {error, timeout} -> ok;
         {_, Nearnodes} ->
-            [insert_node(N) || N <- Nearnodes]
+            [insert_node(N) || N <- Nearnodes],
+            ok
     end.
 
 %% CALLBACKS

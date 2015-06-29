@@ -145,7 +145,7 @@ members({node, {ID, _, _}}, RT) ->
 %%
 %% Check if a node is a member of a bucket list
 %%
--spec member_state(dht:peer(), t()) -> boolean().
+-spec member_state(dht:peer(), t()) -> member | roaming_member | unknown.
 member_state({ID, IP, Port}, RT) ->
     #bucket { members = Members } = retrieve_id(ID, RT),
     case lists:keyfind(ID, 1, Members) of

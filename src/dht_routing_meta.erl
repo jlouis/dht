@@ -343,12 +343,5 @@ timer_state({node, N}, NTs) ->
               true -> good;
               false -> {questionable, LA}
             end
-    end;
-timer_state({range, R}, RTs) ->
-    #{ last_activity := MR } = maps:get(R, RTs),
-    Age = age(MR),
-    case Age < ?RANGE_TIMEOUT of
-        true -> ok;
-        false -> need_refresh
     end.
 
