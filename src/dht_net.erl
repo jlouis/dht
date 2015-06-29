@@ -284,7 +284,7 @@ handle_packet({IP, Port} = Peer, Packet,
                   State;
                 {{value, {Client, TRef}}, _} ->
                   %% Handle blocked client process
-                  erlang:cancel_timer(TRef),
+                  dht_time:cancel_timer(TRef),
                   respond(Client, M),
                   State#state { outstanding = gb_trees:delete(Key, Outstanding) }
             end
@@ -310,7 +310,7 @@ unique_message_id(Peer, Active) ->
     unique_message_id(Peer, Active, 16).
 	
 unique_message_id(Peer, Active, K) when K > 0 ->
-    IntID = random:uniform(16#FFFF),
+    IntID = dht_rand:uniform(16#FFFF),
     MsgID = <<IntID:16>>,
     case gb_trees:is_defined({Peer, MsgID}, Active) of
         true ->
@@ -324,9 +324,7 @@ unique_message_id(Peer, Active, K) when K > 0 ->
 % requests, or at least store requests from nodes that never sends find_value requests.
 %
 random_token() ->
-    ID0 = random:uniform(16#FFFF),
-    ID1 = random:uniform(16#FFFF),
-    <<ID0:16, ID1:16>>.
+    dht_rand:crypto_rand_bytes(4).
 
 send_query({IP, Port} = Peer, Query, From, #state { outstanding = Active, socket = Socket } = State) ->
     Self = dht_state:node_id(), %% @todo cache this locally. It can't change.

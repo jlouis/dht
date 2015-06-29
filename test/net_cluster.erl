@@ -16,6 +16,7 @@ api_spec() -> api_spec(?MODULE).
 
 prop_cluster_correct() ->
     ?SETUP(fun() ->
+        application:load(dht),
         eqc_mocking:start_mocking(api_spec(), components()),
         fun() -> ok end
     end,

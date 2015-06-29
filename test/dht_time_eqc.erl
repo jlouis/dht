@@ -96,7 +96,7 @@ convert_time_unit_callouts(_S, [T, From, To]) ->
         FT -> ?FAIL({convert_time_unit, FT})
     end.
 
-send_after_callers() -> [dht_routing_meta_eqc, dht_routing_table_eqc, dht_state_eqc].
+send_after_callers() -> [dht_routing_meta_eqc, dht_routing_table_eqc, dht_state_eqc, dht_net_eqc].
 
 send_after_callouts(#state { time_ref = Ref}, [Timeout, _Pid, Msg]) ->
     ?CALLOUT(dht_time, send_after, [Timeout, ?WILDCARD, Msg], {tref, Ref}),
