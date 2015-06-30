@@ -7,6 +7,8 @@
 -record(state, {
 	init = false,
 	port = 1729,
+	
+	%% The current tokens in the system, stored newest-at-the-head
 	tokens = [],
 	
 	%% Callers currently blocked
@@ -91,10 +93,14 @@ init(Port, Tokens) ->
     erlang:is_process_alive(Pid).
 
 init_args(_S) ->
-  [dht_eqc:port(), [dht_eqc:token()]].
+  [dht_eqc:port(), vector(2, dht_eqc:token())].
 
-init_next(S, _, [Port, [Token]]) ->
-  S#state { init = true, tokens = [Token], port = Port }.
+init_next(S, _, [Port, Tokens]) ->
+    S#state {
+        init = true,
+        tokens = lists:reverse(Tokens),
+        port = Port
+    }.
 
 init_callouts(_S, [P, _T]) ->
     ?CALLOUT(dht_socket, open, [P, ?WILDCARD], {ok, 'SOCKET_REF'}),
@@ -370,6 +376,28 @@ canonicalize(#request { query = Q }) ->
         {store, _Token, _KeyID, _Port} -> store
     end.
 
+%% RENEWING THE TOKEN
+renew_token() ->
+    dht_net ! renew_token,
+    dht_net:sync().
+    
+renew_token_pre(S) -> initialized(S).
+
+renew_token_args(_S) -> [].
+
+renew_token_callouts(_S, []) ->
+    ?APPLY(dht_time_eqc, trigger_msg, [renew_token]),
+    ?APPLY(dht_time_eqc, send_after, [?TOKEN_LIFETIME, dht_net, renew_token]),
+    ?MATCH(Token, ?CALLOUT(dht_rand, crypto_rand_bytes, [4], binary(4))),
+    ?APPLY(cycle_token, [Token]),
+    ?RET(ok).
+
+renew_token_features(_S, _A, _R) -> [{dht_net, renew_token}].
+
+cycle_token_next(#state { tokens = Tokens } = S, _, [Token]) ->
+    {Cycled, _} = lists:split(2, [Token | Tokens]),
+    S#state { tokens = Cycled }.
+
 %% INTERNAL HANDLING OF BLOCKING
 %% -------------------------------------------
 
@@ -389,6 +417,7 @@ del_blocked_next(#state { blocked = Bs } = S, _V, [Pid]) ->
 postcondition_common(S, Call, Res) ->
     eq(Res, return_value(S, Call)).
 
+weight(_S, renew_token) -> 1;
 weight(_S, node_port) -> 2;
 weight(_S, _) -> 10.
 

@@ -72,7 +72,20 @@ trigger_return(#state { timers = TS }, [{tref, Ref}]) ->
     
 trigger_next(#state { timers = TS } = S, _, [{tref, Ref}]) ->
     S#state{ timers = lists:keydelete(2, Ref, TS) }.
+
+can_fire_msg(#state { time = T, timers = TS }, Msg) ->
+    case lists:keyfind(Msg, 4, TS) of
+        false -> false;
+        {TP, _, _, _} -> T >= TP
+    end.
     
+trigger_msg_pre(S, [Msg]) -> can_fire_msg(S, Msg).
+trigger_msg_return(_S, [Msg]) -> Msg.
+    
+trigger_msg_next(#state { timers = TS } = S, _, [Msg]) ->
+    {_, Ref, _, _} = lists:keyfind(Msg, 4, TS),
+    S#state{ timers = lists:keydelete(2, Ref, TS) }.
+
 %% INTERNAL CALLS IN THE MODEL
 %% -------------------------------------------
 %%

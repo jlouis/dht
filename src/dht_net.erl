@@ -190,7 +190,7 @@ init([DHTPort, Opts]) ->
     	tokens = init_tokens(Opts)}}.
 
 init_tokens(#{ tokens := Toks}) -> queue:from_list(Toks);
-init_tokens(#{}) -> queue:from_list([random_token() || _ <- lists:seq(1, 3)]).
+init_tokens(#{}) -> queue:from_list([random_token() || _ <- lists:seq(1, 2)]).
 
 %% @private
 handle_call({request, Peer, Request}, From, State) ->
