@@ -13,6 +13,13 @@
 	blocked = []
 }).
 
+-record(request, {
+	timer_ref,
+	target,
+	tag,
+	query
+}).
+
 -record(response, {
 	ip :: inet:ip_address(),
 	port :: inet:port_number(),
@@ -70,7 +77,7 @@ unique_id(#state { blocked = Bs }, Peer) ->
         not has_unique_id(Peer, N, Bs)).
 
 has_unique_id(_P, _N, []) -> false;
-has_unique_id(P, N, [{request, P, N, _Q}|_Bs]) -> true;
+has_unique_id(P, N, [#request { target = P, tag = N}|_Bs]) -> true;
 has_unique_id(P, N, [_ | Bs]) -> has_unique_id(P, N, Bs).
 
 %% INITIALIZATION
@@ -125,7 +132,7 @@ store_args(_S) -> [{dht_eqc:ip(), dht_eqc:port()}, dht_eqc:token(), dht_eqc:id()
 store_callouts(_S, [{IP, Port}, Token, KeyID, MPort]) ->
     ?MATCH(R, ?APPLY(request, [{IP, Port}, {store, Token, KeyID, MPort}])),
     case R of
-        {error, R} -> ?RET({error, R});
+        {error, Reason} -> ?RET({error, Reason});
         {response, _, ID, _} -> ?RET({ok, ID})
     end.
 
@@ -180,6 +187,7 @@ ping_args(_S) ->
 ping_callouts(_S, [Target]) ->
     ?MATCH(R, ?APPLY(request, [Target, ping])),
     case R of
+        {error, timeout} -> ?RET(pang);
         {response, _Tag, PeerID, ping} -> ?RET({ok, PeerID})
     end.
 
@@ -223,15 +231,15 @@ request_callouts(S, [{IP, Port} = Target, Q]) ->
           Key = {Target, <<Tag:16/integer>>},
           ?MATCH(TimerRef,
               ?APPLY(dht_time_eqc, send_after, [?QUERY_TIMEOUT, dht_net, {request_timeout, Key}])),
-          ?APPLY(add_blocked, [?SELF, {request, TimerRef, Target, Tag, Q}]),
+          ?APPLY(add_blocked, [?SELF, #request { timer_ref = TimerRef, target = Target, tag = Tag, query = Q }]),
           ?MATCH(Response, ?BLOCK),
           ?APPLY(del_blocked, [?SELF]),
-          ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
-          ?APPLY(dht_time_eqc, cancel_timer, [TimerRef]),
           case Response of
               {error, timeout} ->
                   ?RET({error, timeout});
               #response { packet = {response, _Tag, PeerID, _} = Resp } ->
+                  ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
+                  ?APPLY(dht_time_eqc, cancel_timer, [TimerRef]),
                   ?CALLOUT(dht_state, request_success, [{PeerID, IP, Port}, #{ reachable => true }], ok),
                   ?RET(Resp)
           end
@@ -242,7 +250,7 @@ request_callouts(S, [{IP, Port} = Target, Q]) ->
 universe_respond(_, #response {ip = IP, port = Port, packet = Packet }) ->
     inject('SOCKET_REF', IP, Port, Packet).
 
-response_to({_Pid, {request, _TRef, {IP, Port}, Tag, Query}}) ->
+response_to({_Pid, #request { target = {IP, Port}, tag = Tag, query = Query }}) ->
     #response {
         ip = IP,
         port = Port,
@@ -274,7 +282,7 @@ universe_respond_callouts(_S, [{Pid, _Request}, Response]) ->
         
 universe_respond_features(_S, [{_, Request}, _], _R) -> [{dht_net, {universe_respond, canonicalize(Request)}}].
 
-canonicalize({request, _, _, _, Q}) ->
+canonicalize(#request { query = Q }) ->
     case Q of
         ping -> ping;
         {find, node, _ID} -> find_node;
@@ -321,7 +329,7 @@ initialized(#state { init = Init}) -> Init.
 blocked(#state { blocked = Bs }) -> Bs.
 
 timeouts(#state { blocked = Bs }) ->
-    [{TRef, Pid, {Target, <<Tag:16/integer>>}} || {Pid, {request, TRef, Target, Tag, _Q}} <- Bs ].
+    [{TRef, Pid, {Target, <<Tag:16/integer>>}} || {Pid, #request { timer_ref = TRef, target = Target, tag = Tag }} <- Bs ].
 
 %% Sending an UDP packet into the system:
 inject(Socket, IP, Port, Packet) ->
