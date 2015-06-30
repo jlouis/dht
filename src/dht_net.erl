@@ -49,7 +49,7 @@
 
 -record(state, {
     socket :: inet:socket(),
-    outstanding   :: gb_trees:tree(),
+    outstanding   :: #{ {dht:peer(), binary()} => {pid(), reference()} },
     tokens :: queue:queue()
 }).
 
@@ -110,7 +110,7 @@ ping(Peer) ->
     Nodes :: [dht:node_t()],
     Reason :: any().
 
-find_node({N, IP, Port} = Node)  ->
+find_node({N, IP, Port})  ->
     case request({IP, Port}, {find, node, N}) of
         {error, E} -> {error, E};
         {response, _, _, {find, node, Nodes}} ->
@@ -187,7 +187,7 @@ init([DHTPort, Opts]) ->
     dht_time:send_after(?TOKEN_LIFETIME, ?MODULE, renew_token),
     {ok, #state{
     	socket = Socket, 
-    	outstanding = gb_trees:empty(),
+    	outstanding = #{},
     	tokens = init_tokens(Opts)}}.
 
 init_tokens(#{ tokens := Toks}) -> queue:from_list(Toks);
@@ -247,11 +247,11 @@ code_change(_, State, _) ->
 
 %% Handle a request timeout by unblocking the calling process with `{error, timeout}'
 handle_request_timeout(Key, #state { outstanding = Outstanding } = State) ->
-	case gb_trees:lookup(Key, Outstanding) of
-	    none -> State;
-	    {value, {Client, _Timeout}} ->
-	        ok = gen_server:reply(Client, {error, timeout}),
-	        State#state { outstanding = gb_trees:delete(Key, Outstanding) }
+	case maps:get(Key, Outstanding, not_found) of
+	    not_found -> State;
+	    {Client, _Timeout} ->
+	        gen_server:reply(Client, {error, timeout}),
+	        State#state { outstanding = maps:remove(Key, Outstanding) }
 	 end.
 
 %%
@@ -273,20 +273,23 @@ handle_packet({IP, Port} = Peer, Packet,
             State;
         {valid_decode, PeerID, Tag, M} ->
             Key = {Peer, Tag},
-            case {gb_trees:lookup(Key, Outstanding), M} of
-                {none, {response, _, _, _}} -> State; %% No recipient
-                {none, {error, _, _, _, _}} -> State; %% No Recipient
-                {none, {query, Tag, PeerID, Query}} ->
-                  %% Incoming request
-                  spawn_link(fun() -> dht_state:insert_node({PeerID, IP, Port}) end),
-                  spawn_link(fun() -> ?MODULE:handle_query(Query, Peer, Tag, Self, Tokens) end),
-                  State;
-                {{value, {Client, TRef}}, _} ->
-                  %% Handle blocked client process
-                  dht_time:cancel_timer(TRef),
-                  dht_state:request_success({PeerID, IP, Port}, #{ reachable => true }),
-                  respond(Client, M),
-                  State#state { outstanding = gb_trees:delete(Key, Outstanding) }
+            case maps:get(Key, Outstanding, not_found) of
+              none ->
+                case M of
+                    {query, Tag, PeerID, Query} ->
+                      %% Incoming request
+                      spawn_link(fun() -> dht_state:insert_node({PeerID, IP, Port}) end),
+                      spawn_link(fun() -> ?MODULE:handle_query(Query, Peer, Tag, Self, Tokens) end),
+                      State;
+                    _ ->
+                      State %% No recipient
+                end;
+              {Client, TRef} ->
+                %% Handle blocked client process
+                dht_time:cancel_timer(TRef),
+                dht_state:request_success({PeerID, IP, Port}, #{ reachable => true }),
+                respond(Client, M),
+                State#state { outstanding = maps:remove(Key, Outstanding) }
             end
     end.
 
@@ -312,7 +315,7 @@ unique_message_id(Peer, Active) ->
 unique_message_id(Peer, Active, K) when K > 0 ->
     IntID = dht_rand:uniform(16#FFFF),
     MsgID = <<IntID:16>>,
-    case gb_trees:is_defined({Peer, MsgID}, Active) of
+    case maps:is_key({Peer, MsgID}, Active) of
         true ->
             %% That MsgID is already in use, recurse and try again
             unique_message_id(Peer, Active, K-1);
@@ -337,7 +340,7 @@ send_query({IP, Port} = Peer, Query, From, #state { outstanding = Active, socket
 
             Key = {Peer, MsgID},
             Value = {From, TRef},
-            {ok, State#state { outstanding = gb_trees:insert(Key, Value, Active) }};
+            {ok, State#state { outstanding = Active#{ Key => Value } } };
         {error, Reason} ->
             {error, Reason}
     end.
