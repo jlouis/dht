@@ -7,7 +7,7 @@
 -record(state, {
 	init = false,
 	port = 1729,
-	token = undefined,
+	tokens = [],
 	
 	%% Callers currently blocked
 	blocked = []
@@ -46,7 +46,7 @@ api_spec() ->
             functions = [
                 #api_fun { name = node_id, arity = 0 },
                 #api_fun { name = closest_to, arity = 1 },
-                #api_fun { name = insert_node, arity = 1 },
+                #api_fun { name = node_exists, arity = 1 },
                 #api_fun { name = request_success, arity = 2 } ] },
           #api_module {
             name = dht_store,
@@ -94,7 +94,7 @@ init_args(_S) ->
   [dht_eqc:port(), [dht_eqc:token()]].
 
 init_next(S, _, [Port, [Token]]) ->
-  S#state { init = true, token = Token, port = Port }.
+  S#state { init = true, tokens = [Token], port = Port }.
 
 init_callouts(_S, [P, _T]) ->
     ?CALLOUT(dht_socket, open, [P, ?WILDCARD], {ok, 'SOCKET_REF'}),
@@ -193,6 +193,82 @@ ping_callouts(_S, [Target]) ->
 
 ping_features(_S, _A, _R) -> [{dht_net, ping}].
 
+%% INCOMING REQUESTS
+%% ------------------------------
+
+peer_request(Socket, IP, Port, Packet) ->
+    inject(Socket, IP, Port, Packet),
+    timer:sleep(5), %% Ugly wait, to make stuff catch up
+    dht_net:sync().
+    
+valid_token(#state { tokens = Tokens }, Peer) ->
+    elements([token_value(Peer, T) || T <- Tokens]).
+
+invalid_token(#state { tokens = Tokens }, Peer) ->
+    ?SUCHTHAT(GenTok, dht_eqc:token(),
+       not lists:member(GenTok, [token_value(Peer, T) || T <- Tokens])).
+
+peer_request_ty(S, Peer) ->
+    oneof([
+	ping,
+	{find, node, dht_eqc:id()},
+	{find, value, dht_eqc:id()},
+	{store, fault(invalid_token(S, Peer), valid_token(S, Peer)), dht_eqc:id(), dht_eqc:port()}
+    ]).
+
+
+filter_caller(PeerIP, PeerPort, Ns) ->
+    [N || N = {_, IP, Port} <- Ns, IP /= PeerIP andalso Port /= PeerPort].
+
+peer_request_pre(S) -> initialized(S).
+peer_request_args(S) ->
+  ?LET({IP, Port}, {dht_eqc:ip(), dht_eqc:port()},
+    ?LET(Packet, {query, dht_eqc:tag(), dht_eqc:id(), peer_request_ty(S, {IP, Port})},
+      ['SOCKET_REF', IP, Port, Packet])).
+
+token_value(Peer, Token) ->
+    Hash = erlang:phash2({Peer, Token}),
+    <<Hash:32/integer>>.
+
+peer_request_callouts(#state { tokens = [T | _] = Tokens }, [_Sock, IP, Port, {query, Tag, PeerID, Query}]) ->
+    Peer = {IP, Port},
+    ?MATCH(OwnID, ?CALLOUT(dht_state, node_id, [], dht_eqc:id())),
+    ?CALLOUT(dht_state, node_exists, [{PeerID, IP, Port}], ok),
+    case Query of
+        ping ->
+            Packet = encode({response, Tag, OwnID, ping}),
+            ?CALLOUT(dht_socket, send, ['SOCKET_REF', IP, Port, Packet], socket_response_send()),
+            ?RET(ok);
+        {find, node, ID} ->
+            ?MATCH(Nodes, ?CALLOUT(dht_state, closest_to, [ID], list(dht_eqc:peer()))),
+            Packet = encode({response, Tag, OwnID, {find, node, filter_caller(IP, Port, Nodes)}}),
+            ?CALLOUT(dht_socket, send, ['SOCKET_REF', IP, Port, Packet], socket_response_send()),
+            ?RET(ok);
+        {find, value, ID} ->
+            ?MATCH(Stored, ?CALLOUT(dht_store, find, [ID], oneof([[], list(dht_eqc:peer())]))),
+            case Stored of
+              [] ->
+                  ?MATCH(Nodes, ?CALLOUT(dht_state, closest_to, [ID], list(dht_eqc:peer()))),
+                  Packet = encode({response, Tag, OwnID, {find, value, token_value(Peer, T),
+                  		filter_caller(IP, Port, Nodes)}}),
+                  ?CALLOUT(dht_socket, send, ['SOCKET_REF', IP, Port, Packet], socket_response_send()),
+                  ?RET(ok);
+              Peers ->
+                  Packet = encode({response, Tag, OwnID, {find, value, token_value(Peer, T), Peers}}),
+                  ?CALLOUT(dht_socket, send, ['SOCKET_REF', IP, Port, Packet], socket_response_send()),
+                  ?RET(ok)
+            end;
+        {store, PeerToken, ID, SPort} ->
+            TokenValues = [token_value(Peer, Tok) || Tok <- Tokens],
+            ValidToken = lists:member(PeerToken, TokenValues),
+            ?WHEN(ValidToken, ?CALLOUT(dht_store, store, [ID, {IP, SPort}], ok)),
+            Packet = encode({response, Tag, OwnID, store}),
+            ?CALLOUT(dht_socket, send, ['SOCKET_REF', IP, Port, Packet], socket_response_send()),
+            ?RET(ok)
+   end.
+   
+peer_request_features(_S, [_, _, _, Query], Res) -> [{dht_net, {incoming, canonicalize(Query), Res}}].
+
 %% REQUEST TIMEOUT
 %% ----------------------------
 
@@ -282,6 +358,10 @@ universe_respond_callouts(_S, [{Pid, _Request}, Response]) ->
         
 universe_respond_features(_S, [{_, Request}, _], _R) -> [{dht_net, {universe_respond, canonicalize(Request)}}].
 
+canonicalize({query, _, _, {store, _, _, _}}) -> {query, store};
+canonicalize({query, _, _, {find, value, _}}) -> {query, find_value};
+canonicalize({query, _, _, {find, node, _}}) -> {query, find_node};
+canonicalize({query, _, _, ping}) -> {query, ping};
 canonicalize(#request { query = Q }) ->
     case Q of
         ping -> ping;
@@ -336,3 +416,6 @@ inject(Socket, IP, Port, Packet) ->
     Enc = iolist_to_binary(dht_proto:encode(Packet)),
     dht_net ! {udp, Socket, IP, Port, Enc},
     dht_net:sync().
+
+encode(Data) -> dht_proto:encode(Data).
+

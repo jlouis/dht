@@ -3,7 +3,6 @@
 %% @end
 %% @private
 -module(dht_net).
-
 -behaviour(gen_server).
 
 %%
@@ -274,11 +273,11 @@ handle_packet({IP, Port} = Peer, Packet,
         {valid_decode, PeerID, Tag, M} ->
             Key = {Peer, Tag},
             case maps:get(Key, Outstanding, not_found) of
-              none ->
+              not_found ->
                 case M of
                     {query, Tag, PeerID, Query} ->
                       %% Incoming request
-                      spawn_link(fun() -> dht_state:insert_node({PeerID, IP, Port}) end),
+                      dht_state:node_exists({PeerID, IP, Port}),
                       spawn_link(fun() -> ?MODULE:handle_query(Query, Peer, Tag, Self, Tokens) end),
                       State;
                     _ ->
@@ -350,9 +349,9 @@ filter_node({IP, Port}, Nodes) ->
     [X || {_NID, NIP, NPort}=X <- Nodes, NIP =/= IP orelse NPort =/= Port].
 
 %% @todo consider the safety of using phash2 here
-token_value({IP, Port}, Token) ->
-    Hash = erlang:phash2({IP, Port, Token}),
-    <<Hash:32>>.
+token_value(Peer, Token) ->
+    Hash = erlang:phash2({Peer, Token}),
+    <<Hash:32/integer>>.
 
 is_valid_token(TokenValue, Peer, Tokens) ->
     ValidValues = [token_value(Peer, Token) || Token <- queue:to_list(Tokens)],
