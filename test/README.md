@@ -2,7 +2,9 @@
 
 * The network stack needs to be combed for when it tells the state engine it got request_success.
 * Make dht_state/request_* into casts
-* 
+* Think a lot about when to tell the `dht_state` about when things should be touched. The current setup ignores those things completely. It can probably be generally defined if we think about it.
+* Inject faults into the netcode.
+
 
 # Tests and specification of the DHT
 
