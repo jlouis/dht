@@ -293,7 +293,7 @@ handle_packet({IP, Port} = Peer, Packet,
                 case M of
                     {query, Tag, PeerID, Query} ->
                       %% Incoming request
-                      dht_state:node_exists({PeerID, IP, Port}),
+                      dht_state:request_success({PeerID, IP, Port}, #{ reachable => false }),
                       spawn_link(fun() -> ?MODULE:handle_query(Query, Peer, Tag, Self, Tokens) end),
                       State;
                     _ ->

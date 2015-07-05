@@ -48,7 +48,6 @@ api_spec() ->
             functions = [
                 #api_fun { name = node_id, arity = 0 },
                 #api_fun { name = closest_to, arity = 1 },
-                #api_fun { name = node_exists, arity = 1 },
                 #api_fun { name = request_success, arity = 2 } ] },
           #api_module {
             name = dht_store,
@@ -251,7 +250,7 @@ token_value(Peer, Token) ->
 peer_request_callouts(#state { tokens = [T | _] = Tokens }, [_Sock, IP, Port, {query, Tag, PeerID, Query}]) ->
     Peer = {IP, Port},
     ?MATCH(OwnID, ?CALLOUT(dht_state, node_id, [], dht_eqc:id())),
-    ?CALLOUT(dht_state, node_exists, [{PeerID, IP, Port}], ok),
+    ?CALLOUT(dht_state, request_success, [{PeerID, IP, Port}, #{ reachable => false }], ok),
     case Query of
         ping ->
             Packet = encode({response, Tag, OwnID, ping}),
