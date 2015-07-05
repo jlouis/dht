@@ -3,8 +3,8 @@
 * The network stack needs to be combed for when it tells the state engine it got request_success.
 * Make dht_state/request_* into casts
 * Think a lot about when to tell the `dht_state` about when things should be touched. The current setup ignores those things completely. It can probably be generally defined if we think about it.
-* Inject faults into the netcode.
-
+* Reset empty ranges correctly
+* The notion of inserting a node, and touching a node is really the same thing. You can handle them as one if you think a bit about it I hope.
 
 # Tests and specification of the DHT
 
@@ -80,9 +80,7 @@ obtain a correct specification.
 
 Nodes in the routing table are either "reachable" or not. Nodes which are "reachable" are nodes which are not thought to be behind a firewall, which means they are possible to contact at any time.
 
-TODO: We need to model the fact that node insertion can be for non-reachable nodes. And we need to make a distinction between nodes when we insert them. But the current model ignores this.
-
-TODO: Add documentation
+Some commands, touching nodes, inserting nodes into the node table and so on, exists in two variants, one where we know about reachability and one where we don't. Consider a query, originating from us to a peer, and that peer responding. This gives a valid reachability notion for that node. On the other hand, we we receive a query from a peer, it is not by default reachable, so we update the node with a notion of a non-reachable state.
 
 ## Routing table metadata
 
@@ -122,7 +120,7 @@ questionable. The timeout_count defines a bad node, if it grows too large.
 The meta-data tracks ranges as a single map `Range => #{ timer => timer_ref() }`. When this timer triggers,
 we can use the current members of the range and their last activity points. The maximal such value defines the current `age(lists:max(LastActivities))` of the range.
 
-TODO: What do we do with a range where `Members = []`? I think we should think about this. Obvious candidates for a value is `monotonic_time()` and `monotinic_time() - convert_time_unit(?NODE_TIMEOUT, milli_seconds, native)`. But the right choice depends on many small things.
+Ranges can exist without any members in them. When this happens, the age of the range is always such that it needs refreshing. We do this by picking the age of the range to be `monotinic_time() - convert_time_unit(?NODE_TIMEOUT, milli_seconds, native)`, which forces the range to refresh.
 
 ## Nodes
 
@@ -140,4 +138,12 @@ TODO
 
 TODO
 
-• TODO: Describe the important notion of when "next-to-refresh" a range.
+Ranges have an age. Suppose we pick the ages of all nodes in the range and sort them, smallest age first. Then the age of the range is the head of that sorted list. A range is refreshable if it's age is larger than 15 minutes. When this happens, we pick a random node from the range and run a FIND_NODE call on it. Once we have a list of nodes near to the randomly picked one, we insert all of these into the routing table. This in turn forces out every bad node, and swaps them with new good nodes.
+
+The assumption is that for normal operation, it is relatively rare a range won't see any kind of traffic for 15 minutes. In other words, a normal, communicating client will not have to refresh ranges very often. But a client who is behind a firewall will have to rely on refreshes a lot in order to keep its routing table alive.
+
+Note that refreshing doesn't evict any nodes by itself. So if the network is down, the routing table will not change. This property is desirable, because it means we don't lose the routing table if our system can't connect to the network for a while.
+
+# Networking
+
+TODO
