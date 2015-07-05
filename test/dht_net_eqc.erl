@@ -253,39 +253,42 @@ peer_request_callouts(#state { tokens = [T | _] = Tokens }, [_Sock, IP, Port, {q
     ?CALLOUT(dht_state, request_success, [{PeerID, IP, Port}, #{ reachable => false }], ok),
     case Query of
         ping ->
-            Packet = encode({response, Tag, OwnID, ping}),
-            ?CALLOUT(dht_socket, send, ['SOCKET_REF', IP, Port, Packet], socket_response_send()),
+            ?APPLY(send_msg, [IP, Port, {response, Tag, OwnID, ping}]),
             ?RET(ok);
         {find, node, ID} ->
             ?MATCH(Nodes, ?CALLOUT(dht_state, closest_to, [ID], list(dht_eqc:peer()))),
-            Packet = encode({response, Tag, OwnID, {find, node, filter_caller(IP, Port, Nodes)}}),
-            ?CALLOUT(dht_socket, send, ['SOCKET_REF', IP, Port, Packet], socket_response_send()),
+            ?APPLY(send_msg, [IP, Port, {response, Tag, OwnID, {find, node, filter_caller(IP, Port, Nodes)}}]),
             ?RET(ok);
         {find, value, ID} ->
             ?MATCH(Stored, ?CALLOUT(dht_store, find, [ID], oneof([[], list(dht_eqc:peer())]))),
             case Stored of
               [] ->
                   ?MATCH(Nodes, ?CALLOUT(dht_state, closest_to, [ID], list(dht_eqc:peer()))),
-                  Packet = encode({response, Tag, OwnID, {find, value, token_value(Peer, T),
-                  		filter_caller(IP, Port, Nodes)}}),
-                  ?CALLOUT(dht_socket, send, ['SOCKET_REF', IP, Port, Packet], socket_response_send()),
-                  ?RET(ok);
+                  ?APPLY(send_msg, [
+                      IP,
+                      Port,
+                      {response, Tag, OwnID, {find, value, token_value(Peer, T), filter_caller(IP, Port, Nodes)}}]),
+                      ?RET(ok);
               Peers ->
-                  Packet = encode({response, Tag, OwnID, {find, value, token_value(Peer, T), Peers}}),
-                  ?CALLOUT(dht_socket, send, ['SOCKET_REF', IP, Port, Packet], socket_response_send()),
+                  ?APPLY(send_msg, [IP, Port, {response, Tag, OwnID, {find, value, token_value(Peer, T), Peers}}]),
                   ?RET(ok)
             end;
         {store, PeerToken, ID, SPort} ->
             TokenValues = [token_value(Peer, Tok) || Tok <- Tokens],
             ValidToken = lists:member(PeerToken, TokenValues),
             ?WHEN(ValidToken, ?CALLOUT(dht_store, store, [ID, {IP, SPort}], ok)),
-            Packet = encode({response, Tag, OwnID, store}),
-            ?CALLOUT(dht_socket, send, ['SOCKET_REF', IP, Port, Packet], socket_response_send()),
+            ?APPLY(send_msg, [IP, Port, {response, Tag, OwnID, store}]),
             ?RET(ok)
    end.
    
 peer_request_features(_S, [_, _, _, Query], Res) -> [{dht_net, {incoming, canonicalize(Query), Res}}].
 
+%% Small helper for sending messages since it is common in the above
+send_msg_callouts(_S, [IP, Port, Msg]) ->
+    ?MATCH(SendRes, ?CALLOUT(dht_socket, send, ['SOCKET_REF', IP, Port, encode(Msg)],
+        socket_response_send())),
+    ?RET(SendRes).
+    
 %% REQUEST TIMEOUT
 %% ----------------------------
 
@@ -388,6 +391,8 @@ canonicalize(#request { query = Q }) ->
     end.
 
 %% RENEWING THE TOKEN
+%% -----------------------------------------
+
 renew_token() ->
     dht_net ! renew_token,
     dht_net:sync().

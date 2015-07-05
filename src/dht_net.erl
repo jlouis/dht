@@ -186,10 +186,10 @@ return(Peer, Response) ->
             %% For now, we just ignore the case where EAGAIN happens in the system, but
             %% we could return these packets back to the caller by trying again.
             %% lager:warning("return packet to peer responded with EAGAIN"),
-            ok;
+            {error, eagain};
         {error, Reason} ->
             fail = error_common(Reason),
-            ok
+            {error, Reason}
     end.
 
 %% CALLBACKS
@@ -216,10 +216,8 @@ handle_call({request, Peer, Request}, From, State) ->
     end;
 handle_call({return, {IP, Port}, Response}, _From, #state { socket = Socket } = State) ->
     Packet = dht_proto:encode(Response),
-    case dht_socket:send(Socket, IP, Port, Packet) of
-        ok -> {reply, ok, State};
-        {error, _Reason} = E -> {reply, E, State}
-    end;
+    Result = dht_socket:send(Socket, IP, Port, Packet),
+    {reply, Result, State};
 handle_call(sync, _From, #state{} = State) ->
     {reply, ok, State};
 handle_call(node_port, _From, #state { socket = Socket } = State) ->
