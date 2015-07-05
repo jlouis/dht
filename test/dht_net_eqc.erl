@@ -66,9 +66,19 @@ api_spec() ->
     }.
 
 %% Return typical POSIX error codes here
-%% I'm not sure we hit them all, but...
+%% We build a list of the error codes we think we'll hit in practice. The remaining error codes, we
+%% skip, and then we handle them once we hit them in production.
 error_posix() ->
-  ?LET(PErr, elements([eagain]),
+  ?LET(PErr, elements([
+  	eagain,
+  	%% emsgsize,
+  	%% EMSGSIZE is not likely to occur since we have built the system correctly, but if it occurs, we
+  	%% have some kind of bug in the system.
+  	enobufs,
+  	ehostunreach,
+  	econnrefused,
+  	ehostdown,
+  	enetdown]),
       {error, PErr}).
   	
 socket_response_send() ->
@@ -193,7 +203,9 @@ ping_args(_S) ->
 ping_callouts(_S, [Target]) ->
     ?MATCH(R, ?APPLY(request, [Target, ping])),
     case R of
-        {error, timeout} -> ?RET(pang);
+        {error, eagain} ->
+            ?APPLY(ping, [Target]);
+        {error, Reason} -> common_error(pang, Reason);
         {response, _Tag, PeerID, ping} -> ?RET({ok, PeerID})
     end.
 
@@ -447,4 +459,18 @@ inject(Socket, IP, Port, Packet) ->
     dht_net:sync().
 
 encode(Data) -> dht_proto:encode(Data).
+
+common_error(Ret, Reason) ->
+    case analyze_error(Reason) of
+        fail -> ?RET(Ret);
+        Otherwise -> ?FAIL({unexpected_error_reason, Otherwise})
+    end.
+
+analyze_error(timeout) -> fail;
+analyze_error(enobufs) -> fail;
+analyze_error(ehostunreach) -> fail;
+analyze_error(econnrefused) -> fail;
+analyze_error(ehostdown) -> fail;
+analyze_error(enetdown) -> fail;
+analyze_error(Other) -> Other.
 

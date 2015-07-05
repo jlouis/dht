@@ -97,7 +97,13 @@ sync() ->
 ping(Peer) ->
     case request(Peer, ping) of
         {error, timeout} -> pang;
-        {response, _, ID, ping} -> {ok, ID}
+        {response, _, ID, ping} -> {ok, ID};
+        {error, eagain} ->
+            timer:sleep(15),
+            ping(Peer);
+        {error, Reason} ->
+            fail = error_common(Reason),
+            pang
     end.
 
 %% @doc find_node/3 searches in the DHT for a given target NodeID
@@ -174,7 +180,17 @@ handle_query({store, Token, ID, Port}, {IP, _Port} = Peer, Tag, OwnID, Tokens) -
 
 -spec return({inet:ip_address(), inet:port_number()}, any()) -> 'ok'.
 return(Peer, Response) ->
-    ok = gen_server:call(?MODULE, {return, Peer, Response}).
+    case gen_server:call(?MODULE, {return, Peer, Response}) of
+        ok -> ok;
+        {error, eagain} ->
+            %% For now, we just ignore the case where EAGAIN happens in the system, but
+            %% we could return these packets back to the caller by trying again.
+            %% lager:warning("return packet to peer responded with EAGAIN"),
+            ok;
+        {error, Reason} ->
+            fail = error_common(Reason),
+            ok
+    end.
 
 %% CALLBACKS
 %% ---------------------------------------------------
@@ -356,3 +372,14 @@ token_value(Peer, Token) ->
 is_valid_token(TokenValue, Peer, Tokens) ->
     ValidValues = [token_value(Peer, Token) || Token <- queue:to_list(Tokens)],
     lists:member(TokenValue, ValidValues).
+
+%% Error common inhabits the common errors in the network stack.
+%% This is used to validate that the error we got, was one of the well-known errors
+%% In other words, the assumption is that ALL errors produced by this subsystem
+%% falls into this group.
+error_common(enobufs) -> fail;
+error_common(ehostunreach) -> fail;
+error_common(econnrefused) -> fail;
+error_common(ehostdown) -> fail;
+error_common(enetdown) -> fail.
+

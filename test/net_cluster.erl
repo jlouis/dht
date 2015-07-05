@@ -20,7 +20,8 @@ prop_cluster_correct() ->
         eqc_mocking:start_mocking(api_spec(), components()),
         fun() -> ok end
     end,
-    ?FORALL(Cmds, eqc_cluster:commands(?MODULE),
+    ?FORALL(Cmds,
+          fault_rate(1,40, eqc_cluster:commands(?MODULE)),
       begin
         ok = dht_net_eqc:reset(),
         {H,S,R} = run_commands(?MODULE, Cmds),
