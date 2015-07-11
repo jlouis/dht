@@ -28,7 +28,7 @@
 %% ------------------------
 header(Tag, ID) -> <<"EDHT-KDM-", ?VERSION:8, Tag/binary, ID:256>>.
 
-encode_query(ping) -> $p;
+encode_query(ping) -> <<$p>>;
 encode_query({find, node, ID}) -> <<$f, $n, ID:256>>;
 encode_query({find, value, ID}) -> <<$f, $v, ID:256>>;
 encode_query({store, Token, ID, Port}) -> <<$s, Token/binary, ID:256, Port:16>>.
@@ -43,7 +43,19 @@ encode_response({find, value, Token, Vs}) ->
 encode_response(store) ->
     $s.
     
-encode_nodes(Ns) -> << <<ID:256, B1, B2, B3, B4, Port:16>> || {ID, {B1, B2, B3, B4}, Port} <- Ns >>.
+encode_nodes(Ns) ->
+    iolist_to_binary(encode_ns(Ns)).
+
+encode_ns([]) -> [];
+encode_ns([{ID, {B1, B2, B3, B4, B5, B6, B7, B8}, Port} | Ns]) ->
+    [<<6, ID:256,
+       B1:16/integer, B2:16/integer, B3:16/integer, B4:16/integer,
+       B5:16/integer, B6:16/integer, B7:16/integer, B8:16/integer,
+       Port:16/integer>> | encode_ns(Ns)];
+encode_ns([{ID, {B1, B2, B3, B4}, Port} | Ns]) ->
+    [<<4, ID:256/integer,
+       B1:8/integer, B2:8/integer, B3:8/integer, B4:8/integer,
+       Port:16/integer>> | encode_ns(Ns)].
 
 -spec encode(msg()) -> iolist().
 encode({query, Tag, ID, Q}) -> [header(Tag, ID), $q, encode_query(Q)];
@@ -65,8 +77,10 @@ decode_response(<<$s>>) -> store.
 
 %% Force recognition of the correct number of incoming arguments.
 decode_nodes(0, <<>>) -> [];
-decode_nodes(K, <<ID:256, B1, B2, B3, B4, Port:16, Nodes/binary>>) ->
-    [{ID, {B1, B2, B3, B4}, Port} | decode_nodes(K-1, Nodes)].
+decode_nodes(K, <<4, ID:256, B1, B2, B3, B4, Port:16, Nodes/binary>>) ->
+    [{ID, {B1, B2, B3, B4}, Port} | decode_nodes(K-1, Nodes)];
+decode_nodes(K, <<6, ID:256, B1:16, B2:16, B3:16, B4:16, B5:16, B6:16, B7:16, B8:16, Port:16, Nodes/binary>>) ->
+    [{ID, {B1, B2, B3, B4, B5, B6, B7, B8}, Port} | decode_nodes(K-1, Nodes)].
 
 -spec decode(binary()) -> msg().
 decode(<<"EDHT-KDM-", ?VERSION:8, Tag:2/binary, ID:256, $q, Query/binary>>) ->

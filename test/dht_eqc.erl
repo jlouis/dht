@@ -1,5 +1,4 @@
 -module(dht_eqc).
-
 -compile(export_all).
 
 -include_lib("eqc/include/eqc.hrl").
@@ -11,15 +10,17 @@ id(Min, Max) -> choose(Min, Max).
 
 id() -> id(?ID_MIN, ?ID_MAX - 1).
 
-ip() -> ipv4_address(). %% ipv6 support later :P
+ip() ->
+    oneof([ipv4_address(),
+           ipv6_address()]).
     
 ipv4_address() ->
     ?LET(L, vector(4, choose(0, 255)),
-        list_to_tuple(L)).
+         list_to_tuple(L)).
         
 ipv6_address() ->
-    ?LET(L, vector(8, choose(0, 255)),
-        list_to_tuple(L)).
+    ?LET(L, vector(8, choose(0, 65535)),
+         list_to_tuple(L)).
 
 port() ->
     choose(0, 1024*64 - 1).
@@ -29,7 +30,7 @@ socket() ->
 
 peer() ->
     ?LET({ID, IP, Port}, {id(), ip(), port()},
-        {ID, IP, Port}).
+         {ID, IP, Port}).
 
 value() -> peer().
 

@@ -1,5 +1,4 @@
 -module(dht_proto_eqc).
-
 -compile(export_all).
 
 -include_lib("eqc/include/eqc.hrl").
@@ -73,3 +72,11 @@ prop_iso_packet() ->
           E = iolist_to_binary(dht_proto:encode(P)),
           equals(P, dht_proto:decode(E))
         end).
+
+t() ->
+    t(5).
+
+t(Secs) ->
+    eqc:quickcheck(
+      eqc:testing_time(Secs, eqc_statem:show_states(
+                               prop_iso_packet()))).
