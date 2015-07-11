@@ -30,24 +30,20 @@
 -include_lib("kernel/include/inet.hrl").
 
 %% Lifetime
--export([
-	start_link/2, start_link/3,
-	dump_state/0, dump_state/1,
-	sync/2
-]).
+-export(
+   [ start_link/2, start_link/3,
+     dump_state/0, dump_state/1,
+     sync/0, sync/2 ]).
 
 %% Query
--export([
-	closest_to/1, closest_to/2,
-	node_id/0
-]).
+-export(
+   [ closest_to/1, closest_to/2,
+     node_id/0 ]).
 
 %% Manipulation
 -export([
-	insert_node/1,
-	request_success/2,
-	request_timeout/1
-
+         request_success/2,
+         request_timeout/1
 ]).
 
 %% Internal API
@@ -118,44 +114,19 @@ node_id() ->
 
 %% OPERATIONS WHICH CHANGE STATE
 %% ------------------------------
-
-%%
-%% @doc insert_node/1 inserts a new node according to the options given
-%%
-%% There are two variants of this function:
-%% * If inserting {IP, Port} a ping will first be made to make sure the node is
-%%   alive and find its ID
-%% * If inserting {ID, IP, Port}, it is assumed it is a valid node.
-%%
-%% The call may block for a while when inserting since the call may need to refresh
-%% a bucket when the insert happens. This in turns means the caller is blocked while
-%% this operation completes.
-%%
-%% @end
--spec insert_node(Node) -> ok | already_member | range_full | {error, Reason}
-  when
-      Node :: dht:peer() | {inet:ip_address(), inet:port_number()},
-      Reason :: atom().
-insert_node({IP, Port}) ->
-    case dht_net:ping({IP, Port}) of
-        pang -> {error, noreply};
-        {ok, ID} -> insert_node({ID, IP, Port})
-    end;
-insert_node({_ID, _IP, _Port} = Node) ->
-    case call({insert_node, Node}) of
+request_success(Node, Opts) ->
+    case call({insert_node, Node, Opts}) of
         ok -> ok;
-        already_member -> already_member;
         not_inserted -> not_inserted;
+        already_member ->
+            cast({request_success, Node, Opts}),
+            already_member;
         {error, Reason} -> {error, Reason};
         {verify, QNode} ->
-            %% There is an old questionable node, which needs refreshing. Execute a ping test on
-            %% the node to make sure it is still alive. Then attempt reinsertion.
             refresh_node(QNode),
-            insert_node(Node)
+            request_success(Node, Opts)
     end.
 
-request_success(Node, Opts) ->
-    cast({request_success, Node, Opts}).
 request_timeout(Node) ->
     cast({request_timeout, Node}).
 
@@ -190,6 +161,9 @@ refresh_node({ID, IP, Port} = Node) ->
 sync(Msg, Timeout) ->
     gen_server:call(?MODULE, {sync, Msg}, Timeout).
 
+sync() ->
+    gen_server:call(?MODULE, sync).
+
 %% @doc refresh_range/1 refreshes a range for the system based on its ID
 %% @end
 -spec refresh_range(dht:peer()) -> ok.
@@ -197,7 +171,7 @@ refresh_range(Node) ->
     case dht_net:find_node(Node) of
         {error, timeout} -> ok;
         {_, Nearnodes} ->
-            [insert_node(N) || N <- Nearnodes],
+            [request_success(N, #{ reachable => false }) || N <- Nearnodes],
             ok
     end.
 
@@ -221,14 +195,9 @@ init([RequestedNodeID, StateFile, BootstrapNodes]) ->
     {ok, #state { node_id = ID, routing = Routing}}.
 
 %% @private
-handle_call({insert_node, Node}, _From, #state { routing = R } = State) ->
-    case dht_routing_meta:member_state(Node, R) of
-        member -> {reply, already_member, State};
-        roaming_member -> {reply, already_member, State};
-        unknown ->
-            {Reply, NR} = adjoin(Node, R),
-            {reply, Reply, State#state { routing = NR }}
-    end;
+handle_call({insert_node, Node, _Opts}, _From, #state { routing = R } = State) ->
+    {Reply, NR} = insert_node_internal(Node, R),
+    {reply, Reply, State#state { routing = NR }};
 handle_call({closest_to, ID, NumNodes}, _From, #state{routing = Routing } = State) ->
     Neighbors = dht_routing_meta:neighbors(ID, NumNodes, Routing),
     {reply, Neighbors, State};
@@ -249,11 +218,13 @@ handle_call(node_id, _From, #state{ node_id = Self } = State) ->
     {reply, Self, State};
 handle_call({sync, Msg}, From, #state { syncers = Ss } = State) ->
     self() ! Msg,
-    {noreply, State#state { syncers = [From | Ss]}}.
+    {noreply, State#state { syncers = [From | Ss]}};
+handle_call(sync, _From, State) ->
+    {reply, ok, State}.
+
 
 %% @private
-handle_cast({request_timeout, Node}, _From,
-            #state{ routing = Routing } = State) ->
+handle_cast({request_timeout, Node}, #state{ routing = Routing } = State) ->
     case dht_routing_meta:member_state(Node, Routing) of
         unknown -> {noreply, State};
         roaming_member -> {noreply, State};
@@ -261,14 +232,15 @@ handle_cast({request_timeout, Node}, _From,
             R = dht_routing_meta:node_timeout(Node, Routing),
             {noreply, State#state { routing = R }}
     end;
-handle_cast({request_success, Node, Opts}, _From,
-            #state{ routing = Routing } = State) ->
-    case dht_routing_meta:member_state(Node, Routing) of
-        unknown -> {noreply, State};
+handle_cast({request_success, Node, Opts}, #state{ routing = R } = State) ->
+    case dht_routing_meta:member_state(Node, R) of
+        unknown ->
+            {_, NR} = insert_node_internal(Node, R),
+            {noreply, State#state { routing = NR }};
         roaming_member -> {noreply, State};
         member ->
-            R = dht_routing_meta:node_touch(Node, Opts, Routing),
-            {noreply, State#state { routing = R }}
+            NR = dht_routing_meta:node_touch(Node, Opts, R),
+            {noreply, State#state { routing = NR }}
     end;
 handle_cast(_, State) ->
     {noreply, State}.
@@ -386,3 +358,10 @@ wakeup(#state { monitors = [], syncers = Ss } = State) ->
     [gen_server:reply(From, ok) || From <- Ss],
     State#state { syncers = [] };
 wakeup(State) -> State.
+
+insert_node_internal(Node, R) ->
+    case dht_routing_meta:member_state(Node, R) of
+        member -> {already_member, R};
+        roaming_member -> {already_member, R};
+        unknown -> adjoin(Node, R)
+    end.

@@ -118,7 +118,7 @@ start_link_args(#state { id = ID }) ->
 start_link_callouts(#state { id = ID }, [ID, Nodes]) ->
     ?MATCH(Tbl, ?CALLOUT(dht_routing_table, new, [ID, ?ID_MIN, ?ID_MAX], 'ROUTING_TABLE')),
     ?CALLOUT(dht_routing_meta, new, [Tbl], {ok, ID, 'META'}),
-    ?SEQ([?APPLY(insert_node, [N]) || N <- Nodes]),
+    ?SEQ([?APPLY(request_sucess, [N, #{ reachable => false}]) || N <- Nodes]),
     ?RET(true).
 
 %% Once started, we can't start the State system again.
@@ -165,57 +165,30 @@ node_id_features(_S, _A, _R) -> [{state, node_id}].
 %% INSERT
 %% ---------------------
 
-%% Insert either an `{IP, Port}` pair or a known `Node` into the routing table.
-%% It is used by calls whenever there is a possibility of adding a new node.
-%%
-%% The call may block on the network, to execute ping commands, but this model does
-%% not encode this behavior.
-insert_node(Input) ->
-    dht_state:insert_node(Input).
-    
-insert_node_pre(S) -> initialized(S).
-
-insert_node_args(_S) ->
-    Input = oneof([
-       {dht_eqc:ip(), dht_eqc:port()},
-       dht_eqc:peer()
-    ]),
-    [Input].
-
 %% The rules split into two variants
-%% • an IP/Port pair is first pinged to learn the ID of the pair, and then it is inserted.
-%% • A node is assumed to be valid already and is just inserted. If you doubt the validity of
-%%   a node, then supply it's IP/Port pair in which case the node will be inserted with a ping.
-%%
-%% Note that if the gen_server returns `{verify, QuestionableNode}` then that node is being
-%% pinged by the call in order to possible refresh this node. And then we recurse. This means
-%% there is a behavior where we end up pinging all the nodes in a bucket/range before insertion
-%% succeeds/fails.
-insert_node_callouts(_S, [{IP, Port}]) ->
-    ?MATCH(R, ?APPLY(ping, [IP, Port])),
-    case R of
-        pang -> ?RET({error, noreply});
-        {ok, ID} -> ?APPLY(insert_node, [{ID, IP, Port}])
-    end;
-insert_node_callouts(_S, [Node]) ->
-    ?MATCH(NodeState, ?APPLY(insert_node_gs, [Node])),
-    case NodeState of
-        ok -> ?RET(ok);
-        already_member -> ?RET(already_member);
-        not_inserted -> ?RET(not_inserted);
-        {error, Reason} -> ?RET({error, Reason});
-        {verify, QN} ->
-            ?APPLY(refresh_node, [QN]),
-            ?APPLY(insert_node, [Node])
-    end.
-
-insert_node_features(_S, [{_IP, _Port}], Res) -> [{state, {insert, 'ip/port'}, Res}];
-insert_node_features(_S, [{_ID, _IP, _Port}], Res) -> [{state, {insert, node}, Res}].
 
 %% REQUEST_SUCCESS
 %% ----------------
 
-%% Tell the routing system a node responded succesfully
+%% Tell the routing system a node responded succesfully.
+%%
+%% Once we learn there is a new node, we can request success on the
+%% node. Doing so will attempt an insert of the node into the routing table,
+%% or will update an already existing node in the routing table.
+%%
+%% • an IP/Port pair is first pinged to learn the ID of the pair, and
+%%   then it is inserted.
+%% • A node is assumed to be valid already and is
+%%   just inserted. If you doubt the validity of a node, then supply
+%%   it's IP/Port pair in which case the node will be inserted with a
+%%   ping.
+%%
+%% Note that if the gen_server returns `{verify, QuestionableNode}`
+%% then that node is being pinged by the call in order to possible
+%% refresh this node. And then we recurse. This means there is a
+%% behavior where we end up pinging all the nodes in a bucket/range
+%% before insertion succeeds/fails.
+%%
 request_success(Node, Opts) ->
     Res = dht_state:request_success(Node, Opts),
     dht_state:sync(),
@@ -225,16 +198,34 @@ request_success_pre(S) -> initialized(S).
 
 request_success_args(_S) ->
     [dht_eqc:peer(), #{ reachable => bool() }].
-    
+
 request_success_callouts(_S, [Node, Opts]) ->
+    ?MATCH(NodeState, ?APPLY(insert_node_gs, [Node])),
+    case NodeState of
+        ok -> ?RET(ok);
+        already_member ->
+            ?APPLY(request_success_gs, [Node, Opts]),
+            ?RET(already_member);
+        not_inserted -> ?RET(not_inserted);
+        {error, Reason} -> ?RET({error, Reason});
+        {verify, QN} ->
+            ?APPLY(refresh_node, [QN]),
+            ?APPLY(request_success, [Node, Opts])
+    end.
+    
+request_success_gs_callouts(_S, [Node, Opts]) ->
     ?MATCH(MState,
-      ?CALLOUT(dht_routing_meta, member_state, [Node, 'META'], oneof([unknown, member]))),
+     ?CALLOUT(dht_routing_meta, member_state,
+              [Node, 'META'],
+              oneof([unknown, member]))),
     case MState of
-        unknown -> ?RET(ok);
+        unknown ->
+            ?APPLY(insert_node_gs, [Node]),
+            ?RET(ok);
         roaming_member -> ?RET(ok);
         member ->
-          ?CALLOUT(dht_routing_meta, node_touch, [Node, Opts, 'META'], 'META'),
-          ?RET(ok)
+            ?CALLOUT(dht_routing_meta, node_touch, [Node, Opts, 'META'], 'META'),
+            ?RET(ok)
     end.
 
 request_success_features(_S, [_, #{reachable := true }], _R) ->
@@ -354,7 +345,8 @@ refresh_range_callouts(_S, [ID]) ->
     case FNRes of
         {error, timeout} -> ?EMPTY;
         {_, Near} ->
-            ?SEQ([?APPLY(insert_node, [N]) || N <- Near])
+            ?SEQ([?APPLY(request_success, [N, #{ reachable => false}])
+                  || N <- Near])
     end.
     
 refresh_range_features(_S, _A, _R) -> [{state, refresh_range}].
@@ -449,7 +441,7 @@ reset() ->
 postcondition_common(S, Call, Res) ->
     eq(Res, return_value(S, Call)).
 
-weight(_S, insert_node) -> 15;
+weight(_S, request_success) -> 15;
 weight(_S, _) -> 1.
 
 prop_component_correct() ->

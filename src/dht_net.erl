@@ -48,7 +48,7 @@
 
 -record(state, {
     socket :: inet:socket(),
-    outstanding   :: #{ {dht:peer(), binary()} => {pid(), reference()} },
+    outstanding :: #{ {dht:peer(), binary()} => {pid(), reference()} },
     tokens :: queue:queue()
 }).
 
@@ -90,6 +90,9 @@ sync() ->
 %% Calling `ping(IP, Port)' will send a ping message to the IP/Port pair
 %% and wait for a result to come back. Used to check if the node in the
 %% other end is up and running.
+%%
+%% If running over an IP/Port pair, we can't timeout, so we don't
+%% timeout the peer here. We do that in dht_state.
 %% @end
 -spec ping({inet:ip_address(), inet:port_number()}) ->
       pang | {ok, dht:node_id(), benc:t()} | {error, Reason}
@@ -164,13 +167,13 @@ handle_query({find, node, ID}, Peer, Tag, OwnID, _Tokens) ->
      Nodes = filter_node(Peer, dht_state:closest_to(ID)),
      return(Peer, {response, Tag, OwnID, {find, node, Nodes}});
 handle_query({find, value, ID}, Peer, Tag, OwnID, Tokens) ->
-    Vs =
-        case dht_store:find(ID) of
-            [] -> filter_node(Peer, dht_state:closest_to(ID));
-            Peers -> Peers
-        end,
+    Vs = case dht_store:find(ID) of
+             [] -> filter_node(Peer, dht_state:closest_to(ID));
+             Peers -> Peers
+         end,
     RecentToken = queue:last(Tokens),
-    return(Peer, {response, Tag, OwnID, {find, value, token_value(Peer, RecentToken), Vs}});
+    return(Peer, {response, Tag, OwnID,
+                  {find, value, token_value(Peer, RecentToken), Vs}});
 handle_query({store, Token, ID, Port}, {IP, _Port} = Peer, Tag, OwnID, Tokens) ->
     case is_valid_token(Token, Peer, Tokens) of
         false -> ok;
@@ -183,9 +186,10 @@ return(Peer, Response) ->
     case gen_server:call(?MODULE, {return, Peer, Response}) of
         ok -> ok;
         {error, eagain} ->
-            %% For now, we just ignore the case where EAGAIN happens in the system, but
-            %% we could return these packets back to the caller by trying again.
-            %% lager:warning("return packet to peer responded with EAGAIN"),
+            %% For now, we just ignore the case where EAGAIN happens
+            %% in the system, but we could return these packets back
+            %% to the caller by trying again. lager:warning("return
+            %% packet to peer responded with EAGAIN"),
             {error, eagain};
         {error, Reason} ->
             fail = error_common(Reason),
@@ -260,12 +264,12 @@ code_change(_, State, _) ->
 
 %% Handle a request timeout by unblocking the calling process with `{error, timeout}'
 handle_request_timeout(Key, #state { outstanding = Outstanding } = State) ->
-	case maps:get(Key, Outstanding, not_found) of
-	    not_found -> State;
-	    {Client, _Timeout} ->
-	        gen_server:reply(Client, {error, timeout}),
-	        State#state { outstanding = maps:remove(Key, Outstanding) }
-	 end.
+    case maps:get(Key, Outstanding, not_found) of
+        not_found -> State;
+        {Client, _Timeout} ->
+            gen_server:reply(Client, {error, timeout}),
+            State#state { outstanding = maps:remove(Key, Outstanding) }
+    end.
 
 %%
 %% Token renewal is called whenever the tokens grows too old.
@@ -292,7 +296,14 @@ handle_packet({IP, Port} = Peer, Packet,
                     {query, Tag, PeerID, Query} ->
                       %% Incoming request
                       dht_state:request_success({PeerID, IP, Port}, #{ reachable => false }),
-                      spawn_link(fun() -> ?MODULE:handle_query(Query, Peer, Tag, Self, Tokens) end),
+                      spawn_link(
+                        fun() ->
+                                ?MODULE:handle_query(Query,
+                                                     Peer,
+                                                     Tag,
+                                                     Self,
+                                                     Tokens)
+                        end),
                       State;
                     _ ->
                       State %% No recipient
