@@ -217,7 +217,9 @@ insert_node_features(_S, [{_ID, _IP, _Port}], Res) -> [{state, {insert, node}, R
 
 %% Tell the routing system a node responded succesfully
 request_success(Node, Opts) ->
-    dht_state:request_success(Node, Opts).
+    Res = dht_state:request_success(Node, Opts),
+    dht_state:sync(),
+    Res.
     
 request_success_pre(S) -> initialized(S).
 
@@ -229,7 +231,7 @@ request_success_callouts(_S, [Node, Opts]) ->
       ?CALLOUT(dht_routing_meta, member_state, [Node, 'META'], oneof([unknown, member]))),
     case MState of
         unknown -> ?RET(ok);
-        roaming_member -> ?RET(roaming_member);
+        roaming_member -> ?RET(ok);
         member ->
           ?CALLOUT(dht_routing_meta, node_touch, [Node, Opts, 'META'], 'META'),
           ?RET(ok)
@@ -245,7 +247,9 @@ request_success_features(_S, [_, #{reachable := false }], _R) ->
 
 %% Tell the routing system a node did not respond in a timely fashion
 request_timeout(Node) ->
-    dht_state:request_timeout(Node).
+    Res = dht_state:request_timeout(Node),
+    dht_state:sync(),
+    Res.
     
 request_timeout_pre(S) -> initialized(S).
 
@@ -260,7 +264,7 @@ request_timeout_callouts(_S, [Node]) ->
         member ->
           ?CALLOUT(dht_routing_meta, node_timeout, [Node, 'META'], 'META'),
           ?RET(ok);
-        roaming_member -> ?RET(roaming_member)
+        roaming_member -> ?RET(ok)
     end.
 
 request_timeout_features(_S, [_], _) -> [{state, request_timeout}].

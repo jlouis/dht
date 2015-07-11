@@ -95,6 +95,7 @@ dump_state(Filename) ->
 %% ----------------------------------------------------------
 %% Helper for calling
 call(X) -> gen_server:call(?MODULE, X).
+cast(X) -> gen_server:cast(?MODULE, X).
 
 %% QUERIES 
 %% -----------
@@ -153,8 +154,10 @@ insert_node({_ID, _IP, _Port} = Node) ->
             insert_node(Node)
     end.
 
-request_success(Node, Opts) -> call({request_success, Node, Opts}).
-request_timeout(Node) -> call({request_timeout, Node}).
+request_success(Node, Opts) ->
+    cast({request_success, Node, Opts}).
+request_timeout(Node) ->
+    cast({request_timeout, Node}).
 
 %% INTERNAL API
 %% -------------------------------------------------------------------
@@ -229,22 +232,6 @@ handle_call({insert_node, Node}, _From, #state { routing = R } = State) ->
 handle_call({closest_to, ID, NumNodes}, _From, #state{routing = Routing } = State) ->
     Neighbors = dht_routing_meta:neighbors(ID, NumNodes, Routing),
     {reply, Neighbors, State};
-handle_call({request_timeout, Node}, _From, #state{ routing = Routing } = State) ->
-    case dht_routing_meta:member_state(Node, Routing) of
-        unknown -> {reply, ok, State};
-        roaming_member -> {reply, roaming_member, State};
-        member ->
-            R = dht_routing_meta:node_timeout(Node, Routing),
-            {reply, ok, State#state { routing = R }}
-    end;
-handle_call({request_success, Node, Opts}, _From, #state{ routing = Routing } = State) ->
-    case dht_routing_meta:member_state(Node, Routing) of
-        unknown -> {reply, ok, State};
-        roaming_member -> {reply, roaming_member, State};
-        member ->
-            R = dht_routing_meta:node_touch(Node, Opts, Routing),
-            {reply, ok, State#state { routing = R }}
-    end;
 handle_call(dump_state, From, #state{ state_file = StateFile } = State) ->
     handle_call({dump_state, StateFile}, From, State);
 handle_call({dump_state, StateFile}, _From, #state{ routing = Routing } = State) ->
@@ -265,6 +252,24 @@ handle_call({sync, Msg}, From, #state { syncers = Ss } = State) ->
     {noreply, State#state { syncers = [From | Ss]}}.
 
 %% @private
+handle_cast({request_timeout, Node}, _From,
+            #state{ routing = Routing } = State) ->
+    case dht_routing_meta:member_state(Node, Routing) of
+        unknown -> {noreply, State};
+        roaming_member -> {noreply, State};
+        member ->
+            R = dht_routing_meta:node_timeout(Node, Routing),
+            {noreply, State#state { routing = R }}
+    end;
+handle_cast({request_success, Node, Opts}, _From,
+            #state{ routing = Routing } = State) ->
+    case dht_routing_meta:member_state(Node, Routing) of
+        unknown -> {noreply, State};
+        roaming_member -> {noreply, State};
+        member ->
+            R = dht_routing_meta:node_touch(Node, Opts, Routing),
+            {noreply, State#state { routing = R }}
+    end;
 handle_cast(_, State) ->
     {noreply, State}.
 
