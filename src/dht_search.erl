@@ -53,6 +53,9 @@ dht_iter_search(NodeID, Target, Width, Retries, Todo, #search_state{ query_type 
     Retry = update_retries(NodeID, Retries, WorkQueue, NextState),
     dht_iter_search(NodeID, Target, Width, Retry, WorkQueue, NextState).
 
+%% If the work queue contains the closest node, we are converging toward our target.
+%% If not, then we decrease the retry-count by one, since it is not likely we will hit
+%% a better target.
 update_retries(NodeID, K, WorkQueue, State) ->
       case view_closest_node(NodeID, alive(State), WorkQueue) of
           work_queue -> ?SEARCH_RETRIES;
