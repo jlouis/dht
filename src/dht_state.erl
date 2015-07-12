@@ -167,8 +167,8 @@ sync() ->
 %% @doc refresh_range/1 refreshes a range for the system based on its ID
 %% @end
 -spec refresh_range(dht:peer()) -> ok.
-refresh_range(Node) ->
-    case dht_net:find_node(Node) of
+refresh_range({ID, IP, Port}) ->
+    case dht_net:find_node({IP, Port}, ID) of
         {error, timeout} -> ok;
         {_, Nearnodes} ->
             [request_success(N, #{ reachable => false }) || N <- Nearnodes],
