@@ -155,12 +155,12 @@ store_features(_S, _A, _R) -> [{dht_net, store}].
 
 %% FIND_NODE
 %% -----------------------
-find_node(Node) ->
-    dht_net:find_node(Node).
+find_node(Peer, Target) ->
+    dht_net:find_node(Peer, Target).
 
 find_node_pre(S) -> initialized(S).
-find_node_args(_S) -> [dht_eqc:peer()].
-find_node_callouts(_S, [{ID, IP, Port}]) ->
+find_node_args(_S) -> [{dht_eqc:ip(), dht_eqc:port()}, dht_eqc:id()].
+find_node_callouts(_S, [{IP, Port}, ID]) ->
     ?MATCH(R, ?APPLY(request, [{IP, Port}, {find, node, ID}])),
     case R of
         {error, Reason} -> ?RET({error, Reason});

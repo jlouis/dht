@@ -27,7 +27,7 @@
 %% DHT API
 -export([
          store/4,
-         find_node/1,
+         find_node/2,
          find_value/2,
          ping/1
 ]).
@@ -112,13 +112,16 @@ ping(Peer) ->
 %% @doc find_node/3 searches in the DHT for a given target NodeID
 %% Search at the target IP/Port pair for the NodeID given by `Target'. May time out.
 %% @end
--spec find_node(dht:node_t()) -> {ID, Nodes} | {error, Reason}
+-spec find_node({IP, Port}, Target) -> {ID, Nodes} | {error, Reason}
   when
+    IP :: dht:ip_address(),
+    Port :: dht:port(),
+    Target :: dht:node_id(),
     ID :: dht:node_id(),
     Nodes :: [dht:node_t()],
     Reason :: any().
 
-find_node({N, IP, Port})  ->
+find_node({IP, Port}, N)  ->
     case request({IP, Port}, {find, node, N}) of
         {error, E} -> {error, E};
         {response, _, _, {find, node, Nodes}} ->
