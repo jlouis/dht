@@ -3,5 +3,6 @@
 
 -export([pmap/2]).
 
+-spec pmap(fun((A) -> B), [A]) -> [B].
 pmap(_F, []) -> [];
-pmap(F, [E | Es]) -> [{F(E)} || pmap(F, Es)].
+pmap(F, [E | Es]) -> [F(E) | pmap(F, Es)].
