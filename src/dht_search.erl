@@ -6,7 +6,7 @@
 ]).
 
 -define(SEARCH_WIDTH, 32).
--define(SEARCH_RETRIES, 4).
+-define(SEARCH_RETRIES, 3).
 
 -record(search_state, {
     query_type :: find_node | find_value,
