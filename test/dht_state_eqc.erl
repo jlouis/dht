@@ -77,7 +77,7 @@ api_spec() ->
 		  	#api_module {
 		  		name = dht_net,
 		  		functions = [
-		  			#api_fun { name = find_node, arity = 1 },
+		  			#api_fun { name = find_node, arity = 2 },
 		  			#api_fun { name = ping, arity = 1 }
 		  		]
 		  	}

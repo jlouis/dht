@@ -10,8 +10,8 @@
 
 -record(search_state, {
     query_type :: find_node | find_value,
-    done = gb_sets:empty(),
-    alive = gb_sets:empty(),
+    done = gb_sets:empty() :: gb_sets:set(dht:peer()),
+    alive = gb_sets:empty() :: gb_sets:set(dht:peer()),
     acc = []
 }).
 
@@ -31,7 +31,7 @@ search_iterate(QType, Target, Width, Nodes)  ->
         #search_state{ query_type = QType }).
 
 dht_iter_search(_NodeID, _Target, _Width, 0, _Todo, #search_state { query_type = find_node } = State) ->
-    alive(State);
+    gb_sets:to_list( alive(State) );
 dht_iter_search(_NodeID, _Target, _Width, 0, _Todo, #search_state { query_type = find_value } = State ) ->
     Res = res(State),
     #{
@@ -121,7 +121,7 @@ view_closest_node(ID, AliveNodes, WorkQueue) ->
     end.
 
 %% find the nodes/values which are alive
-alive(#search_state { alive = A }) -> maps:to_list(A).
+alive(#search_state { alive = A }) -> A.
 
 %% obtain the final result of the query
 res(#search_state { acc = A }) -> A.
