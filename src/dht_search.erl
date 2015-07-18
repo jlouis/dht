@@ -2,7 +2,7 @@
 
 %% API for iterative search functions
 -export([
-    find/2
+    run/2
 ]).
 
 -define(SEARCH_WIDTH, 32).
@@ -18,8 +18,11 @@
 %% SEARCH API
 %% ---------------------------------------------------
 
--spec find(find_node | find_value, dht:node_id()) -> list(dht:node_t()).
-find(Type, ID) ->
+-spec run(find_node | find_value, dht:node_id()) -> FindNodeRes | FindValueRes
+  when
+      FindNodeRes :: list ( dht:node_t() ),
+      FindValueRes :: #{ atom() => [term()] }.
+run(Type, ID) ->
     search_iterate(Type, ID, ?SEARCH_WIDTH, dht_state:closest_to(ID, ?SEARCH_WIDTH)).
 
 %% Internal functions

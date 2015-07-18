@@ -1,5 +1,6 @@
 -module(dht_store).
 -behaviour(gen_server).
+-include("dht_constants.hrl").
 
 %% lifetime API
 -export([start_link/0]).
@@ -8,7 +9,14 @@
 -export([store/2, find/1]).
 
 %% gen_server API
--export([init/1, handle_cast/2, handle_call/3, terminate/2, code_change/3, handle_info/2]).
+-export([
+         init/1,
+         handle_cast/2,
+         handle_call/3,
+         terminate/2,
+         code_change/3,
+         handle_info/2
+]).
 
 -define(TBL, ?MODULE).
 
@@ -28,12 +36,13 @@ find(ID) ->
 init([]) ->
     Tbl = ets:new(?TBL, [named_table, protected, bag]),
     {ok, #state { tbl = Tbl }}.
-	
-handle_call({store, ID, Peer}, _From, State) ->
-    Now = dht_time:system_time(),
-    ets:insert(?TBL, {ID, Peer, Now}),
+
+handle_call({store, ID, Loc}, _From, State) ->
+    Now = dht_time:monotonic_time(),
+    ets:insert(?TBL, {ID, Loc, Now}),
     {reply, ok, State};
 handle_call({find, Key}, _From, State) ->
+    evict(Key),
     Peers = ets:match(?TBL, {Key, '$1', '_'}),
     {reply, [ID || [ID] <- Peers], State};
 handle_call(_Msg, _From, State) ->
@@ -50,3 +59,9 @@ terminate(_How, _State) ->
     
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+evict(Key) ->
+    Now = dht_time:monotonic_time(),
+    Window = Now - dht_time:convert_time_unit(?REFRESH_TIME, milli_seconds, native),
+    MS = ets:fun2ms(fun({K, _, T}) -> K == Key andalso T < Window end), 
+    ets:select_delete(?TBL, MS).

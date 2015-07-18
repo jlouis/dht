@@ -11,3 +11,6 @@
 -define(RANGE_TIMEOUT, 15 * 60 * 1000).
 -define(NODE_TIMEOUT, 15 * 60 * 1000).
 
+%
+% For how long will you believe in a stored value?
+-define(REFRESH_TIME, 45 * 60 * 1000).
