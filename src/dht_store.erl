@@ -1,7 +1,8 @@
 -module(dht_store).
 -behaviour(gen_server).
 -include("dht_constants.hrl").
-
+ -include_lib("stdlib/include/ms_transform.hrl").
+ 
 %% lifetime API
 -export([start_link/0]).
 
@@ -44,7 +45,7 @@ handle_call({store, ID, Loc}, _From, State) ->
 handle_call({find, Key}, _From, State) ->
     evict(Key),
     Peers = ets:match(?TBL, {Key, '$1', '_'}),
-    {reply, [ID || [ID] <- Peers], State};
+    {reply, [Loc || [Loc] <- Peers], State};
 handle_call(_Msg, _From, State) ->
     {reply, {error, unknown_msg}, State}.
 	

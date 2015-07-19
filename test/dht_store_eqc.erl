@@ -22,8 +22,7 @@ initial_state() -> #state{}.
 %% START A NEW DHT STORE
 %% -----------------------------------
 start_link() ->
-    dht_store:start_link(),
-    ok.
+    reset().
     
 start_link_pre(S) -> not initialized(S).
 
@@ -53,14 +52,59 @@ store_callouts(_S, [ID, Loc]) ->
 store_features(_S, _, _) ->
     [{dht_store, store}].
 
-%% ADDING ENTRIES TO THE STORE
+%% FINDING A POTENTIAL STORED ENTITY
+%% --------------------------------------
+find(ID) ->
+    dht_store:find(ID).
+    
+find_pre(S) -> initialized(S).
+find_args(S) ->
+    StoredIDs = stored_ids(S),
+    ID = oneof([elements(StoredIDs) || StoredIDs /= []] ++  [dht_eqc:id()]),
+    [ID].
+
+find_callouts(_S, [ID]) ->
+    ?MATCH(Now, ?APPLY(dht_time_eqc, monotonic_time, [])),
+    ?MATCH(Sz, ?APPLY(dht_time_eqc, convert_time_unit, [45 * 60 * 1000, milli_seconds, native])),
+    Flank = Now - Sz,
+    ?APPLY(evict, [Flank]),
+    ?MATCH(R, ?APPLY(lookup, [ID])),
+    ?RET(R).
+
+find_features(_S, [_], L) -> [{dht_store, find, {size, length(L)}}].
+
+%% ADDING ENTRIES TO THE STORE (Internal Call)
 add_store_next(#state { entries = Es } = S, _, [ID, Loc, Now]) ->
     S#state { entries = Es ++ [{ID, Loc, Now}] }.
+
+%% EVICTING OLD ENTRIES (Internal Call)
+evict_next(#state { entries = Es } = S, _, [Flank]) ->
+    S#state { entries = [{ID, Loc, T} || {ID, Loc, T} <- Es, T >= Flank] }.
+
+%% FINDING ENTRIES (Internal Call)
+lookup_callouts(#state { entries = Es }, [Target]) ->
+    ?RET([Loc || {ID, Loc, _} <- Es, ID == Target]).
+
+%% RESETTING THE STATE
+reset() ->
+    case whereis(dht_store) of
+        undefined ->
+            {ok, Pid} = dht_store:start_link(),
+            unlink(Pid),
+            ok;
+        P when is_pid(P) ->
+            exit(P, kill),
+            timer:sleep(1),
+            {ok, Pid} = dht_store:start_link(),
+            unlink(Pid),
+            ok
+    end.
 
 %% Weights
 %% -------
 %%
 %% It is more interesting to manipulate the structure than it is to query it:
+weight(_S, store) -> 100;
 weight(_S, _Cmd) -> 10.
 
 %% Properties
@@ -74,3 +118,5 @@ postcondition_common(S, Call, Res) ->
 %% INTERNALS
 %% ------------------------
 initialized(#state { init = Init }) -> Init.
+
+stored_ids(#state { entries = Es }) -> lists:usort([ID || {ID, _, _} <- Es]).
