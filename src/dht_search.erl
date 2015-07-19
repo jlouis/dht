@@ -105,9 +105,11 @@ ok(_) -> true.
 alive_nodes(Resp) -> [N || {N, R} <- Resp, ok(R)].
 
 %% accum_peers/2 accumulates new targets with the value present
-accum_peers(find_node, [], _Results) -> []; % find_node never has results to accumulate
+accum_peers(find_node, [], _Results) ->
+    %% find_node never has results to accumulate
+    [];
 accum_peers(find_value, Acc, Results) ->
-    New = [{Node, Token, Vs} || {Node, {values, _, Token, Vs}} <- Results, Vs /= [] ],
+    New = [{Node, Token, Vs} || {Node, {values, _, Token, Vs}} <- Results ],
     New ++ Acc.
 
 %% view_closest_node/3 determines if the closest node is in the work_queue or in the alive set

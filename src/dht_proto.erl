@@ -14,7 +14,7 @@
 -type response() ::
 	ping |
 	{find, node, [dht:node_t()]} |
-	{find, value, [dht:node_t()]} |
+	{find, value, dht:token(), [dht:node_t()]} |
 	store.
 
 -type msg() ::

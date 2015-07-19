@@ -7,6 +7,7 @@
 % supervisor callbacks
 -export([init/1]).
 
+-dialyzer({nowarn_function, [init/1]}).
 %% ------------------------------------------------------------------
 
 start_link() ->
