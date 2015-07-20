@@ -31,8 +31,8 @@
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-store(ID, Port) ->
-    cast({store, ID, Port}).
+store(ID, Location) ->
+    cast({store, ID, Location}).
 
 delete(ID) ->
     cast({delete, ID}).
@@ -46,9 +46,9 @@ init([]) ->
 handle_call(_Msg, _From, State) ->
     {reply, ok, State}.
 
-handle_cast({store, ID, Loc}, #state { tbl = T }) ->
-    self() ! {refresh, ID, Loc},
-    {noreply, #state { tbl = T#{ ID => Loc } }};
+handle_cast({store, ID, Location}, #state { tbl = T }) ->
+    self() ! {refresh, ID, Location},
+    {noreply, #state { tbl = T#{ ID => Location } }};
 
 handle_cast({delete, ID}, #state { tbl = T }) ->
     {noreply, #state { tbl = maps:remove(ID, T)}};
@@ -56,14 +56,14 @@ handle_cast({delete, ID}, #state { tbl = T }) ->
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-handle_info({refresh, ID, Port}, #state { tbl = T} = State) ->
+handle_info({refresh, ID, Location}, #state { tbl = T } = State) ->
     case maps:get(ID, T, undefined) of
         undefined ->
             %% Deleted entry, don't do anything
             {noreply, State};
-        {ID, Port} ->
-            refresh(ID, Port),
-            dht_time:send_after(?REFRESH_TIME, self(), {refresh, ID, Port}),
+        Location ->
+            refresh(ID, Location),
+            dht_time:send_after(?REFRESH_TIME, self(), {refresh, ID, Location}),
             {noreply, State}
     end;
 handle_info(_Msg, State) ->
@@ -71,14 +71,14 @@ handle_info(_Msg, State) ->
 
 terminate(_How, _State) ->
     ok.
-    
+
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-refresh(ID, Port) ->
+refresh(ID, Location) ->
     #{ store := Stores } = dht_search:run(find_value, ID),
-    store_at_peers(Stores, ID, Port).
+    store_at_peers(Stores, ID, Location).
 
-store_at_peers([], _ID, _Loc) -> [];
-store_at_peers([{Peer, Token} | Sts], ID, Port) ->
-    [dht_net:store(Peer, Token, ID, Port) | store_at_peers(Sts, ID, Port)].
+store_at_peers([], _ID, _Location) -> [];
+store_at_peers([{Peer, Token} | Sts], ID, Location) ->
+    [dht_net:store(Peer, Token, ID, Location) | store_at_peers(Sts, ID, Location)].
