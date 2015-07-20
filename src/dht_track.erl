@@ -44,7 +44,7 @@ init([]) ->
     {ok, #state { tbl = #{} }}.
 
 handle_call({store, ID, Loc}, _From, #state { tbl = T }) ->
-    self ! {refresh, ID, Loc},
+    self() ! {refresh, ID, Loc},
     {reply, ok, #state { tbl = T#{ ID => Loc } }};
 handle_call({delete, ID}, _From, #state { tbl = T }) ->
     {reply, ok, #state { tbl = maps:remove(ID, T)}};
