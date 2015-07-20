@@ -6,6 +6,9 @@ compile:
 dialyzer:
 	$(REBAR) dialyzer | sed -e 's|_build/default/lib/dht/||g'
 
+shell:
+	$(REBAR) shell
+
 eqc-ci:
 	$(REBAR) compile
 	cp eqc_test/*.erl src
