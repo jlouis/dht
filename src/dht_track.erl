@@ -32,24 +32,26 @@ start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 store(ID, Port) ->
-    call({store, ID, Port}).
+    cast({store, ID, Port}).
 
 delete(ID) ->
-    call({delete, ID}).
+    cast({delete, ID}).
 
-call(Msg) ->
-    gen_server:call(?MODULE, Msg, 60*1000).
+cast(Msg) ->
+    gen_server:cast(?MODULE, Msg).
 
 init([]) ->
     {ok, #state { tbl = #{} }}.
 
-handle_call({store, ID, Loc}, _From, #state { tbl = T }) ->
-    self() ! {refresh, ID, Loc},
-    {reply, ok, #state { tbl = T#{ ID => Loc } }};
-handle_call({delete, ID}, _From, #state { tbl = T }) ->
-    {reply, ok, #state { tbl = maps:remove(ID, T)}};
 handle_call(_Msg, _From, State) ->
-    {reply, {error, unknown_msg}, State}.
+    {reply, ok, State}.
+
+handle_cast({store, ID, Loc}, #state { tbl = T }) ->
+    self() ! {refresh, ID, Loc},
+    {noreply, #state { tbl = T#{ ID => Loc } }};
+
+handle_cast({delete, ID}, #state { tbl = T }) ->
+    {noreply, #state { tbl = maps:remove(ID, T)}};
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
@@ -64,9 +66,6 @@ handle_info({refresh, ID, Port}, #state { tbl = T} = State) ->
             dht_time:send_after(?REFRESH_TIME, self(), {refresh, ID, Port}),
             {noreply, State}
     end;
-handle_info({refresh, _ID, _Loc}, State) ->
-    %% Deleted entry, don't do anything
-    {noreply, State};
 handle_info(_Msg, State) ->
     {noreply, State}.
 
@@ -83,7 +82,3 @@ refresh(ID, Port) ->
 store_at_peers([], _ID, _Loc) -> [];
 store_at_peers([{Peer, Token} | Sts], ID, Port) ->
     [dht_net:store(Peer, Token, ID, Port) | store_at_peers(Sts, ID, Port)].
-
-
-                      
-        
