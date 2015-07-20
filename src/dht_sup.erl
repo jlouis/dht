@@ -18,7 +18,7 @@ init([]) ->
     {ok, Port} = application:get_env(dht, port),
     {ok, StateFile} = application:get_env(dht, state_file),
     {ok, BootstrapNodes} = application:get_env(dht, bootstrap_nodes),
-    
+
     Store = #{ id => store,
                start => {dht_store, start_link, []} },
     State = #{ id => state,
@@ -28,9 +28,9 @@ init([]) ->
     Tracker = #{ id => tracker,
                  start => {dht_track, start_link, []} },
     {ok,
-     #{ strategy => rest_for_one,
-        intensity => 5,
-        period => 900 },
-     [Store, State, Network, Tracker]}.
+        {#{ strategy => rest_for_one,
+            intensity => 5,
+            period => 900 },
+        [Store, State, Network, Tracker]}}.
 
 %% ------------------------------------------------------------------
