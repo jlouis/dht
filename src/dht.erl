@@ -49,16 +49,19 @@
 delete(ID) ->
     dht_track:delete(ID).
 
-%% @doc enter/2 associates an `ID' with a `Port' on this node.
+%% @doc enter/2 associates an `ID' with a `Location' on this node.
 %%
-%% Associate the given `ID' with a `Port' (Running on the same IP as
-%% the DHT). Lookups to this ID will henceforth contain this node as a
-%% possible peer for the ID. The protocol which is used to transfer the
-%% data afterwards is not specified by the DHT
+%% Associate the given `ID' with a `Location'. Lookups to this ID will
+%% henceforth contain this node as a possible peer for the ID. The protocol
+%% which is used to transfer the data afterwards is not specified by the DHT
 %%
 %% @end
-enter(ID, Port) ->
-    dht_track:store(ID, Port).
+-spec enter(ID, Location) -> ok
+    when
+        ID       :: id(),
+        Location :: {inet:ip_address(), inet:port_number()}.
+enter(ID, Location) ->
+    dht_track:store(ID, Location).
 
 %% @doc lookup/1 searches the DHT for nodes which can give you an `ID' back
 %%
@@ -77,12 +80,10 @@ lookup(ID) ->
 %% Low level message which allows you to program your own strategies.
 %%
 %% @end
--spec ping({IP, Port}) -> pang | {ok, id()} | {error, Reason}
+-spec ping(Location) -> pang | {ok, id()} | {error, Reason}
   when
-    IP :: inet:ip_address(),
-    Port :: inet:port_number(),
-    Reason :: any().
-
+    Location :: {inet:ip_address(), inet:port_number()},
+    Reason   :: any().
 ping(Peer) ->
     dht_net:ping(Peer).
 
