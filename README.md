@@ -2,6 +2,8 @@
 
 The `dht` application implements a Distributed Hash Table for Erlang. It is hashed from the etorrent application in order to make it possible to use it without using the rest of etorrent.
 
+The code is highly rewritten by now. There are few traces left of the original code base. The reason for the partial rewrite was to support a full QuickCheck model, so code was changed in order to make certain parts easier to handle from a formal point of view.
+
 The short overview is that this DHT has the following qualities:
 
 * Stores a mapping from *identities* (256 bit keys) to pairs of `{IP, Port}` on which you can find the value with said identity. Thus, the hash table stores no data itself, but leaves data storage to an external entity entirely. You can use any storage system on the target IP/Port as you see fit.
@@ -13,23 +15,16 @@ The current state of the code is that it is not ready yet for many reasons. We a
 
 While here, a lot of decisions has to be made in order to ensure future stability of the code base. So focus is on clear code and simple solutions to problems.
 
-## Analysis
-
-The code here is excised from ETorrent. We want to hammer on the code until it works and begins to provide a working system. To do this, we will start out simple and then gradually make the code base work as it should in a larger setting. The trick is to run the code through several milestones, each one layering on top of the milestone which came before. The code is currently in an unknown state, so the goal is to establish exactly what works, what doesn't and how things are working or not.
-
 ## QuickCheck
 
 The "research project" which is being done in this project is to provide a full QuickCheck model of every part of the DHT code. This work has already uncovered numerous grave errors and mistakes in the original etorrent code base, to the point where I'm wondering if this code even worked appropriately in the first place.
 
 Hence, the modeling work continues. It is slowly moving, because you often need to do successive refinement on the knowledge you have as you go along. On the other hand, the parts which have been checked are likely to be formally correct. Far more than any other project.
 
-The current effort is centered around the routing table component, which is by far the most complicated of all the compoenents. We have a full model, but the model is currently failing in a lot of important cases.
+The current effort is centered around the construction of the top level binding code, that makes everything fit together. This code has not been handled by a QuickCheck model yet, however.
 
 # TODO List:
 
-haphazard things we should do.
-
-* The `dht_iter_search` function in `dht_net` needs a lot of care and perusal. It is a very large imperative function, which should be rewritten into a more functional style and simplified while we are at it.
-* Figure out the API of the system. Currently it is in shambles and it needs some help.
-* Finish the model for the state engine system.
-
+* Cover the remaining parts of the code base
+* Consider the construction of a false “universe” so we can simulate what the rest of the world is storing at a given point in time.
+* Simple tests on a 1-node network should behave as expected

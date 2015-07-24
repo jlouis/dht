@@ -4,7 +4,7 @@ This is a Distributed ID Service, or DIDS. The project started out as a Distribu
 
 So what is a Distributed Identity Service? It is a service in which we ultimately want to provide a mapping
 
-	Identity → Location*
+	Identity -> Location*
 	
 That is, given an identity, we obtain the locations where can we find it. In our system, we rely on the IP protocol, so in our system we define locations as IP addresses and we define identities as very large integers. So we have:
 
@@ -41,7 +41,7 @@ Typical use cases are:
 
 A DIDS is different from a DHT. Specifically, we need to address a number of points it doesn't try to solve:
 
-* We do not map `Key → Value`. This is to avoid the trap of building a system which also takes care of storage. We don't care about how data are actually stored. The only thing we do is to provide a way in which you can get locations of the given Identity. You can use any storage system you want with DIDS.
+* We do not map `Key -> Value`. This is to avoid the trap of building a system which also takes care of storage. We don't care about how data are actually stored. The only thing we do is to provide a way in which you can get locations of the given Identity. You can use any storage system you want with DIDS.
 
 * The DIDS does not persist data at all. If an Identity is pushed to the swarm it has to be refreshed at a given interval, or it will stop being in the swarms global knowledge. This is to make sure the swarm is fairly dynamic in the way it works and to protect it: If you have millions of entries you wish the swarm to manage, you have work to do in order to push out these identities at regular intervals. (In time, we will provide ways to make the DIDS system refresh its kept values).
 
@@ -57,7 +57,7 @@ We support 4 commands:
 * PING(Peer): Ask another node in the swarm if it lives
 * FIND_NODE(ID): Find a node with a given ID
 * FIND_VALUE(ID): Find nodes which has the given ID associated with them.
-* STORE(ID, Port): Store the fact that ID can be obtained on this Node by contacting it on the port `Port`. The IP is implicitly derived.
+* STORE(ID, Port): Store the fact that ID can be obtained on this Node by contacting it on the port `Port`. The IP is implicitly derived. The IP is implicitly derived because we don't want enemies to be able to store an arbitrary IP address in the swarm, but only addresses for which the packet originate. When we return that we are willing to handle a value for a peer, we give that peer an unique token back. They have to supply this token to us, or we reject the store in our end of the system. This ensures the peer has actually contacted us recently to store a value. Tokens stop being valid a minute in.
 
 Notes: Values can *never* be deleted but given enough time and no refreshing STORE command, they will automatically dissipate from the cloud. Unless some other node decides to keep the reference alive.
 
