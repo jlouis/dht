@@ -12,6 +12,8 @@
 %% Global TODO:
 %%
 %% · Rework the EQC model, since it is now in tatters.
+%%% @end
+%%% @private
 -module(dht_routing_meta).
 -include("dht_constants.hrl").
 

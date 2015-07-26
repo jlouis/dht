@@ -1,5 +1,6 @@
 %%% @doc Main supervisor for the DHT code
 %%% @end
+%%% @private
 -module(dht_sup).
 -behaviour(supervisor).
 -export([start_link/0]).

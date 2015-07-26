@@ -1,3 +1,6 @@
+%%% @doc Application behaviour for the DHT
+%%% @end
+%%% @private
 -module(dht_app).
 -behaviour(application).
 

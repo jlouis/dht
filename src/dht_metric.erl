@@ -1,13 +1,13 @@
 %%% @doc Internal/external representation of DHT IDs
-%%% <p>In the DHT system, the canonical ID is a 160 bit integer. This ID and its operation
-%%% induces a metric on which everything computes. In this DHT It is 160 bit integers and
-%%% The XOR operation is used as the composition.
-%%% </p>
-%%% <p>
-%%% We have to pick an internal representation of these in our system, so we have a canonical way of
-%%% representing these. The internal representation chosen are 160 bit integers,
-%%% which in erlang are the integer() type.
+%% In the DHT system, the canonical ID is a 160 bit integer. This ID and its operation
+%% induces a metric on which everything computes. In this DHT It is 160 bit integers and
+%% The XOR operation is used as the composition.
+%%
+%% We have to pick an internal representation of these in our system, so we have a canonical way of
+%% representing these. The internal representation chosen are 160 bit integers,
+%% which in erlang are the integer() type.
 %%% @end
+%%% @private
 -module(dht_metric).
 
 -export([mk/0, d/2]).

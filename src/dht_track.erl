@@ -5,7 +5,8 @@
 %% refresh stored values in the DHT. You can also delete values from
 %% the DHT again by calling the `delete/1' method on the stored values
 %%
-%% @end
+%%% @end
+%%% @private
 -module(dht_track).
 -behaviour(gen_server).
 -include("dht_constants.hrl").
@@ -62,6 +63,9 @@ handle_info({refresh, ID, Location}, #state { tbl = T } = State) ->
             %% Deleted entry, don't do anything
             {noreply, State};
         Location ->
+            %% TODO: When refresh fails, we should track what failed here and then report it
+            %% back to the process for which we store the entries. But this is for a later extension
+            %% of the system.
             refresh(ID, Location),
             dht_time:send_after(?REFRESH_TIME, self(), {refresh, ID, Location}),
             {noreply, State}

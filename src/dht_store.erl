@@ -1,3 +1,9 @@
+%%% @doc Store a subset of the DHT at this node
+%%
+%% This module keeps track of our subset of the DHT node in the system.
+%%
+%%% @end
+%%% @private
 -module(dht_store).
 -behaviour(gen_server).
 -include("dht_constants.hrl").

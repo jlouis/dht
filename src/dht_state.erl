@@ -1,6 +1,6 @@
-%% @author Magnus Klaar <magnus.klaar@sgsstudentbostader.se>
-%% @author Jesper Louis Andersen <jesper.louis.andersen@gmail.com>
-%% @doc A Server for maintaining the the routing table in DHT
+%%% @author Magnus Klaar <magnus.klaar@sgsstudentbostader.se>
+%%% @author Jesper Louis Andersen <jesper.louis.andersen@gmail.com>
+%%% @doc A Server for maintaining the the routing table in DHT
 %%
 %% @todo Document all exported functions.
 %%
@@ -22,7 +22,8 @@
 %% table may be to execute a network call, and then the caller awaits the
 %% completion of that network call.
 %%
-%% @end
+%%% @end
+%%% @private
 -module(dht_state).
 -behaviour(gen_server).
 
@@ -96,7 +97,7 @@ cast(X) -> gen_server:cast(?MODULE, X).
 %% QUERIES 
 %% -----------
 
-%% @equiv closest_to(NodeID, ?MAX_RANGE_SZ)
+%% @equiv closest_to(NodeID, 8)
 -spec closest_to(dht:node_id()) -> list(dht:node_t()).
 closest_to(NodeID) -> closest_to(NodeID, ?MAX_RANGE_SZ).
 

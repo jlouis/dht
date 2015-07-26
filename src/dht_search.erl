@@ -1,3 +1,6 @@
+%%% @doc Implements recursive searching in the DHT
+%%% @end
+%%% @private
 -module(dht_search).
 
 %% API for iterative search functions

@@ -1,5 +1,6 @@
 %%% @doc module dht_socket is a callthrough module for gen_udp
 %%% @end
+%%% @private
 -module(dht_socket).
 
 -export([

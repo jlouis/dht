@@ -13,6 +13,7 @@
 %% range of each bucket.
 %%
 %% @end
+%%% @private
 -module(dht_routing_table).
 -include("dht_constants.hrl").
 

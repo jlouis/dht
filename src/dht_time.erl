@@ -5,6 +5,7 @@
 %%% interface local. It can also become a backwards-compatibility layer
 %%% for release 17 and earlier.
 %%% @end
+%%% @private
 -module(dht_time).
 
 -export([monotonic_time/0, convert_time_unit/3, time_offset/0]).

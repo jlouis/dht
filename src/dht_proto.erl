@@ -1,5 +1,6 @@
 %%% @doc Module dht_proto handles syntactical DHT protocol encoding/decoding.
 %%% @end
+%%% @private
 -module(dht_proto).
 
 -export([encode/1, decode/1]).

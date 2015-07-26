@@ -1,0 +1,17 @@
+@author Magnus Klaar
+@author Jesper Louis Andersen <jesper.louis.andersen@gmail.com>
+@copyright 2015 Jesper Louis Andersen
+@title DHT—A distributed hash table for Erlang
+@doc This application implements a service for running as a peer in a DHT swarm.
+
+All communication is loose and based on sending UDP messages around between
+peers. There is no other connectivity needed between peers in the swarm.
+
+The implementation is essentially the Kademlia variant used in BitTorrent. This DHT has
+been known to scale to several million nodes on the internet with ease.
+
+The DHT only provides an association between a unique `ID' and an `{IP, Port}' pair. From
+here, you will need to specify your own protocol to run. It is advised to pick ID's which are
+content addressed to provide integrity. For instance by execution of
+`crypto:hash(sha256, Content)' to obtain an ID.
+@end

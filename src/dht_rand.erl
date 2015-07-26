@@ -1,3 +1,8 @@
+%%% @doc Wrappers around random functions
+%% This module provides wrappers around the random functions which allows us to
+%% mock their behaviour when we are EQC testing.
+%%% @end
+%%% @private
 -module(dht_rand).
 
 -export([pick/1]).

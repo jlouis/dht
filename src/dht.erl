@@ -4,9 +4,26 @@
 %% major groups of calls: Low level DHT code, and high level API which
 %% is the one you are going to use, most likely.
 %%
+%% The high level API is:
+%%
+%% <ul>
+%% <li>lookup/1</li>
+%% <li>enter/2</li>
+%% <li>delete/1</li>
+%% </ul>
+%%
 %% The Low-level API exposes the low-level four commands you can execute
-%% against the DHT. The High-level API exposes a more useful Set of functions
-%% for general use.
+%% against the DHT. It is intended for those who wants to build their own
+%% subsystems around the DHT. The high-level API uses these to provide the
+%% low level implementation:
+%%
+%% <ul>
+%% <li>ping/1</li>
+%% <li>store/4</li>
+%% <li>find_node/2</li>
+%% <li>find_value/2</li>
+%% </ul>
+%%
 %% @end
 
 %% @author Magnus Klaar <magnus.klaar@sgsstudentbostader.se>

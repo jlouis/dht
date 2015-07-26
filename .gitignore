@@ -10,3 +10,8 @@ test/.eqc-info
 test/current_counterexample.eqc
 _build
 .rebar
+doc/*.html
+doc/*.css
+doc/*.png
+doc/edoc-info
+
