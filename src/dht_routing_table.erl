@@ -137,11 +137,11 @@ delete_node(_, []) -> [].
 members({range, {Min, Max}}, #routing_table { table = Table}) ->
     S = fun(#bucket { low = Lo, high = Hi}) -> Lo == Min andalso Hi == Max end,
     Target = retrieve(S, Table),
-    Target#bucket.members;    
+    Target#bucket.members;
 members({node, {ID, _, _}}, RT) ->
     #bucket { members = Members } = retrieve_id(ID, RT),
     Members.
-    
+
 %%
 %% Check if a node is a member of a bucket list
 %%

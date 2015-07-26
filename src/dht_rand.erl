@@ -9,7 +9,6 @@ pick(Items) ->
     Pos = rand:uniform(Len),
     lists:nth(Pos, Items).
 
-crypto_rand_bytes(N) ->
-    crypto:rand_bytes(N).
+crypto_rand_bytes(N) -> crypto:rand_bytes(N).
 
 uniform(N) -> rand:uniform(N).
