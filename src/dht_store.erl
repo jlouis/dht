@@ -39,8 +39,7 @@ init([]) ->
     {ok, #state { tbl = Tbl }}.
 
 handle_call({store, ID, Loc}, _From, State) ->
-    Now = dht_time:monotonic_time(),
-    ets:insert(?TBL, {ID, Loc, Now}),
+    push(ID, Loc),
     {reply, ok, State};
 handle_call({find, Key}, _From, State) ->
     evict(Key),
@@ -63,6 +62,24 @@ code_change(_OldVsn, State, _Extra) ->
 
 evict(Key) ->
     Now = dht_time:monotonic_time(),
-    Window = Now - dht_time:convert_time_unit(?REFRESH_TIME, milli_seconds, native),
+    Window = Now - dht_time:convert_time_unit(?STORE_TIME, milli_seconds, native),
     MS = ets:fun2ms(fun({K, _, T}) -> K == Key andalso T < Window end), 
     ets:select_delete(?TBL, MS).
+
+push(ID, Loc) ->
+    Now = dht_time:monotonic_time(),
+    %%
+    %% Only match expected output. We crash if we break the invariant by any means
+    %%
+    case ets:match_object(?TBL, {ID, Loc, '_'}) of
+        [] ->
+            true = ets:insert_new(?TBL, {ID, Loc, Now}),
+            ok;
+        [E] ->
+            ets:delete_object(?TBL, E),
+            true = ets:insert_new(?TBL, {ID, Loc, Now}),
+            ok
+    end.
+
+            
+        

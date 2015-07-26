@@ -14,3 +14,5 @@
 %
 % For how long will you believe in a stored value?
 -define(REFRESH_TIME, 45 * 60 * 1000).
+-define(STORE_TIME, 60 * 60 * 1000).
+
