@@ -62,33 +62,54 @@
 %%
 %% Remove the tracking of the `ID' inserted by this node. If no such `ID' exist,
 %% this is a no-op.
+%%
+%% It may take up to an hour before peers stop contacting you for the ID. This is
+%% an artifact of the DHT, so you must be prepared to handle the case where you
+%% are contacted for an old inexistant ID.
 %% @end
 delete(ID) ->
     dht_track:delete(ID).
 
 %% @doc enter/2 associates an `ID' with a `Location' on this node.
 %%
-%% Associate the given `ID' with a `Location'. Lookups to this ID will
+%% Associate the given `ID' with a `Port'. Lookups to this ID will
 %% henceforth contain this node as a possible peer for the ID. The protocol
-%% which is used to transfer the data afterwards is not specified by the DHT
+%% which is used to transfer the data afterwards is not specified by the DHT.
+%%
+%% Note that the IP address to use is given by the UDP port on which the system
+%% is bound. This is a current setup in order to make it harder to craft packets
+%% where you impersonate someone else. The hope is that egress filtering at ISPs
+%% will help to mitigate eventual amplification attacks.
 %%
 %% @end
--spec enter(ID, Location) -> ok
+-spec enter(ID, Port) -> ok
     when
         ID       :: id(),
-        Location :: {inet:ip_address(), inet:port_number()}.
-enter(ID, Location) ->
-    dht_track:store(ID, Location).
+        Port :: inet:port_number().
+enter(ID, Port) ->
+    dht_track:store(ID, Port).
 
 %% @doc lookup/1 searches the DHT for nodes which can give you an `ID' back
 %%
 %% Perform a lookup operation. It returns a list of pairs {IP, Port} pairs
-%% which the DHT knows about that given ID
+%% which the DHT knows about that given ID.
 %%
+%% Assumptions:
+%%
+%% <ul>
+%% <li>We are never looking up keys which we have locally stored at the service.</li>
+%% <li>Before querying the network, we look into our own store. If we have entries
+%%   locally, we pick those.</li>
+%% <li>If we don't have entries ourselves, we look up in the swarm.</li>
+%% </ul>
 %% @end
 lookup(ID) ->
-    #{ found := Fs } = dht_search:run(find_value, ID),
-    [{IP, Port} || {_ID, IP, Port} <- Fs].
+    case dht_store:find(ID) of
+        [] ->
+            #{ found := Fs } = dht_search:run(find_value, ID),
+            [{IP, Port} || {_ID, IP, Port} <- Fs];
+        Peers -> Peers
+    end.
 
 %% Low-level API Functions
 
