@@ -31,15 +31,19 @@
 -include_lib("kernel/include/inet.hrl").
 
 %% Lifetime
--export(
-   [ start_link/2, start_link/3,
-     dump_state/0, dump_state/1,
-     sync/0, sync/2 ]).
+-export([
+	dump_state/0, dump_state/1,
+	start_link/2,
+	start_link/3,
+	sync/0, sync/2
+]).
 
 %% Query
--export(
-   [ closest_to/1, closest_to/2,
-     node_id/0 ]).
+-export([
+	closest_to/1,
+	closest_to/2,
+	node_id/0
+]).
 
 %% Manipulation
 -export([
@@ -140,7 +144,7 @@ request_timeout(Node) ->
 %% @end
 -spec insert_nodes([dht:node_t()]) -> ok.
 insert_nodes(NodeInfos) ->
-    [spawn_link(?MODULE, insert_node, [Node]) || Node <- NodeInfos],
+    [spawn_link(?MODULE, request_success, [Node, #{ reachable => true }]) || Node <- NodeInfos],
     ok.
 
 %% @private

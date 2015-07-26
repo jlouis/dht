@@ -32,6 +32,7 @@
 
 %% High-level API
 -export([
+	node_id/0,
          lookup/1,
          enter/2,
          delete/1
@@ -57,6 +58,11 @@
 
 %% High-level API Functions
 %% ------------------------------
+
+%% @doc node_id/0 returns the `ID' of the current node
+%% @end
+node_id() ->
+    dht_state:node_id().
 
 %% @doc delete/1 removes an `ID' inserted by this node
 %%
