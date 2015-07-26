@@ -170,13 +170,13 @@ handle_query({find, node, ID}, Peer, Tag, OwnID, _Tokens) ->
      Nodes = filter_node(Peer, dht_state:closest_to(ID)),
      return(Peer, {response, Tag, OwnID, {find, node, Nodes}});
 handle_query({find, value, ID}, Peer, Tag, OwnID, Tokens) ->
-    Vs = case dht_store:find(ID) of
-             [] -> filter_node(Peer, dht_state:closest_to(ID));
-             Peers -> Peers
-         end,
-    RecentToken = queue:last(Tokens),
-    return(Peer, {response, Tag, OwnID,
-                  {find, value, token_value(Peer, RecentToken), Vs}});
+    case dht_store:find(ID) of
+        [] ->
+            handle_query({find, node, ID}, Peer, Tag, OwnID, Tokens);
+        Peers ->
+            TVal = token_value(Peer, queue:last(Tokens)),
+            return(Peer, {response, Tag, OwnID, {find, value, TVal, Peers}})
+    end;
 handle_query({store, Token, ID, Port}, {IP, _Port} = Peer, Tag, OwnID, Tokens) ->
     case is_valid_token(Token, Peer, Tokens) of
         false -> ok;
