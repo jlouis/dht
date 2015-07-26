@@ -84,5 +84,5 @@ refresh(ID, Location) ->
     store_at_peers(Stores, ID, Location).
 
 store_at_peers([], _ID, _Location) -> [];
-store_at_peers([{Peer, Token} | Sts], ID, Location) ->
-    [dht_net:store(Peer, Token, ID, Location) | store_at_peers(Sts, ID, Location)].
+store_at_peers([{{_ID, IP, Port}, Token} | Sts], ID, Location) ->
+    [dht_net:store({IP, Port}, Token, ID, Location) | store_at_peers(Sts, ID, Location)].
