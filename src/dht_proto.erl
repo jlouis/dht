@@ -40,12 +40,24 @@ encode_response({find, node, Ns}) ->
     [<<$f, $n, L:8>>, encode_nodes(Ns)];
 encode_response({find, value, Token, Vs}) ->
     L = length(Vs),
-    [<<$f, $v, Token/binary, L:8>>, encode_nodes(Vs)];
+    [<<$f, $v, Token/binary, L:8>>, encode_peers(Vs)];
 encode_response(store) ->
     $s.
     
-encode_nodes(Ns) ->
-    iolist_to_binary(encode_ns(Ns)).
+encode_peers(Vs) -> iolist_to_binary(encode_ps(Vs)).
+
+encode_ps([]) -> [];
+encode_ps([{{B1, B2, B3, B4, B5, B6, B7, B8}, Port} | Ns]) ->
+    [<<6,
+       B1:16/integer, B2:16/integer, B3:16/integer, B4:16/integer,
+       B5:16/integer, B6:16/integer, B7:16/integer, B8:16/integer,
+       Port:16/integer>> | encode_ns(Ns)];
+encode_ps([{{B1, B2, B3, B4}, Port} | Ns]) ->
+    [<<4,
+       B1:8/integer, B2:8/integer, B3:8/integer, B4:8/integer,
+       Port:16/integer>> | encode_ns(Ns)].
+
+encode_nodes(Ns) -> iolist_to_binary(encode_ns(Ns)).
 
 encode_ns([]) -> [];
 encode_ns([{ID, {B1, B2, B3, B4, B5, B6, B7, B8}, Port} | Ns]) ->
