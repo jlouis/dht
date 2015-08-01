@@ -164,8 +164,8 @@ find_node_callouts(_S, [{IP, Port}, ID]) ->
     ?MATCH(R, ?APPLY(request, [{IP, Port}, {find, node, ID}])),
     case R of
         {error, Reason} -> ?RET({error, Reason});
-        {response, _, _, {find, node, Nodes}} ->
-            ?RET({nodes, ID, Nodes})
+        {response, _, _, {find, node, Token, Nodes}} ->
+            ?RET({nodes, ID, Token, Nodes})
     end.
 
 find_node_features(_S, _A, _R) -> [{dht_net, find_node}].
@@ -181,8 +181,8 @@ find_value_callouts(_S, [{IP, Port}, KeyID]) ->
     ?MATCH(R, ?APPLY(request, [{IP, Port}, {find, value, KeyID}])),
     case R of
         {error, Reason} -> ?RET({error, Reason});
-        {response, _, ID, {find, node, Nodes}} ->
-            ?RET({nodes, ID, Nodes});
+        {response, _, ID, {find, node, Token, Nodes}} ->
+            ?RET({nodes, ID, Token, Nodes});
         {response, _, ID, {find, value, Token, Values}} ->
             ?RET({values, ID, Token, Values})
     end.
@@ -257,17 +257,17 @@ peer_request_callouts(#state { tokens = [T | _] = Tokens }, [_Sock, IP, Port, {q
             ?RET(ok);
         {find, node, ID} ->
             ?MATCH(Nodes, ?CALLOUT(dht_state, closest_to, [ID], list(dht_eqc:peer()))),
-            ?APPLY(send_msg, [IP, Port, {response, Tag, OwnID, {find, node, filter_caller(IP, Port, Nodes)}}]),
+            ?APPLY(send_msg, [IP, Port, {response, Tag, OwnID, {find, node, token_value(Peer, T), filter_caller(IP, Port, Nodes)}}]),
             ?RET(ok);
         {find, value, ID} ->
-            ?MATCH(Stored, ?CALLOUT(dht_store, find, [ID], oneof([[], list(dht_eqc:peer())]))),
+            ?MATCH(Stored, ?CALLOUT(dht_store, find, [ID], oneof([[], list(dht_eqc:endpoint())]))),
             case Stored of
               [] ->
                   ?MATCH(Nodes, ?CALLOUT(dht_state, closest_to, [ID], list(dht_eqc:peer()))),
                   ?APPLY(send_msg, [
                       IP,
                       Port,
-                      {response, Tag, OwnID, {find, value, token_value(Peer, T), filter_caller(IP, Port, Nodes)}}]),
+                      {response, Tag, OwnID, {find, node, token_value(Peer, T), filter_caller(IP, Port, Nodes)}}]),
                       ?RET(ok);
               Peers ->
                   ?APPLY(send_msg, [IP, Port, {response, Tag, OwnID, {find, value, token_value(Peer, T), Peers}}]),
@@ -356,11 +356,11 @@ q2r(Q) ->
    q2r_ok(Q).
    
 q2r_ok(ping) -> ping;
-q2r_ok({find, node, _ID}) -> {find, node, list(dht_eqc:peer())};
+q2r_ok({find, node, _ID}) -> {find, node, dht_eqc:token(), list(dht_eqc:peer())};
 q2r_ok({find, value, _KeyID}) ->
     oneof([
-        {find, node, list(dht_eqc:peer())},
-        {find, value, dht_eqc:token(), list(dht_eqc:value())}
+        {find, node, dht_eqc:token(), list(dht_eqc:peer())},
+        {find, value, dht_eqc:token(), list(dht_eqc:endpoint())}
     ]);
 q2r_ok({store, _Token, _KeyID, _Port}) -> store.
     
