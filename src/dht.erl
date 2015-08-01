@@ -115,7 +115,7 @@ lookup(ID) ->
     case dht_store:find(ID) of
         [] ->
             #{ found := Fs } = dht_search:run(find_value, ID),
-            [{IP, Port} || {_ID, IP, Port} <- Fs];
+            Fs;
         Peers -> Peers
     end.
 
