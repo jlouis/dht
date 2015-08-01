@@ -16,3 +16,6 @@
 -define(REFRESH_TIME, 45 * 60 * 1000).
 -define(STORE_TIME, 60 * 60 * 1000).
 
+%
+% How many nodes to store at when we find nodes
+-define(STORE_COUNT, 8).

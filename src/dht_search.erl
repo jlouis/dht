@@ -15,7 +15,7 @@
     query_type :: find_node | find_value,
     done = gb_sets:empty() :: gb_sets:set(dht:peer()),
     alive = gb_sets:empty() :: gb_sets:set(dht:peer()),
-    acc = []
+    acc = [] :: [ {dht:peer(), dht:token(), [dht:endpoint()]} ]
 }).
 
 %% SEARCH API
@@ -36,14 +36,16 @@ search_iterate(QType, Target, Width, Nodes)  ->
     dht_iter_search(NodeID, Target, Width, ?SEARCH_RETRIES, Nodes,
         #search_state{ query_type = QType }).
 
-dht_iter_search(_NodeID, _Target, _Width, 0, _Todo, #search_state { query_type = find_node } = State) ->
-    gb_sets:to_list( alive(State) );
-dht_iter_search(_NodeID, _Target, _Width, 0, _Todo, #search_state { query_type = find_value } = State ) ->
+dht_iter_search(_NodeID, _Target, _Width, 0, _Todo,
+	#search_state { query_type = find_node, alive = A }) ->
+    gb_sets:to_list(A);
+dht_iter_search(_NodeID, _Target, _Width, 0, _Todo,
+	#search_state { query_type = find_value, alive = A } = State) ->
     Res = res(State),
     #{
       store => [{N, Token} || {N, Token, _Vs} <- Res],
-      found => [V || {_, _, Vs} <- Res, V <- Vs],
-      alive => alive(State)
+      found => lists:usort([V || {_, _, Vs} <- Res, V <- Vs]),
+      alive => A
     };
 dht_iter_search(NodeID, Target, Width, Retries, Todo, #search_state{ query_type = QType } = State) ->
     %% Call the DHT in parallel to speed up the search:
@@ -112,8 +114,14 @@ accum_peers(find_node, [], _Results) ->
     %% find_node never has results to accumulate
     [];
 accum_peers(find_value, Acc, Results) ->
-    New = [{Node, Token, Vs} || {Node, {values, _, Token, Vs}} <- Results ],
+    New = accum_results(Results),
     New ++ Acc.
+
+accum_results([]) -> [];
+accum_results([ {Node, {values, _, Token, Vs}} | Rs ]) ->
+    [{Node, Token, Vs} | accum_results(Rs)];
+accum_results([ {Node, {nodes, _, Token, _}} | Rs ]) ->
+    [{Node, Token, []} | accum_results(Rs)].
 
 %% view_closest_node/3 determines if the closest node is in the work_queue or in the alive set
 view_closest_node(ID, AliveNodes, WorkQueue) ->

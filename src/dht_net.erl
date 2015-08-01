@@ -124,8 +124,8 @@ ping(Peer) ->
 find_node({IP, Port}, N)  ->
     case request({IP, Port}, {find, node, N}) of
         {error, E} -> {error, E};
-        {response, _, _, {find, node, Nodes}} ->
-            {nodes, N, Nodes}
+        {response, _, _, {find, node, Token, Nodes}} ->
+            {nodes, N, Token, Nodes}
     end.
 
 -spec find_value(Peer, ID) ->

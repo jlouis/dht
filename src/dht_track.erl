@@ -80,9 +80,18 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 refresh(ID, Location) ->
-    #{ store := Stores } = dht_search:run(find_node, ID),
+    #{ store := StoreCandidates } = dht_search:run(find_node, ID),
+    Stores = pick(?STORE_COUNT, ID, StoreCandidates),
     store_at_peers(Stores, ID, Location).
 
 store_at_peers([], _ID, _Location) -> [];
 store_at_peers([{{_ID, IP, Port}, Token} | Sts], ID, Location) ->
     [dht_net:store({IP, Port}, Token, ID, Location) | store_at_peers(Sts, ID, Location)].
+
+pick(K, ID, Candidates) ->
+    Ordered = lists:sort(fun({IDx, _, _}, {IDy, _, _}) -> dht_metric:d(ID, IDx) < dht_metric:d(ID, IDy) end, Candidates),
+    take(K, Ordered).
+    
+take(0, _Rest) -> [];
+take(_K, []) -> [];
+take(K, [C | Cs]) -> [C | take(K-1, Cs)].
