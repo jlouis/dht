@@ -143,8 +143,8 @@ find_node({IP, Port}, N)  ->
 find_value(Peer, IDKey)  ->
     case request(Peer, {find, value, IDKey}) of
         {error, Reason} -> {error, Reason};
-        {response, _, ID, {find, node, Nodes}} ->
-            {nodes, ID, Nodes};
+        {response, _, ID, {find, node, Token, Nodes}} ->
+            {nodes, ID, Token, Nodes};
         {response, _, ID, {find, value, Token, Values}} ->
             {values, ID, Token, Values}
     end.
