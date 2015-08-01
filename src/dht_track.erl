@@ -80,7 +80,7 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 refresh(ID, Location) ->
-    #{ store := Stores } = dht_search:run(find_value, ID),
+    #{ store := Stores } = dht_search:run(find_node, ID),
     store_at_peers(Stores, ID, Location).
 
 store_at_peers([], _ID, _Location) -> [];

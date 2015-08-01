@@ -25,14 +25,11 @@ ipv6_address() ->
 port() ->
     choose(0, 1024*64 - 1).
 
-socket() ->
-    {ip(), port()}.
-
 peer() ->
-    ?LET({ID, IP, Port}, {id(), ip(), port()},
-         {ID, IP, Port}).
+    {id(), ip(), port()}.
 
-value() -> peer().
+endpoint() ->
+    {ip(), port()}.
 
 tag() ->
     ?LET(ID, choose(0, 16#FFFF),

@@ -128,7 +128,7 @@ node_port() ->
 node_port_args(_S) -> [].
 
 node_port_callouts(_S, []) ->
-    ?MATCH(R, ?CALLOUT(dht_socket, sockname, ['SOCKET_REF'], {ok, dht_eqc:socket()})),
+    ?MATCH(R, ?CALLOUT(dht_socket, sockname, ['SOCKET_REF'], {ok, dht_eqc:endpoint()})),
     case R of
         {ok, NP} -> ?RET(NP);
         Otherwise -> ?FAIL(Otherwise)

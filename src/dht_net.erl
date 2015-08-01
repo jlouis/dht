@@ -166,9 +166,10 @@ store(Peer, Token, IDKey, Port) ->
 %% @private
 handle_query(ping, Peer, Tag, OwnID, _Tokens) ->
     return(Peer, {response, Tag, OwnID, ping});
-handle_query({find, node, ID}, Peer, Tag, OwnID, _Tokens) ->
-     Nodes = filter_node(Peer, dht_state:closest_to(ID)),
-     return(Peer, {response, Tag, OwnID, {find, node, Nodes}});
+handle_query({find, node, ID}, Peer, Tag, OwnID, Tokens) ->
+    TVal = token_value(Peer, queue:last(Tokens)),
+    Nodes = filter_node(Peer, dht_state:closest_to(ID)),
+    return(Peer, {response, Tag, OwnID, {find, node, TVal, Nodes}});
 handle_query({find, value, ID}, Peer, Tag, OwnID, Tokens) ->
     case dht_store:find(ID) of
         [] ->
