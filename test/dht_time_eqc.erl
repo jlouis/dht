@@ -38,10 +38,11 @@ initial_state() -> #state{}.
 
 advance_time(_Advance) -> ok.
 advance_time_args(_S) ->
-    T = oneof([
-        ?LET(K, nat(), K+1),
-        ?LET({K, N}, {nat(), nat()}, (N+1)*1000 + K),
-        ?LET({K, N, M}, {nat(), nat(), nat()}, (M+1)*60*1000 + N*1000 + K)
+    T = frequency([
+        {10, ?LET(K, nat(), K+1)},
+        {10, ?LET({K, N}, {nat(), nat()}, (N+1)*1000 + K)},
+        {10, ?LET({K, N, M}, {nat(), nat(), nat()}, (M+1)*60*1000 + N*1000 + K)},
+        {1, ?LET({K, N, Q}, {nat(), nat(), nat()}, (Q*17)*60*1000 + N*1000 + K)}
     ]),
     [T].
 
@@ -49,6 +50,8 @@ advance_time_args(_S) ->
 %% by A.
 advance_time_next(#state { time = T } = State, _, [A]) -> State#state { time = T+A }.
 advance_time_return(_S, [_]) -> ok.
+
+advance_time_features(_S, _, _) -> [{dht_time, advance_time}].
 
 %% TRIGGERING OF TIMERS
 %% ------------------------------------

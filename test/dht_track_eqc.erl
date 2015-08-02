@@ -61,7 +61,10 @@ start_link_callouts(_S, []) ->
 
 start_link_next(S, _, []) -> S#state { init = true }.
 
-start_link_features(_S, _, _) -> [{dht_store, start_link}].
+start_link_features(_S, _, _) -> [{dht_track, start_link}].
+
+%% STORING A NEW ENTRY
+%% -----------------------------------------
 
 store(ID, Location) ->
     dht_track:store(ID, Location),
@@ -73,9 +76,74 @@ store_args(_S) ->
 
 store_callouts(_S, [ID, Location]) ->
     ?APPLY(refresh, [ID, Location]),
+    ?APPLY(add_entry, [ID, Location]),
     ?RET(ok).
 
-%% REFRESHING AN ENTRY
+store_features(#state { entries = Es }, [ID, _Location], _) ->
+    case lists:keymember(ID, 1, Es) of
+        true -> [{dht_track, store, overwrite}];
+        false -> [{dht_track, store, new}]
+    end.
+
+%% DELETING AN ENTRY
+%% ----------------------------------------------
+delete(ID) ->
+    dht_track:delete(ID),
+    dht_track:sync().
+
+delete_pre(S) -> initialized(S).
+delete_args(S) -> [id(S)].
+
+delete_callouts(_S, [ID]) ->
+    ?APPLY(del_entry, [ID]),
+    ?RET(ok).
+
+delete_features(#state { entries = Es }, [ID], _) ->
+    case lists:keymember(ID, 1, Es) of
+        true -> [{dht_track, delete, existing}];
+        false -> [{dht_track, delete, non_existing}]
+    end.
+
+%% LOOKUP
+%% --------------------
+lookup(ID) ->
+    dht_track:lookup(ID).
+    
+lookup_pre(S) -> initialized(S).
+lookup_args(S) -> [id(S)].
+
+lookup_return(#state {entries = Es }, [ID]) ->
+    case lists:keyfind(ID, 1, Es) of
+        false -> not_found;
+        {_, V} -> V
+    end.
+
+lookup_features(_, _, not_found) -> [{dht_track, lookup, not_found}];
+lookup_features(_, _, Port) when is_integer(Port) -> [{dht_track, lookup, ok}].
+    
+%% TIMING OUT
+%% ------------------------------
+timeout(Msg) ->
+    dht_track ! Msg,
+    dht_track:sync().
+
+timeout_pre(#state { entries = Es } = S) -> initialized(S) andalso Es /= [].
+
+timeout_args(#state { entries = Es }) ->
+    ?LET({ID, Loc}, elements(Es),
+        [{refresh, ID, Loc}]).
+
+timeout_pre(#state { entries = Es }, [{refresh, ID, Loc}]) ->
+    lists:member({ID, Loc}, Es).
+
+timeout_callouts(_S, [{refresh, ID, Loc}]) ->
+    ?APPLY(dht_time, trigger_msg, [{refresh, ID, Loc}]),
+    ?APPLY(refresh, [ID, Loc]),
+    ?RET(ok).
+
+timeout_features(_S, [_], _) -> [{dht_track, timeout, entry}].
+
+%% REFRESHING AN ENTRY (Internal Call)
 %% ------------------------------------------
 refresh_callouts(_S, [ID, Location]) ->
     ?MATCH(Res, ?CALLOUT(dht_search, run, [find_value, ID], dht_search_find_value_ret())),
@@ -91,7 +159,14 @@ net_store_callouts(_S, [ID, Location, [{{_, IP, Port}, Token} | SPs]]) ->
     ?CALLOUT(dht_net, store, [{IP, Port}, Token, ID, Location], ok),
     ?APPLY(net_store, [ID, Location, SPs]).
 
-    
+%% ADD/DELETE AN ENTRY
+%% -------------------------------------
+add_entry_next(#state { entries = Es } = S, _, [ID, Location]) ->
+    S#state { entries = lists:keystore(ID, 1, Es, {ID, Location}) }.
+
+del_entry_next(#state { entries = Es } = S, _, [ID]) ->
+    S#state { entries = lists:keydelete(ID, 1, Es) }.
+
 %% Weights
 %% -------
 %%
@@ -109,6 +184,12 @@ postcondition_common(S, Call, Res) ->
 %% INTERNALS
 %% ------------------------
 initialized(#state { init = Init }) -> Init.
+
+%% Generate an ID, with strong preference for IDs which exist.
+id(#state { entries = Es }) ->
+    IDs = [ID || {ID, _} <- Es],
+    frequency(
+      [{1, dht_eqc:id()}] ++ [{5, elements(IDs)} || IDs /= [] ] ).
 
 dht_search_find_value_ret() ->
     ?LET(Stores, list({dht_eqc:peer(), dht_eqc:token()}),

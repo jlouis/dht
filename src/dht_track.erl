@@ -15,7 +15,7 @@
 -export([start_link/0, sync/0]).
 
 %% Operational API
--export([store/2, delete/1]).
+-export([store/2, lookup/1, delete/1]).
 
 %% gen_server API
 -export([
@@ -46,6 +46,9 @@ store(ID, Location) ->
 delete(ID) ->
     call({delete, ID}).
 
+lookup(ID) ->
+    call({lookup, ID}).
+
 call(Msg) ->
     gen_server:call(?MODULE, Msg).
 
@@ -55,11 +58,13 @@ call(Msg) ->
 init([]) ->
     {ok, #state { tbl = #{} }}.
 
-handle_call({store, ID, Location}, _From, #state { tbl = T }) ->
+handle_call({lookup, ID}, _From, #state { tbl = T } = State) ->
+    {reply, maps:get(ID, T, not_found), State};
+handle_call({store, ID, Location}, _From, #state { tbl = T } = State) ->
     self() ! {refresh, ID, Location},
-    {reply, ok, #state { tbl = T#{ ID => Location } }};
-handle_call({delete, ID}, _From, #state { tbl = T }) ->
-    {reply, ok, #state { tbl = maps:remove(ID, T)}};
+    {reply, ok, State#state { tbl = T#{ ID => Location } }};
+handle_call({delete, ID}, _From, #state { tbl = T } = State) ->
+    {reply, ok, State#state { tbl = maps:remove(ID, T)}};
 handle_call(sync, _From, State) ->
     {reply, ok, State};
 handle_call(_Msg, _From, State) ->
