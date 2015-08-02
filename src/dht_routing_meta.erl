@@ -227,7 +227,7 @@ range_state_members(Members, Routing) ->
             Window = dht_time:convert_time_unit(T - A, native, milli_seconds),
             case Window =< ?RANGE_TIMEOUT of
                 true -> ok;
-                false -> {needs_refresh, dht_rand:pick([ID || {ID, _, _} <- Members])}
+                false -> {needs_refresh, dht_rand:pick(Members)}
             end
     end.
 

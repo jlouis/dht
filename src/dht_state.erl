@@ -270,11 +270,11 @@ handle_info({inactive_range, Range}, #state{ routing = Routing, monitors = Ms } 
         empty ->
             R = dht_routing_meta:reset_range_timer(Range, #{ force => true}, Routing),
             {noreply, wakeup(State#state { routing = R })};
-        {needs_refresh, ID} ->
+        {needs_refresh, Member} ->
             R = dht_routing_meta:reset_range_timer(Range, #{ force => true }, Routing),
             %% Create a monitor on the process, so we can handle the state of our
             %% background worker.
-            {_, MRef} = spawn_monitor(?MODULE, refresh_range, [ID]),
+            {_, MRef} = spawn_monitor(?MODULE, refresh_range, [Member]),
             {noreply, State#state { routing = R, monitors = [MRef | Ms] }}
     end;
 handle_info({stop, Caller}, #state{} = State) ->
