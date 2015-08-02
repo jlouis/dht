@@ -14,7 +14,7 @@
 	  {port, 3723},
 	  
 	  %% The file in which to store the current DHT application state
-	  {state_file, "dht.state.bin"},
+	  {state_file, "dht_state.bin"},
 	  
 	  %% The "bootstrap nodes to start off the DHT from"
 	  {bootstrap_nodes, []},

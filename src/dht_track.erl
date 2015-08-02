@@ -12,7 +12,7 @@
 -include("dht_constants.hrl").
 
 %% lifetime API
--export([start_link/0]).
+-export([start_link/0, sync/0]).
 
 %% Operational API
 -export([store/2, delete/1]).
@@ -29,30 +29,41 @@
 
 -record(state, { tbl = #{} }).
 
+%% LIFETIME & MANAGEMENT
+%% ----------------------------
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
+sync() ->
+    gen_server:call(?MODULE, sync).
+
+%% API
+%% ------------------------
+
 store(ID, Location) ->
-    cast({store, ID, Location}).
+    call({store, ID, Location}).
 
 delete(ID) ->
-    cast({delete, ID}).
+    call({delete, ID}).
 
-cast(Msg) ->
-    gen_server:cast(?MODULE, Msg).
+call(Msg) ->
+    gen_server:call(?MODULE, Msg).
+
+%% CALLBACKS
+%% -------------------------
 
 init([]) ->
     {ok, #state { tbl = #{} }}.
 
+handle_call({store, ID, Location}, _From, #state { tbl = T }) ->
+    self() ! {refresh, ID, Location},
+    {reply, ok, #state { tbl = T#{ ID => Location } }};
+handle_call({delete, ID}, _From, #state { tbl = T }) ->
+    {reply, ok, #state { tbl = maps:remove(ID, T)}};
+handle_call(sync, _From, State) ->
+    {reply, ok, State};
 handle_call(_Msg, _From, State) ->
     {reply, ok, State}.
-
-handle_cast({store, ID, Location}, #state { tbl = T }) ->
-    self() ! {refresh, ID, Location},
-    {noreply, #state { tbl = T#{ ID => Location } }};
-
-handle_cast({delete, ID}, #state { tbl = T }) ->
-    {noreply, #state { tbl = maps:remove(ID, T)}};
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
@@ -67,7 +78,7 @@ handle_info({refresh, ID, Location}, #state { tbl = T } = State) ->
             %% back to the process for which we store the entries. But this is for a later extension
             %% of the system.
             refresh(ID, Location),
-            dht_time:send_after(?REFRESH_TIME, self(), {refresh, ID, Location}),
+            dht_time:send_after(?REFRESH_TIME, ?MODULE, {refresh, ID, Location}),
             {noreply, State}
     end;
 handle_info(_Msg, State) ->
@@ -78,6 +89,9 @@ terminate(_How, _State) ->
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+%% INTERNAL FUNCTIONS
+%% ------------------------------
 
 refresh(ID, Location) ->
     #{ store := StoreCandidates } = dht_search:run(find_value, ID),
@@ -90,7 +104,7 @@ store_at_peers([{{_ID, IP, Port}, Token} | Sts], ID, Location) ->
     ok.
 
 pick(K, ID, Candidates) ->
-    Ordered = lists:sort(fun({IDx, _, _}, {IDy, _, _}) -> dht_metric:d(ID, IDx) < dht_metric:d(ID, IDy) end, Candidates),
+    Ordered = lists:sort(fun({{IDx, _, _}, _}, {{IDy, _, _}, _}) -> dht_metric:d(ID, IDx) < dht_metric:d(ID, IDy) end, Candidates),
     take(K, Ordered).
     
 take(0, _Rest) -> [];
