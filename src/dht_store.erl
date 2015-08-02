@@ -95,11 +95,11 @@ push(ID, Loc) ->
     %%
     case ets:match_object(?TBL, {ID, Loc, '_'}) of
         [] ->
-            true = ets:insert_new(?TBL, {ID, Loc, Now}),
+            ets:insert(?TBL, {ID, Loc, Now}),
             ok;
         [E] ->
             ets:delete_object(?TBL, E),
-            true = ets:insert_new(?TBL, {ID, Loc, Now}),
+            ets:insert(?TBL, {ID, Loc, Now}),
             ok
     end.
 
