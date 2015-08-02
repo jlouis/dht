@@ -9,13 +9,13 @@
 
 api_spec() ->
     #api_spec {
-      language = erlang,
-      modules = [] }.
+       language = erlang,
+       modules = [] }.
 
 -record(state, {
-    entries = [],
-    init = false
-}).
+          entries = [],
+          init = false
+         }).
     
 initial_state() -> #state{}.
 
@@ -28,7 +28,9 @@ start_link_pre(S) -> not initialized(S).
 
 start_link_args(_S) -> [].
 
-start_link_return(_S, []) -> ok.
+start_link_callouts(_S, []) ->
+    ?APPLY(dht_time_eqc, send_after, [5 * 60 * 1000, dht_store, evict]),
+    ?RET(ok).
 
 start_link_next(S, _, []) -> S#state { init = true }.
 
@@ -65,19 +67,44 @@ find_args(S) ->
 
 find_callouts(_S, [ID]) ->
     ?MATCH(Now, ?APPLY(dht_time_eqc, monotonic_time, [])),
-    ?MATCH(Sz, ?APPLY(dht_time_eqc, convert_time_unit, [45 * 60 * 1000, milli_seconds, native])),
+    ?MATCH(Sz, ?APPLY(dht_time_eqc, convert_time_unit, [60 * 60 * 1000, milli_seconds, native])),
     Flank = Now - Sz,
-    ?APPLY(evict, [Flank]),
+    ?APPLY(evict, [ID, Flank]),
     ?MATCH(R, ?APPLY(lookup, [ID])),
     ?RET(R).
 
 find_features(_S, [_], L) -> [{dht_store, find, {size, length(L)}}].
 
+%% EVICTING OLD KEYS
+evict_timeout() ->
+    dht_store ! evict,
+    dht_store:sync().
+
+evict_timeout_pre(S) -> initialized(S).
+
+evict_timeout_args(_S) -> [].
+
+evict_timeout_callouts(_S, []) ->
+    ?APPLY(dht_time_eqc, trigger_msg, [evict]),
+    ?APPLY(dht_time_eqc, send_after, [5 * 60 * 1000, dht_store, evict]),
+    ?MATCH(Now, ?APPLY(dht_time_eqc, monotonic_time, [])),
+    ?MATCH(Sz, ?APPLY(dht_time_eqc, convert_time_unit, [60 * 60 * 1000, milli_seconds, native])),
+    Flank = Now - Sz,
+    ?APPLY(evict, [Flank]),
+    ?RET(ok).
+    
 %% ADDING ENTRIES TO THE STORE (Internal Call)
 add_store_next(#state { entries = Es } = S, _, [ID, Loc, Now]) ->
-    S#state { entries = Es ++ [{ID, Loc, Now}] }.
+    {_, NonMatching} = lists:partition(
+                         fun({IDx, Locx, _}) -> IDx == ID andalso Locx == Loc end,
+                         Es),
+    S#state { entries = NonMatching ++ [{ID, Loc, Now}] }.
 
 %% EVICTING OLD ENTRIES (Internal Call)
+evict_next(#state { entries = Es } = S, _, [Key, Flank]) ->
+    S#state { entries = [{ID, Loc, T}
+                         || {ID, Loc, T} <- Es,
+                            ID /= Key orelse T >= Flank] };
 evict_next(#state { entries = Es } = S, _, [Flank]) ->
     S#state { entries = [{ID, Loc, T} || {ID, Loc, T} <- Es, T >= Flank] }.
 
