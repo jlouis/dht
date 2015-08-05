@@ -175,7 +175,7 @@ sync() ->
 refresh_range({ID, IP, Port}) ->
     case dht_net:find_node({IP, Port}, ID) of
         {error, timeout} -> ok;
-        {_, Nearnodes} ->
+        {nodes, _, _Token, NearNodes} ->
             [request_success(N, #{ reachable => false }) || N <- Nearnodes],
             ok
     end.
