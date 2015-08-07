@@ -37,7 +37,12 @@
          enter/2,
          delete/1
 ]).
-    
+
+%% Informative API
+-export([
+	info/1
+]).
+
 %% Low-level API for others to use
 -export([
 	ping/1,
@@ -118,6 +123,9 @@ lookup(ID) ->
             Fs;
         Peers -> Peers
     end.
+
+%% Informative API functions
+info(tracking) -> dht_track:info().
 
 %% Low-level API Functions
 

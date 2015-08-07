@@ -16,6 +16,7 @@
 
 %% Operational API
 -export([store/2, lookup/1, delete/1]).
+-export([info/0]).
 
 %% gen_server API
 -export([
@@ -40,17 +41,17 @@ sync() ->
 %% API
 %% ------------------------
 
-store(ID, Location) ->
-    call({store, ID, Location}).
+store(ID, Location) -> call({store, ID, Location}).
 
-delete(ID) ->
-    call({delete, ID}).
+delete(ID) -> call({delete, ID}).
 
-lookup(ID) ->
-    call({lookup, ID}).
+lookup(ID) -> call({lookup, ID}).
+
+info() ->call(info).
 
 call(Msg) ->
     gen_server:call(?MODULE, Msg).
+
 
 %% CALLBACKS
 %% -------------------------
@@ -67,6 +68,8 @@ handle_call({delete, ID}, _From, #state { tbl = T } = State) ->
     {reply, ok, State#state { tbl = maps:remove(ID, T)}};
 handle_call(sync, _From, State) ->
     {reply, ok, State};
+handle_call(info, _From, #state { tbl = T } = State) ->
+    {reply, T, State};
 handle_call(_Msg, _From, State) ->
     {reply, ok, State}.
 
