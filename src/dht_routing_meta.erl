@@ -38,7 +38,8 @@
 	node_list/1,
 	node_state/2,
 	range_members/2,
-	range_state/2
+	range_state/2,
+	info/1
 ]).
 
 -record(routing, {
@@ -49,6 +50,22 @@
 
 -type node_state() :: good | {questionable, integer()} | bad.
 -export_type([node_state/0]).
+
+info(#routing { table = T, nodes = Ns, ranges = Rs }) ->
+    M = #{ buckets := Bs } = dht_routing_table:info(T),
+    Bs2 = info_fill_in(Bs, Ns, Rs),
+    M#{ buckets := Bs2 }.
+
+info_fill_in([], _, _) -> [];
+info_fill_in([B | Bs], Ns, Rs) ->
+    #{ low := L, high := H, members := Mems } = B,
+    #{ last_activity := LA } = maps:get({L, H}, Rs),
+    MStates =
+        [begin
+            NState = maps:get(N, Ns),
+            NState#{ peer => N }
+         end || N <- Mems],
+    [B#{ members := MStates, last_activity => LA } | info_fill_in(Bs, Ns, Rs)].
 
 %% API
 %% ------------------------------------------------------

@@ -40,7 +40,7 @@
 
 %% Informative API
 -export([
-	info/1
+	info/0, info/1
 ]).
 
 %% Low-level API for others to use
@@ -125,7 +125,12 @@ lookup(ID) ->
     end.
 
 %% Informative API functions
-info(tracking) -> dht_track:info().
+info() ->
+    [info(tracking), info(routing_table), info(store)].
+
+info(tracking) -> {tracking, dht_track:info()};
+info(routing_table) -> {routing_table, dht_state:info()};
+info(store) -> {store, dht_store:info()}.
 
 %% Low-level API Functions
 

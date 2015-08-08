@@ -51,6 +51,11 @@
          request_timeout/1
 ]).
 
+%% Information
+-export([
+	info/0
+]).
+
 %% Internal API
 -export([
 	refresh_node/1,
@@ -66,7 +71,7 @@
 
 -record(state, {
     node_id :: dht:node_id(), % ID of this node
-    routing = dht_routing_timing:empty(), % Routing table and timing structure
+    routing = dht_routing_meta:empty(), % Routing table and timing structure
     monitors = [] :: [reference()],
     syncers = [] :: [{pid(), reference()}],
     state_file="/tmp/dht_state" :: string() % Path to persistent state
@@ -82,6 +87,11 @@ start_link(RequestedID, StateFile, BootstrapNodes) ->
 			  ?MODULE,
 			  [RequestedID, StateFile, BootstrapNodes], []).
 
+%% @doc Retrieve routing table information
+info() ->
+    MetaData = call(info),
+    dht_routing_meta:info(MetaData).
+    
 %% @doc dump_state/0 dumps the routing table state to disk
 %% @end
 dump_state() ->
@@ -224,6 +234,8 @@ handle_call(node_id, _From, #state{ node_id = Self } = State) ->
 handle_call({sync, Msg}, From, #state { syncers = Ss } = State) ->
     self() ! Msg,
     {noreply, State#state { syncers = [From | Ss]}};
+handle_call(info, _From, #state { routing = Routing } = State) ->
+    {reply, Routing, State};
 handle_call(sync, _From, State) ->
     {reply, ok, State}.
 

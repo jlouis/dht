@@ -32,7 +32,8 @@
 	node_id/1,
 	node_list/1,
 	ranges/1,
-	space/2
+	space/2,
+	info/1
 ]).
 
 -define(in_range(Dist, Min, Max), ((Dist >= Min) andalso (Dist < Max))).
@@ -49,6 +50,14 @@
 }).
 -type t() :: #routing_table{}.
 -export_type([t/0]).
+
+info(#bucket{ low = Low, high = High, members = Members }) ->
+    #{ low => Low, high => High, members => Members };
+info(#routing_table { self = Self, table = Buckets }) ->
+    #{
+      self => Self,
+      buckets => [info(B) || B <- Buckets]
+    }.
 
 %%
 %% Create a new bucket list

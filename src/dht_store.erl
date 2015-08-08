@@ -15,6 +15,8 @@
 %% Operational API
 -export([store/2, find/1]).
 
+-export([info/0]).
+
 %% gen_server API
 -export([
          init/1,
@@ -41,6 +43,10 @@ store(ID, {IP, Port}) ->
     
 find(ID) ->
     gen_server:call(?MODULE, {find, ID}).
+
+info() ->
+    L = ets:tab2list(?TBL),
+    [#{ id => ID, peer => Peer, inserted => Ins } || {ID, Peer, Ins} <- L].
 
 %% Callbacks
 init([]) ->
