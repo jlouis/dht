@@ -6,7 +6,11 @@ The code is highly rewritten by now. There are few traces left of the original c
 
 ## What is a DHT?
 
-A distributed hash table is a mapping from *identities* which are 256 bit to a list of pairs, `[{IP, Port}]` on which the identity has been registered. The table is *distributed* by having a large number of nodes store small parts of the mapping each. Also, each node keeps a partial routing table in order to be able to find values.
+A distributed hash table is a mapping from *identities* which are 256 bit numbers to a list of pairs, `[{IP, Port}]` on which the identity has been registered. The table is *distributed* by having a large number of nodes store small parts of the mapping each. Also, each node keeps a partial routing table in order to be able to find values.
+
+Note the DHT, much like DNS doesn't interpret what the identity is. It just maps that identity onto the IP/Port endpoints. That is, you have to write your own protocol once you know where an identity is registered.
+
+Also, the protocol makes no security guarantees. Anyone can claim to store a given ID. It is recommended clients have some way to verify that indeed, the other end stores the correct value for the ID. For instance, one can run `ID = crypto:sha(256, Val)` on a claimed value to verify that it is correct, as long as the value does not take too long to transfer. Another option is to store a Public key as the identity and then challenging the target end to verify the correct key, for instance by use of a protocol like CurveCP.
 
 The implemented DHT has the following properties:
 
