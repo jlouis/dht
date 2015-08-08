@@ -1,21 +1,51 @@
 # dht — Distributed Hash Table for Erlang
 
-The `dht` application implements a Distributed Hash Table for Erlang. It is hashed from the etorrent application in order to make it possible to use it without using the rest of etorrent.
+The `dht` application implements a Distributed Hash Table for Erlang. It is excised from the etorrent application in order to make it possible to use it without using the rest of etorrent.
 
 The code is highly rewritten by now. There are few traces left of the original code base. The reason for the partial rewrite was to support a full QuickCheck model, so code was changed in order to make certain parts easier to handle from a formal point of view.
 
-The short overview is that this DHT has the following qualities:
+## What is a DHT?
 
-* Stores a mapping from *identities* (256 bit keys) to pairs of `{IP, Port}` on which you can find the value with said identity. Thus, the hash table stores no data itself, but leaves data storage to an external entity entirely. You can use any storage system on the target IP/Port as you see fit.
-* Uses the Kademlia protocol to implement a distributed hash table in order to spread out identities over multiple known nodes.
-* Storage is *probalistic*. There is a small chance a given entry will go away if the "right" nodes dies. The system will however, if implemented correctly, reinstate the stored value in at most 1 hour if this happens. The more nodes you have, the less the risk of identity mapping loss.
-* Lookup is logarithmic and gradually covers the 256 bit space. Thus, lookup is usually not extremely fast, but it is extremely durable. In order words, it is not a DHT for fast lookup.
+A distributed hash table is a mapping from *identities* which are 256 bit to a list of pairs, `[{IP, Port}]` on which the identity has been registered. The table is *distributed* by having a large number of nodes store small parts of the mapping each. Also, each node keeps a partial routing table in order to be able to find values.
 
-The current state of the code is that it is not ready yet for many reasons. We are slowly moving in the right direction, rewriting pieces of the code base and redesigning more and more of the system so it is free of the etorrent clutches. But cleaning up an old code base will take some time to pull off and it is not a fast job that happens quickly.
+The implemented DHT has the following properties:
 
-While here, a lot of decisions has to be made in order to ensure future stability of the code base. So focus is on clear code and simple solutions to problems.
+* Multiple peers can store the same identity. In that case, each peer is reflected in the table.
+* Protocol agnostic, you are encouraged to do your own protocol, security checking and blacklisting of peers.
+* Insertion is fast, but deletion can take up to one hour because it is based on timeouts. If a node disappears, it can take up to one hour before its entries are removed as well.
+* Scalability is in millions of nodes.
+* Storage is *probalistic*. An entry is stored at 8 nodes, and if all 8 nodes disappear, that entry will be lost for up to 45 hours, before it is reinserted in a refresh.
 
-# Testing the DHT
+# Using the implementation:
+
+The implementation supports 3 high-level commands, which together with two low-level commands is enough to run the DHT from scratch. Say you have just started a new DHT node:
+
+	application:ensure_all_started(dht)
+	
+Then, in order to make the DHT part of swarm, you must know at least one node in the swarm. How to obtain the nodes it outside of the scope of the DHT application currently. One you know about a couple of nodes, you can ping them to insert them into the DHT routing table:
+
+	[dht:ping({IP, Port}) || {IP, Port} <- Peers]
+	
+Then, in order to populate the routing table quickly, execute a find node search on your own randomly generated ID:
+
+	Self = dht:node_id(),
+	dht_search:run(find_node, Self).
+	
+At this point, we are part of the swarm, and can start using it. Say we want to say that ID 456 are present on our node, port 3000. We then execute:
+
+	dht:enter(456, 3000)
+	
+and now the DHT tracks that association. If we later want to rid ourselves of the association, we use
+
+	dht:delete(456)
+	
+Finally, other nodes can find the association by executing a lookup routine:
+
+	[{IP, 3000}] = dht:lookup(456)
+	
+where IP is the IP address the node is using to send UDP packets.
+
+# Testing the DHT (example)
 
 This section describes how to use the DHT before we have a bootstrap process into the system. The system is early alpha, so things might not work entirely as expected. I'm interested in any kind of error you see when trying to run this.
 

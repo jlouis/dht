@@ -125,8 +125,19 @@ lookup(ID) ->
     end.
 
 %% Informative API functions
+
+%% @doc info/0 retrieves the internal state of the DHT subsystem.
+%% This call is intended for debugging purposes. You can use it to query the internal state of
+%% the DHT and use that as a basis of a report if something is wrong with the DHT.
+%% @end
+-spec info() -> [{atom(), term()}].
 info() ->
     [info(tracking), info(routing_table), info(store)].
+
+%% @doc info/1 queries specific entries in the `info/0' block
+%% @end
+-spec info(Area) -> term()
+  when Area :: tracking | store | routing_table.
 
 info(tracking) -> {tracking, dht_track:info()};
 info(routing_table) -> {routing_table, dht_state:info()};
