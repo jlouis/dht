@@ -300,14 +300,7 @@ handle_packet({IP, Port} = Peer, Packet,
                     {query, Tag, PeerID, Query} ->
                       %% Incoming request
                       dht_state:request_success({PeerID, IP, Port}, #{ reachable => false }),
-                      spawn_link(
-                        fun() ->
-                                ?MODULE:handle_query(Query,
-                                                     Peer,
-                                                     Tag,
-                                                     Self,
-                                                     Tokens)
-                        end),
+                      spawn_link(fun() -> ?MODULE:handle_query(Query, Peer, Tag, Self, Tokens) end),
                       State;
                     _ ->
                       State %% No recipient

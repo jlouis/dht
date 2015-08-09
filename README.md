@@ -49,6 +49,76 @@ Finally, other nodes can find the association by executing a lookup routine:
 	
 where IP is the IP address the node is using to send UDP packets.
 
+# Code layout and how the DHT works
+
+In general, we follow the [Kademlia](http://pdos.csail.mit.edu/~petar/papers/maymounkov-kademlia-lncs.pdf) hash table implementation. But the implementation details of this code is down below. The key take-away is that in order to implement Kademlia in Erlang, you have to come up with a working process model.
+
+The system supports 4 low-level commands:
+
+* `PING({IP, Port})`—Ask a node if it is alive
+* `FIND_NODE({IP, Port}, NodeID)`—Ask a peer routing table about information on `NodeID`.
+* `FIND_VALUE({IP, Port}, ID)`—Ask a peer about knowledge about a stored value `ID`. May return either information about that value, or a set of nodes who are likely to know more about it. Will also return a temporary token to be used in subsequent `STORE` operations.
+* `STORE({IP, Port}, Token, ID, Port)`—If the current node is on IP-address `NodeIP`, then call a peer at `{IP, Port}` to associate `ID => {NodeIP, Port}`. The `Token` provides proof we recently executed a `FIND_VALUE` call to the peer.
+
+These are supported by a number of process groups, which we describe in the following:
+
+## dht_metric.erl
+
+The DHT operates on an identity-space which are 256 bit integers. If `X` and `Y` are IDs, then `X xor Y` forms a [metric](https://en.wikipedia.org/wiki/Metric_(mathematics)), or distance-function, over the space. Each node in the DHT swarm has an ID, and nodes are close to each other if the distance is small.
+
+Every ID you wish to store is a 256 bit integer. Likewise, they are mapped into the space with the nodes. Nodes which are “close” to a stored ID tracks who is currently providing service for that ID.
+
+## dht_net.erl, dht_proto.erl
+
+The DHT communicates via a simple binary protocol that has been built loosely on the BitTorrent protocol. However, the protocol has been changed completely from BitTorrent and has no resemblance to the original protocol whatsoever. The protocol encoding/decoding scheme is implemented in `dht_proto` and can be changed later on if necessary by adding a specific 8 byte random header to messages.
+
+All of the network stack is handled by `dht_net`. This gen_server runs two tasks: incoming requests and outgoing requests.
+
+For incoming requests, a handler process is spawned to handle that particular query. Once it knows about an answer, it invokes `dht_net` again to send out the response. For outgoing requests, the network gen_server uses `noreply` to block the caller until either timeout or until a response comes back for a request. It then unblocks the caller. In short, `dht_net` multiplexes the network.
+
+The network protocol uses UDP. Currently, we don't believe packets will be large enough to mess with the MTU size of the IP stack, but we may be wrong.
+
+Storing data at another node is predicated on a random token. Technically, the random token is hashed with the IP address of the peer in order to produce a unique token for that peer. If the peer wants to store data it has to present that token to prove it has recently executed a search and hit the node. It provides some security against forged stores of data at random peers. The random token is cycled once every minute to make sure there is some progress and a peer can't reuse a token forever.
+
+The network protocol provides no additional security. In particular, there is currently no provision for blacklisting of talkative peers, no storage limit per node, no security handshake, etc.
+
+## dht_state.erl, dht_routing_meta.erl, dht_routing_table.erl
+
+The code in `dht_state` runs the routing table state of the system. To do so, it uses the `dht_routing_table` code to maintain the routing table, and uses the `dht_routing_meta` code to handle meta-data about nodes in the table.
+
+Imagine a binary tree based on the digital bit-pattern of a 256 bit number. A `0` means “follow the left child” whereas a `1` means “follow the right child” in the tree. Since each node has a 256 bit ID, the NodeID, it sits somewhere in this tree. The full tree is the full routing table for the system, but in general this is a very large tree containing all nodes currently present in the system. Since there can be millions of nodes, it is not feasible to store the full routing table in each node. Hence, they opt for partial storage.
+
+If you follow the path from the node's NodeID to the root of the tree, you follow a “spine” in the tree. At each node in the spine, there will be a child which leads down to our NodeID. The other child would lead to other parts of the routing table, but the routing table stores at most 8 such nodes in a “bucket”. Hence, the partial routing table is a spine of nodes, with buckets hanging on every path we don't take toward our own NodeID. This is what the routing table code stores.
+
+For each node, we keep meta-data about that node: when we last successfully contacted it, how many times requests failed to reach it, and if we know it answers our queries. The latter is because many nodes are firewalled, so they can perform requests to other nodes, but you can't contact them yourself. Such nodes are not interesting to the routing table.
+
+Every time a node is succesfully handled by the network code, it pings the state code with an update. This can then impact the routing table:
+
+* If the node belongs to a bucket which has less than 8 nodes, it is inserted.
+* If the node belongs into a full bucket, and there are nodes in the bucket which we haven't talked with for 15 minutes, we try to ping those nodes. If they fail to respond, we replace the bad node with the new one. This ensures the table tracks stable nodes over time.
+* If the node belongs into a full bucket with nodes that we know are bad, we replace the bad one with the new node in hope it is better.
+
+Periodically, every 15 minutes, we also check each bucket. If no nodes in the bucket has had any activity in the time-frame, we pick a random node in the bucket and asks it of its local nodes. For each node it returns, we try to insert those into the table. This ensures the bucket is somewhat full—even in the case the node is behind a firewall. Most nodes in the swarm which talk regularly will never hit these timers in practice.
+
+We make a distinction between nodes which are reachable because they answered a query from us, and those where we answer a query for them. The rule is that refreshing of nodes can only happen if we have at some point had a successful reachable query to that node. And after this, then the node is refreshed even on non-reachable responses back to that node.
+
+When the system stops, the routing table dumps its state to disk, but the meta-data is thrown out. The system thus starts in a state where it has to reconstruct information about nodes in its table, but since we don't know for how long we have been down, this is a fair trade-off.
+
+## dht_store.erl
+
+The store keeps a table mapping an ID to a IP/Port pair for other nodes are kept in the store. It is periodically collected for entries which are older than 1 hour. Thus, clients who wish a permanent entry needs to refresh it before one hour.
+
+## dht_track.erl
+
+The tracker is the natural dual counterpart to the store. It keeps mappings present in the DHT for a node by periodically refreshing them every 45 minutes. Thus, users of the DHT doesn't have to worry about refreshing nodes.
+
+## Top level: dht.erl, dht_search.erl
+
+The code here is not a process, but merely a library which is used by the code to perform recursive searches on top of the system. That is, the above implement the 4 major low-level commands, and this library uses them to handle  the DHT by combining them into useful high-level commands.
+
+The search code implements the recursive nature of queries on a partial routing table. A search for a target ID or NodeID starts by using your own partial routing table to find peers close to the target. You then ask those nodes for the knowledge in their partial routing table. The returned nodes are then queried by yourself in order to hop a step closer to the target. This recursion continues until either the target is found, or we get as close as we can.
+
+
 # Testing the DHT (example)
 
 This section describes how to use the DHT before we have a bootstrap process into the system. The system is early alpha, so things might not work entirely as expected. I'm interested in any kind of error you see when trying to run this.
