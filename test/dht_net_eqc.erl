@@ -47,7 +47,8 @@ api_spec() ->
             name = dht_state,
             functions = [
                 #api_fun { name = node_id, arity = 0, classify = dht_state_eqc },
-                #api_fun { name = closest_to, arity = 1, classify = dht_state_eqc },
+                #api_fun { name = closest_to, arity = 1, classify =
+                   {dht_state_eqc, closest_to, fun([ID]) -> [ID, 8] end} },
                 #api_fun { name = request_success, arity = 2, classify = dht_state_eqc } ] },
           #api_module {
             name = dht_store,
