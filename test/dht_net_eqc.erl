@@ -404,7 +404,7 @@ renew_token_args(_S) -> [].
 renew_token_callouts(_S, []) ->
     ?APPLY(dht_time_eqc, trigger_msg, [renew_token]),
     ?APPLY(dht_time_eqc, send_after, [?TOKEN_LIFETIME, dht_net, renew_token]),
-    ?MATCH(Token, ?CALLOUT(dht_rand, crypto_rand_bytes, [4], binary(4))),
+    ?MATCH(Token, ?CALLOUT(dht_rand, crypto_rand_bytes, [16], binary(16))),
     ?APPLY(cycle_token, [Token]),
     ?RET(ok).
 

@@ -348,7 +348,7 @@ unique_message_id(Peer, Active, K) when K > 0 ->
 % requests, or at least store requests from nodes that never sends find_value requests.
 %
 random_token() ->
-    dht_rand:crypto_rand_bytes(4).
+    dht_rand:crypto_rand_bytes(16).
 
 send_query({IP, Port} = Peer, Query, From, #state { outstanding = Active, socket = Socket } = State) ->
     Self = dht_state:node_id(), %% @todo cache this locally. It can't change.
