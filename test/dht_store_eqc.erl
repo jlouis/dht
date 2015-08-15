@@ -41,6 +41,9 @@ start_link_features(_S, _, _) -> [{dht_store, start_link}].
 store(ID, Loc) ->
     dht_store:store(ID, Loc).
     
+store_callers() ->
+    [dht_net_eqc].
+
 store_pre(S) -> initialized(S).
 
 store_args(_S) ->
@@ -59,6 +62,9 @@ store_features(_S, _, _) ->
 find(ID) ->
     dht_store:find(ID).
     
+find_callers() ->
+    [dht_net_eqc].
+
 find_pre(S) -> initialized(S).
 find_args(S) ->
     StoredIDs = stored_ids(S),
@@ -126,6 +132,9 @@ reset() ->
             unlink(Pid),
             ok
     end.
+
+%% Checking for startup
+ensure_started_pre(S, []) -> initialized(S).
 
 %% Weights
 %% -------

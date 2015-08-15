@@ -9,6 +9,7 @@
 
 components() -> [
 	dht_net_eqc,
+	dht_store_eqc,
 	dht_time_eqc
 ].
 

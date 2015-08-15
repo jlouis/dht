@@ -46,14 +46,14 @@ api_spec() ->
           #api_module {
             name = dht_state,
             functions = [
-                #api_fun { name = node_id, arity = 0 },
-                #api_fun { name = closest_to, arity = 1 },
-                #api_fun { name = request_success, arity = 2 } ] },
+                #api_fun { name = node_id, arity = 0, classify = dht_state_eqc },
+                #api_fun { name = closest_to, arity = 1, classify = dht_state_eqc },
+                #api_fun { name = request_success, arity = 2, classify = dht_state_eqc } ] },
           #api_module {
             name = dht_store,
             functions = [
-                #api_fun { name = find, arity = 1 },
-                #api_fun { name = store, arity = 2 }
+                #api_fun { name = find, arity = 1, classify = dht_store_eqc },
+                #api_fun { name = store, arity = 2, classify = dht_store_eqc }
             ] },
           #api_module {
             name = dht_socket,
@@ -112,6 +112,7 @@ init_next(S, _, [Port, Tokens]) ->
     }.
 
 init_callouts(_S, [P, _T]) ->
+    ?APPLY(dht_store, ensure_started, []),
     ?CALLOUT(dht_socket, open, [P, ?WILDCARD], {ok, 'SOCKET_REF'}),
     ?APPLY(dht_time_eqc, send_after, [?TOKEN_LIFETIME, dht_net, renew_token]),
     ?RET(true).
