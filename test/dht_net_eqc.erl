@@ -159,6 +159,9 @@ store_features(_S, _A, _R) -> [{dht_net, store}].
 find_node(Peer, Target) ->
     dht_net:find_node(Peer, Target).
 
+find_node_callers() ->
+	[dht_state_eqc].
+
 find_node_pre(S) -> initialized(S).
 find_node_args(_S) -> [{dht_eqc:ip(), dht_eqc:port()}, dht_eqc:id()].
 find_node_callouts(_S, [{IP, Port}, ID]) ->
@@ -191,12 +194,13 @@ find_value_features(_S, _A, _R) -> [{dht_net, find_value}].
 
 %% PING
 %% ------------
-
-ping_pre(S) -> initialized(S).
-
 ping(Peer) ->
     dht_net:ping(Peer).
     
+ping_callers() ->
+	[dht_state_eqc].
+
+ping_pre(S) -> initialized(S).
 ping_args(_S) ->
     [{dht_eqc:ip(), dht_eqc:port()}].
     

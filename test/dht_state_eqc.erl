@@ -77,8 +77,8 @@ api_spec() ->
 		  	#api_module {
 		  		name = dht_net,
 		  		functions = [
-		  			#api_fun { name = find_node, arity = 2 },
-		  			#api_fun { name = ping, arity = 1 }
+		  			#api_fun { name = find_node, arity = 2, classify = dht_net_eqc },
+		  			#api_fun { name = ping, arity = 1, classify = dht_net_eqc }
 		  		]
 		  	}
 		  ]
@@ -118,7 +118,7 @@ start_link_args(#state { id = ID }) ->
 start_link_callouts(#state { id = ID }, [ID, Nodes]) ->
     ?MATCH(Tbl, ?CALLOUT(dht_routing_table, new, [ID, ?ID_MIN, ?ID_MAX], 'ROUTING_TABLE')),
     ?CALLOUT(dht_routing_meta, new, [Tbl], {ok, ID, 'META'}),
-    ?SEQ([?APPLY(request_sucess, [N, #{ reachable => false}]) || N <- Nodes]),
+    ?SEQ([?APPLY(request_success, [N, #{ reachable => false}]) || N <- Nodes]),
     ?RET(true).
 
 %% Once started, we can't start the State system again.
@@ -134,6 +134,9 @@ start_link_features(_S, _A, _R) -> [{state, start_link}].
 closest_to(ID, Num) ->
     dht_state:closest_to(ID, Num).
 	
+closest_to_callers() ->
+	[dht_net_eqc].
+
 closest_to_pre(S) -> initialized(S).
 
 closest_to_args(_S) ->
@@ -153,6 +156,9 @@ closest_to_features(_S, [_, Num], _) -> [{state, {closest_to, Num}}].
 
 %% Request the node ID of the system
 node_id() -> dht_state:node_id().
+
+node_id_callers() ->
+	[dht_net_eqc].
 
 node_id_pre(S) -> initialized(S).
 	
@@ -194,6 +200,9 @@ request_success(Node, Opts) ->
     dht_state:sync(),
     Res.
     
+request_success_callers() ->
+	[dht_net_eqc].
+
 request_success_pre(S) -> initialized(S).
 
 request_success_args(_S) ->
