@@ -8,7 +8,7 @@ The code is highly rewritten by now. There are few traces left of the original c
 
 Since we are at an early alpha, changes will be made which are not backwards compatible. This section describes the so-called “flag days” at which we change stuff in ways that are not backwards compatible to earlier versions. Once things are stable and we are looking at a real release, a versioning scheme will be in place to handle this.
 
-* 2015-08-15: Increased the size of the token from 4 to 8 bytes. Protocol format has changed as a result. The old clients will fail to handle this correctly.
+* 2015-08-15: Increased the size of the token from 4 to 8 bytes. Protocol format has changed as a result. The old clients will fail to handle this correctly. Also, started using the Versions more correctly in the protocol.
 
 # What is a DHT?
 

@@ -322,6 +322,7 @@ respond(Client, M) -> gen_server:reply(Client, M).
 %% view_packet_decode/1 is a view on the validity of an incoming packet
 view_packet_decode(Packet) ->
     try dht_proto:decode(Packet) of
+        {error, {old_version, <<0,0,0,0,0,0,0,0>>}} -> invalid_decode;
         {error, Tag, ID, _Code, _Msg} = E -> {valid_decode, ID, Tag, E};
         {response, Tag, ID, _Reply} = R -> {valid_decode, ID, Tag, R};
         {query, Tag, ID, _Query} = Q -> {valid_decode, ID, Tag, Q}

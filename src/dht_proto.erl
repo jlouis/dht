@@ -5,7 +5,7 @@
 
 -export([encode/1, decode/1]).
 
--define(VERSION, 0).
+-define(VERSION1, <<175,64,13,52,167,136,55,45>>).
 
 -type query() ::
 	ping |
@@ -27,7 +27,7 @@
 
 %% Encoding on the wire
 %% ------------------------
-header(Tag, ID) -> <<"EDHT-KDM-", ?VERSION:8, Tag/binary, ID:256>>.
+header(Tag, ID) -> <<?VERSION1:8/binary, Tag/binary, ID:256>>.
 
 encode_query(ping) -> <<$p>>;
 encode_query({find, node, ID}) -> <<$f, $n, ID:256>>;
@@ -103,9 +103,12 @@ decode_endpoints(K, <<6, B1:16, B2:16, B3:16, B4:16, B5:16, B6:16, B7:16, B8:16,
     [{{B1, B2, B3, B4, B5, B6, B7, B8}, Port} | decode_endpoints(K-1, Nodes)].
 
 -spec decode(binary()) -> msg().
-decode(<<"EDHT-KDM-", ?VERSION:8, Tag:2/binary, ID:256, $q, Query/binary>>) ->
+decode(<<175,64,13,52,167,136,55,45, Tag:2/binary, ID:256, $q, Query/binary>>) ->
     {query, Tag, ID, decode_query(Query)};
-decode(<<"EDHT-KDM-", ?VERSION:8, Tag:2/binary, ID:256, $r, Response/binary>>) ->
+decode(<<175,64,13,52,167,136,55,45, Tag:2/binary, ID:256, $r, Response/binary>>) ->
     {response, Tag, ID, decode_response(Response)};
-decode(<<"EDHT-KDM-", ?VERSION:8, Tag:2/binary, ID:256, $e, ErrCode:16, ErrorString/binary>>) ->
-    {error, Tag, ID, ErrCode, ErrorString}.
+decode(<<175,64,13,52,167,136,55,45, Tag:2/binary, ID:256, $e, ErrCode:16, ErrorString/binary>>) ->
+    {error, Tag, ID, ErrCode, ErrorString};
+decode(<<"EDHT-KDM-", 0:8, _Rest/binary>>) ->
+    {error, {old_version, <<0,0,0,0,0,0,0,0>>}}.
+
