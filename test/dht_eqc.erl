@@ -41,8 +41,6 @@ unique_id_pair() ->
 
 range() -> ?LET([X, Y], unique_id_pair(), list_to_tuple(lists:sort([X,Y]))).
 
-token() ->
-    ?LET([L, U], [choose(0, 16#FFFF), choose(0, 16#FFFF)],
-        <<L:16, U:16>>).
+token() -> binary(8).
 
 node_eq({X, _, _}, {Y, _, _}) -> X =:= Y.

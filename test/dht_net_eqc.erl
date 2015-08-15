@@ -244,8 +244,8 @@ peer_request_args(S) ->
       ['SOCKET_REF', IP, Port, Packet])).
 
 token_value(Peer, Token) ->
-    Hash = erlang:phash2({Peer, Token}),
-    <<Hash:32/integer>>.
+    X = term_to_binary(Peer),
+    crypto:hmac(sha256, Token, X, 8).
 
 peer_request_callouts(#state { tokens = [T | _] = Tokens }, [_Sock, IP, Port, {query, Tag, PeerID, Query}]) ->
     Peer = {IP, Port},

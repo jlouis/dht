@@ -370,10 +370,9 @@ send_query({IP, Port} = Peer, Query, From, #state { outstanding = Active, socket
 filter_node({IP, Port}, Nodes) ->
     [X || {_NID, NIP, NPort}=X <- Nodes, NIP =/= IP orelse NPort =/= Port].
 
-%% @todo consider the safety of using phash2 here
 token_value(Peer, Token) ->
-    Hash = erlang:phash2({Peer, Token}),
-    <<Hash:32/integer>>.
+    X = term_to_binary(Peer),
+    crypto:hmac(sha256, Token, X, 8).
 
 is_valid_token(TokenValue, Peer, Tokens) ->
     ValidValues = [token_value(Peer, Token) || Token <- queue:to_list(Tokens)],

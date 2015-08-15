@@ -4,7 +4,13 @@ The `dht` application implements a Distributed Hash Table for Erlang. It is exci
 
 The code is highly rewritten by now. There are few traces left of the original code base. The reason for the partial rewrite was to support a full QuickCheck model, so code was changed in order to make certain parts easier to handle from a formal point of view.
 
-## What is a DHT?
+# Flag days
+
+Since we are at an early alpha, changes will be made which are not backwards compatible. This section describes the so-called “flag days” at which we change stuff in ways that are not backwards compatible to earlier versions. Once things are stable and we are looking at a real release, a versioning scheme will be in place to handle this.
+
+* 2015-08-15: Increased the size of the token from 4 to 8 bytes. Protocol format has changed as a result. The old clients will fail to handle this correctly.
+
+# What is a DHT?
 
 A distributed hash table is a mapping from *identities* which are 256 bit numbers to a list of pairs, `[{IP, Port}]` on which the identity has been registered. The table is *distributed* by having a large number of nodes store small parts of the mapping each. Also, each node keeps a partial routing table in order to be able to find values.
 
@@ -63,6 +69,8 @@ The system supports 4 low-level commands:
 These are supported by a number of process groups, which we describe in the following:
 
 ## dht_metric.erl
+
+The `dht_metric` module is a library, not a process. It implements the metric space in which the DHT operates:
 
 The DHT operates on an identity-space which are 256 bit integers. If `X` and `Y` are IDs, then `X xor Y` forms a [metric](https://en.wikipedia.org/wiki/Metric_(mathematics)), or distance-function, over the space. Each node in the DHT swarm has an ID, and nodes are close to each other if the distance is small.
 

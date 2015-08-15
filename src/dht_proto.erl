@@ -81,11 +81,11 @@ encode({error, Tag, ID, ErrCode, ErrStr}) -> [header(Tag, ID), $e, <<ErrCode:16,
 decode_query(<<$p>>) -> ping;
 decode_query(<<$f, $n, ID:256>>) -> {find, node, ID};
 decode_query(<<$f, $v, ID:256>>) -> {find, value, ID};
-decode_query(<<$s, Token:4/binary, ID:256, Port:16>>) -> {store, Token, ID, Port}.
+decode_query(<<$s, Token:8/binary, ID:256, Port:16>>) -> {store, Token, ID, Port}.
 
 decode_response(<<$p>>) -> ping;
-decode_response(<<$f, $n, Token:4/binary, L:8, Pack/binary>>) -> {find, node, Token, decode_nodes(L, Pack)};
-decode_response(<<$f, $v, Token:4/binary, L:8, Pack/binary>>) -> {find, value, Token, decode_endpoints(L, Pack)};
+decode_response(<<$f, $n, Token:8/binary, L:8, Pack/binary>>) -> {find, node, Token, decode_nodes(L, Pack)};
+decode_response(<<$f, $v, Token:8/binary, L:8, Pack/binary>>) -> {find, value, Token, decode_endpoints(L, Pack)};
 decode_response(<<$s>>) -> store.
 
 %% Force recognition of the correct number of incoming arguments.
