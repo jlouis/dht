@@ -1,68 +1,8 @@
-# TODO list of mistakes
+# TODO List of things still needing attention
 
-* Inserting nodes: Whenever we touch a node, we should request_success
-  on it, which amounts to testing if the node is interesting and then
-  to run an insert on it, if it is. This allows us to "kill" the
-  insert_node call, altogether and rely entirely on request_success
-  calls. All the necessary changes are in dht_state, since no call
-  will ever call into this code otherwise.
-
-Ok, so here is what should happen: We get a new node prospect, and we
-should first ask for the node state. If it is a member, it is going to
-run request_success, and we are done. If it is not a member, we can
-run the insert_node game. If it is a roaming member, we ignore the
-node.
-
-Request_success is easy to handle. We simply ask for the state and
-obtain it. Then fire off a request success. If it is not a member,
-however, we have to spawn a process which does the dance of
-potentially inserting the node into the system. Here we have some
-options:
-
-- We can simply insert the node into the table, assuming the node is a
-  valid node. This is a simple solution. If we have `reachable =>
-  true` we can even believe this is the case.
-
-- We can ping the node first, and then insert it if it is a valid
-  node.
-
-- We can insert the node.
-
-The right thing to do, is to say that reachable nodes needs no ping.
-Nodes where we do not know the reachability are still inserted, but we
-count on the idea that a new node is better than an old node, if the
-old node was bad.
-
-Next problem: You decide to roll request_success/2 into a variant
-which does the insert_node call. Immediate problem: insert_node
-returns {verify, N}. This means request_success/2 has to be a call,
-and can't be a cast. This is a mistake which we should fix. So the
-idea of running request_success as a cast was wrong. Argh.
-
-If it is a call, then we can fix stuff by using the request_success
-call as a way to handle the verification calls and so on. This also
-allows us to run pings in the call.
-
-* The network stack needs to be combed for when it tells the state
-  engine it got request_success: The problem here is that we need to
-  be sure that we know a full Peer, included its ID. Then we can
-  correctly timeout Peers. If you ask for something without the ID,
-  then we have to forgo timeouts.
-
-  This has to be fed into the system, or it won't work as expected.
-
-* Think a lot about when to tell the `dht_state` about when things
-  should be touched. The current setup ignores those things
-  completely. It can probably be generally defined if we think about
-  it.
-
-  
-
-* Reset empty ranges correctly
-
-* The notion of inserting a node, and touching a node is really the
-  same thing. You can handle them as one if you think a bit about it I
-  hope.
+* The dht_search code needs a EQC model
+* The dht_store code can be joined into a cluster. We better join it into a cluster :)
+* It should be possible to build a cluster of the state and net code at the same time. There is nothing which makes this impossible in the system. But we have yet to make this happen.
 
 # Tests and specification of the DHT
 
