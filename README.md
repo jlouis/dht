@@ -4,7 +4,13 @@ The `dht` application implements a Distributed Hash Table for Erlang. It is exci
 
 The code is highly rewritten by now. There are few traces left of the original code base. The reason for the partial rewrite was to support a full QuickCheck model, so code was changed in order to make certain parts easier to handle from a formal point of view.
 
-# Flag days
+# State of the code
+
+The code is currently early alpha state, and things may not work yet. In particular, many parts of the system has not been thoroughly tested and as such they may contain grave bugs. While each subsystem has been tested in isolation, it still remains to build QuickCheck models which assembles all those subsystems. This will probably turn up errors.
+
+Check the issues at github. They may contain current problems.
+
+## Flag days
 
 Since we are at an early alpha, changes will be made which are not backwards compatible. This section describes the so-called “flag days” at which we change stuff in ways that are not backwards compatible to earlier versions. Once things are stable and we are looking at a real release, a versioning scheme will be in place to handle this.
 
