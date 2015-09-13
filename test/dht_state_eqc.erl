@@ -79,7 +79,7 @@ api_spec() ->
 		  		functions = [
 		  			#api_fun { name = find_node, arity = 2, classify = dht_net_eqc },
 		  			#api_fun { name = ping, arity = 1, classify = dht_net_eqc },
-		  			#api_fun { name = refresh_node, arity = 3, classify = dht_net_eqc }
+		  			#api_fun { name = ping_verify, arity = 3, classify = dht_net_eqc }
 		  		]
 		  	}
 		  ]
@@ -219,7 +219,7 @@ request_success_callouts(_S, [Node, Opts]) ->
         not_inserted -> ?RET(not_inserted);
         {error, Reason} -> ?RET({error, Reason});
         {verify, QNode} ->
-            ?CALLOUT(dht_net, refresh_node, [Node, QNode, Opts], ok),
+            ?CALLOUT(dht_net, ping_verify, [Node, QNode, Opts], ok),
             ?RET(ok)
     end.
     

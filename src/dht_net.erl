@@ -29,7 +29,8 @@
          store/4,
          find_node/2,
          find_value/2,
-         ping/1
+         ping/1,
+         ping_verify/3
 ]).
 
 %% Private internal use
@@ -108,6 +109,9 @@ ping(Peer) ->
             fail = error_common(Reason),
             pang
     end.
+
+ping_verify(Node, VNode, Opts) ->
+    gen_server:cast(?MODULE, {ping_verify, VNode, {Node, Opts}}).
 
 %% @doc find_node/3 searches in the DHT for a given target NodeID
 %% Search at the target IP/Port pair for the NodeID given by `Target'. May time out.
@@ -233,6 +237,13 @@ handle_call(node_port, _From, #state { socket = Socket } = State) ->
     {reply, SockName, State}.
 
 %% @private
+handle_cast({ping_verify, VNode, {Node, Opts}}, State) ->
+    case send_query(VNode, ping, {ping_verify, VNode, Node, Opts}, State) of
+        {ok, S} -> {noreply, S};
+        {error, Reason} ->
+            error_logger:error_report([unexpected, {error, Reason}]),
+            {noreply, State}
+    end;
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -271,9 +282,22 @@ handle_request_timeout(Key, #state { outstanding = Outstanding } = State) ->
     case maps:get(Key, Outstanding, not_found) of
         not_found -> State;
         {Client, _Timeout} ->
+            reply(Client, {error, timeout}),
             gen_server:reply(Client, {error, timeout}),
             State#state { outstanding = maps:remove(Key, Outstanding) }
     end.
+
+%% reply/2 handles correlated responses for processes using the `dht_net' framework.
+reply({ping_verify, VNode, Node, Opts}, {error, timeout}) ->
+    dht_state:request_timeout(VNode),
+    dht_state:request_success(Node, Opts),
+    ok;
+reply({ping_verify, _VNode, Node, Opts}, {response, _, _, ping}) ->
+    dht_state:request_success(Node, Opts),
+    ok;
+reply(_Client, {query, _, _, _} = M) -> exit({message_to_ourselves, M});
+reply({P, T} = From, M) when is_pid(P), is_reference(T) ->
+    gen_server:reply(From, M).
 
 %%
 %% Token renewal is called whenever the tokens grows too old.
@@ -309,15 +333,12 @@ handle_packet({IP, Port} = Peer, Packet,
                 %% Handle blocked client process
                 dht_time:cancel_timer(TRef),
                 dht_state:request_success({PeerID, IP, Port}, #{ reachable => true }),
-                respond(Client, M),
+                reply(Client, M),
                 State#state { outstanding = maps:remove(Key, Outstanding) }
             end
     end.
 
 
-%% respond/2 handles correlated responses for processes using the `dht_net' framework.
-respond(_Client, {query, _, _, _} = M) -> exit({message_to_ourselves, M});
-respond(Client, M) -> gen_server:reply(Client, M).
 
 %% view_packet_decode/1 is a view on the validity of an incoming packet
 view_packet_decode(Packet) ->

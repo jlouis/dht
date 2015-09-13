@@ -137,7 +137,7 @@ request_success(Node, Opts) ->
             already_member;
         {error, Reason} -> {error, Reason};
         {verify, QNode} ->
-            dht_net:refresh_node(Node, QNode, Opts)
+            dht_net:ping_verify(Node, QNode, Opts)
     end.
 
 request_timeout(Node) ->
