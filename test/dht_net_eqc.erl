@@ -147,7 +147,7 @@ store_pre(S) -> initialized(S).
 store_args(_S) -> [{dht_eqc:ip(), dht_eqc:port()}, dht_eqc:token(), dht_eqc:id(), dht_eqc:port()].
 
 store_callouts(_S, [{IP, Port}, Token, KeyID, MPort]) ->
-    ?MATCH(R, ?APPLY(request, [{IP, Port}, {store, Token, KeyID, MPort}])),
+    ?MATCH(R, ?APPLY(request, [{IP, Port}, {store, Token, KeyID, MPort}, ?SELF])),
     case R of
         {error, Reason} -> ?RET({error, Reason});
         {response, _, ID, _} -> ?RET({ok, ID})
@@ -166,7 +166,7 @@ find_node_callers() ->
 find_node_pre(S) -> initialized(S).
 find_node_args(_S) -> [{dht_eqc:ip(), dht_eqc:port()}, dht_eqc:id()].
 find_node_callouts(_S, [{IP, Port}, ID]) ->
-    ?MATCH(R, ?APPLY(request, [{IP, Port}, {find, node, ID}])),
+    ?MATCH(R, ?APPLY(request, [{IP, Port}, {find, node, ID}, ?SELF])),
     case R of
         {error, Reason} -> ?RET({error, Reason});
         {response, _, _, {find, node, Token, Nodes}} ->
@@ -183,7 +183,7 @@ find_value(Peer, KeyID) ->
 find_value_pre(S) -> initialized(S).
 find_value_args(_S) -> [{dht_eqc:ip(), dht_eqc:port()}, dht_eqc:id()].
 find_value_callouts(_S, [{IP, Port}, KeyID]) ->
-    ?MATCH(R, ?APPLY(request, [{IP, Port}, {find, value, KeyID}])),
+    ?MATCH(R, ?APPLY(request, [{IP, Port}, {find, value, KeyID}, ?SELF])),
     case R of
         {error, Reason} -> ?RET({error, Reason});
         {response, _, ID, {find, node, Token, Nodes}} ->
@@ -206,7 +206,7 @@ ping_args(_S) ->
     [{dht_eqc:ip(), dht_eqc:port()}].
     
 ping_callouts(_S, [Target]) ->
-    ?MATCH(R, ?APPLY(request, [Target, ping])),
+    ?MATCH(R, ?APPLY(request, [Target, ping, ?SELF])),
     case R of
         {error, eagain} ->
             ?APPLY(ping, [Target]);
@@ -228,13 +228,13 @@ ping_verify_callers() ->
 	[dht_state_eqc].
 
 ping_verify_pre(S) -> initialized(S).
-ping_verify_args(_S) ->
-	[dht_eqc:peer(), dht_eqc:peer(), #{ reachable => bool() }].
+%%ping_verify_args(_S) ->
+%%	[dht_eqc:peer(), dht_eqc:peer(), #{ reachable => bool() }].
 	
 ping_verify_callouts(_S, [Node, VNode, Opts]) ->
     ?RET(ok).
     
-ping_features(_S, _A, _R) -> [{dht_net, ping_verify}].
+ping_verify_features(_S, _A, _R) -> [{dht_net, ping_verify}].
 
 %% INCOMING REQUESTS
 %% ------------------------------
@@ -342,7 +342,7 @@ request_timeout_features(_S, _A, _R) -> [{dht_net, request_timeout}].
 %% --------------
 
 %% All queries initiated by our side follows the pattern given here in the request:
-request_callouts(S, [{IP, Port} = Target, Q]) ->
+request_callouts(S, [{IP, Port} = Target, Q, Self]) ->
     ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
     ?MATCH(Tag, ?CALLOUT(dht_rand, uniform, [16#FFFF], unique_id(S, {IP, Port}))),
     ?MATCH(SocketResponse,
@@ -353,9 +353,9 @@ request_callouts(S, [{IP, Port} = Target, Q]) ->
           Key = {Target, <<Tag:16/integer>>},
           ?MATCH(TimerRef,
               ?APPLY(dht_time_eqc, send_after, [?QUERY_TIMEOUT, dht_net, {request_timeout, Key}])),
-          ?APPLY(add_blocked, [?SELF, #request { timer_ref = TimerRef, target = Target, tag = Tag, query = Q }]),
-          ?MATCH(Response, ?BLOCK),
-          ?APPLY(del_blocked, [?SELF]),
+          ?APPLY(add_blocked, [Self, #request { timer_ref = TimerRef, target = Target, tag = Tag, query = Q }]),
+          ?MATCH(Response, ?BLOCK(Self)),
+          ?APPLY(del_blocked, [Self]),
           case Response of
               {error, timeout} ->
                   ?RET({error, timeout});
@@ -398,8 +398,8 @@ universe_respond_args(S) ->
         
 universe_respond_pre(S, [E, _]) -> lists:member(E, blocked(S)).
 
-universe_respond_callouts(_S, [{Pid, _Request}, Response]) ->
-    ?UNBLOCK(Pid, Response),
+universe_respond_callouts(_S, [{Who, _Request}, Response]) ->
+    ?UNBLOCK(Who, Response),
     ?RET(ok).
         
 universe_respond_features(_S, [{_, Request}, _], _R) -> [{dht_net, {universe_respond, canonicalize(Request)}}].
