@@ -283,7 +283,6 @@ handle_request_timeout(Key, #state { outstanding = Outstanding } = State) ->
         not_found -> State;
         {Client, _Timeout} ->
             reply(Client, {error, timeout}),
-            gen_server:reply(Client, {error, timeout}),
             State#state { outstanding = maps:remove(Key, Outstanding) }
     end.
 
