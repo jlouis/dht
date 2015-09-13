@@ -216,6 +216,26 @@ ping_callouts(_S, [Target]) ->
 
 ping_features(_S, _A, _R) -> [{dht_net, ping}].
 
+
+%% PING VERIFY
+%% ----------------------
+
+ping_verify(Node, VNode, Opts) ->
+    dht_net:ping_verify(Node, VNode, Opts),
+    dht_net:sync().
+
+ping_verify_callers() ->
+	[dht_state_eqc].
+
+ping_verify_pre(S) -> initialized(S).
+ping_verify_args(_S) ->
+	[dht_eqc:peer(), dht_eqc:peer(), #{ reachable => bool() }].
+	
+ping_verify_callouts(_S, [Node, VNode, Opts]) ->
+    ?RET(ok).
+    
+ping_features(_S, _A, _R) -> [{dht_net, ping_verify}].
+
 %% INCOMING REQUESTS
 %% ------------------------------
 
