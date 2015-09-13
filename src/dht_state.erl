@@ -58,7 +58,6 @@
 
 %% Internal API
 -export([
-	refresh_node/1,
 	refresh_range/1
 ]).
 
@@ -138,8 +137,7 @@ request_success(Node, Opts) ->
             already_member;
         {error, Reason} -> {error, Reason};
         {verify, QNode} ->
-            refresh_node(QNode),
-            request_success(Node, Opts)
+            dht_net:refresh_node(Node, QNode, Opts)
     end.
 
 request_timeout(Node) ->
@@ -156,19 +154,6 @@ request_timeout(Node) ->
 insert_nodes(NodeInfos) ->
     [spawn_link(?MODULE, request_success, [Node, #{ reachable => true }]) || Node <- NodeInfos],
     ok.
-
-%% @private
-%% @doc refresh_node/1 makes sure a node is still available
--spec refresh_node(dht:node_t()) -> ok | roaming_member.
-refresh_node({ID, IP, Port} = Node) ->
-    case dht_net:ping({IP, Port}) of
-	{ok, ID} ->
-	    request_success({ID, IP, Port}, #{ reachable => true });
-	{ok, _WrongID} ->
-	    request_timeout(Node);
-	pang ->
-	    request_timeout(Node)
-    end.
 
 %% @private
 %% Sync is used internally to send an event into the dht_state engine and block the caller.

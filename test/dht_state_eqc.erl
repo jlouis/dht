@@ -78,7 +78,8 @@ api_spec() ->
 		  		name = dht_net,
 		  		functions = [
 		  			#api_fun { name = find_node, arity = 2, classify = dht_net_eqc },
-		  			#api_fun { name = ping, arity = 1, classify = dht_net_eqc }
+		  			#api_fun { name = ping, arity = 1, classify = dht_net_eqc },
+		  			#api_fun { name = refresh_node, arity = 3, classify = dht_net_eqc }
 		  		]
 		  	}
 		  ]
@@ -217,9 +218,9 @@ request_success_callouts(_S, [Node, Opts]) ->
             ?RET(already_member);
         not_inserted -> ?RET(not_inserted);
         {error, Reason} -> ?RET({error, Reason});
-        {verify, QN} ->
-            ?APPLY(refresh_node, [QN]),
-            ?APPLY(request_success, [Node, Opts])
+        {verify, QNode} ->
+            ?CALLOUT(dht_net, refresh_node, [Node, QNode, Opts], ok),
+            ?RET(ok)
     end.
     
 request_success_gs_callouts(_S, [Node, Opts]) ->
@@ -268,30 +269,6 @@ request_timeout_callouts(_S, [Node]) ->
     end.
 
 request_timeout_features(_S, [_], _) -> [{state, request_timeout}].
-
-%% REFRESH_NODE
-%% ------------------------------
-
-%% Try refreshing the knowledge about the node `Node`. Used when inserting new nodes
-%% to refresh already known nodes so they move from being questionable to being good.
-refresh_node(Node) ->
-    dht_state:refresh_node(Node).
-    
-refresh_node_pre(S) -> initialized(S).
-
-refresh_node_args(_S) -> [dht_eqc:peer()].
-
-%% Note that if the node has the wrong ID, we define the node as being timeouting.
-%% This in turn makes the node bad and it will be replaced in the routing table, eventually.
-refresh_node_callouts(_S, [{ID, IP, Port} = Node]) ->
-    ?MATCH(PingRes, ?APPLY(ping, [IP, Port])),
-    case PingRes of
-        pang -> ?APPLY(request_timeout, [Node]);
-        {ok, ID} -> ?APPLY(request_success, [Node, #{ reachable => true }]);
-        {ok, _WrongID} -> ?APPLY(request_timeout, [Node])
-    end.
-
-refresh_node_features(_S, _A, _R) -> [{state, refresh_node}].
 
 %% PING (Internal call to the network stack)
 %% ---------------------
