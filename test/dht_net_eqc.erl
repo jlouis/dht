@@ -113,7 +113,7 @@ init_next(S, _, [Port, Tokens]) ->
     }.
 
 init_callouts(_S, [P, _T]) ->
-    ?APPLY(dht_store, ensure_started, []),
+    ?APPLY(dht_store_eqc, ensure_started, []),
     ?CALLOUT(dht_socket, open, [P, ?WILDCARD], {ok, 'SOCKET_REF'}),
     ?APPLY(dht_time_eqc, send_after, [?TOKEN_LIFETIME, dht_net, renew_token]),
     ?RET(true).
