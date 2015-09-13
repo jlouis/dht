@@ -237,11 +237,10 @@ handle_call(node_port, _From, #state { socket = Socket } = State) ->
     {reply, SockName, State}.
 
 %% @private
-handle_cast({ping_verify, VNode, {Node, Opts}}, State) ->
-    case send_query(VNode, ping, {ping_verify, VNode, Node, Opts}, State) of
+handle_cast({ping_verify, {_ID, IP, Port} = VNode, {Node, Opts}}, State) ->
+    case send_query({IP, Port}, ping, {ping_verify, VNode, Node, Opts}, State) of
         {ok, S} -> {noreply, S};
-        {error, Reason} ->
-            error_logger:error_report([unexpected, {error, Reason}]),
+        {error, _Reason} ->
             {noreply, State}
     end;
 handle_cast(_Msg, State) ->

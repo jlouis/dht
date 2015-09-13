@@ -228,11 +228,15 @@ ping_verify_callers() ->
 	[dht_state_eqc].
 
 ping_verify_pre(S) -> initialized(S).
-%%ping_verify_args(_S) ->
-%%	[dht_eqc:peer(), dht_eqc:peer(), #{ reachable => bool() }].
+ping_verify_args(_S) ->
+	[dht_eqc:peer(), dht_eqc:peer(), #{ reachable => bool() }].
 	
-ping_verify_callouts(_S, [Node, VNode, Opts]) ->
-    ?RET(ok).
+ping_verify_callouts(_S, [Node, {_ID, IP, Port} = VNode, Opts]) ->
+    ?MATCH(R, ?APPLY(request, [{IP, Port}, {ping_verify, {VNode, Node, Opts}}, make_ref()])),
+    case R of
+        ok -> ?RET(ok);
+        {error, _} -> ?RET(ok)
+    end.
     
 ping_verify_features(_S, _A, _R) -> [{dht_net, ping_verify}].
 
@@ -354,16 +358,19 @@ request_callouts(S, [{IP, Port} = Target, Q, Self]) ->
           ?MATCH(TimerRef,
               ?APPLY(dht_time_eqc, send_after, [?QUERY_TIMEOUT, dht_net, {request_timeout, Key}])),
           ?APPLY(add_blocked, [Self, #request { timer_ref = TimerRef, target = Target, tag = Tag, query = Q }]),
-          ?MATCH(Response, ?BLOCK(Self)),
-          ?APPLY(del_blocked, [Self]),
-          case Response of
-              {error, timeout} ->
-                  ?RET({error, timeout});
-              #response { packet = {response, _Tag, PeerID, _} = Resp } ->
-                  ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
-                  ?APPLY(dht_time_eqc, cancel_timer, [TimerRef]),
-                  ?CALLOUT(dht_state, request_success, [{PeerID, IP, Port}, #{ reachable => true }], ok),
-                  ?RET(Resp)
+          case Self of
+              ?SELF ->
+                  ?MATCH(Response, ?BLOCK(Self)),
+                  ?APPLY(del_blocked, [Self]),
+                  case Response of
+                      {error, timeout} ->
+                          ?RET({error, timeout});
+                      #response { packet = {response, _Tag, PeerID, _} = Resp } ->
+                          ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
+                          ?APPLY(dht_time_eqc, cancel_timer, [TimerRef]),
+                          ?CALLOUT(dht_state, request_success, [{PeerID, IP, Port}, #{ reachable => true }], ok),
+                          ?RET(Resp)
+                  end
           end
     end.
 
