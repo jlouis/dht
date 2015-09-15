@@ -85,13 +85,13 @@ error_posix() ->
 socket_response_send() ->
     fault(error_posix(), ok).
     
-unique_id(#state { blocked = Bs }, Peer) ->
+unique_id(S, Peer) ->
     ?SUCHTHAT(N, choose(1, 16#FFFF),
-        not has_unique_id(Peer, N, Bs)).
+        not has_id(Peer, N, blocked(S))).
 
-has_unique_id(_P, _N, []) -> false;
-has_unique_id(P, N, [#request { target = P, tag = N}|_Bs]) -> true;
-has_unique_id(P, N, [_ | Bs]) -> has_unique_id(P, N, Bs).
+has_id(_P, _N, []) -> false;
+has_id(P, N, [{_, #request { target = P, tag = N}}|_Bs]) -> true;
+has_id(P, N, [_ | Bs]) -> has_id(P, N, Bs).
 
 %% INITIALIZATION
 %% -------------------------------------
@@ -233,7 +233,7 @@ ping_verify_args(_S) ->
 	[dht_eqc:peer(), dht_eqc:peer(), #{ reachable => bool() }].
 	
 ping_verify_callouts(_S, [Node, {_ID, IP, Port} = VNode, Opts]) ->
-    ?MATCH(R, ?APPLY(request, [{IP, Port}, {ping_verify, {VNode, Node, Opts}}, selfcall])),
+    ?MATCH(R, ?APPLY(request, [{IP, Port}, {ping_verify, VNode, Node, Opts}, selfcall])),
     case R of
         ok -> ?RET(ok);
         {error, _} -> ?RET(ok)
@@ -333,13 +333,13 @@ request_timeout_pre(S) ->
 request_timeout_args(S) ->
     [elements(timeouts(S))].
 
+request_timeout_pre(S, [{_, selfcall, _}]) -> false;
 request_timeout_pre(S, [Timeout]) ->
     lists:member(Timeout, timeouts(S)).
 
 request_timeout_callouts(_S, [{TRef, selfcall, Key}]) ->
     ?APPLY(dht_time_eqc, trigger, [TRef]),
-    %% TODO: apply some code which can run the timeout here
-    ?RET(ok);
+    ?FAIL(cannot_happen);
 request_timeout_callouts(_S, [{TRef, Pid, _Key}]) ->
     ?APPLY(dht_time_eqc, trigger, [TRef]),
     ?UNBLOCK(Pid, {error, timeout}),
@@ -396,7 +396,7 @@ response_to({_Pid, #request { target = {IP, Port}, tag = Tag, query = Query }}) 
 q2r(Q) ->
    q2r_ok(Q).
    
-q2r_ok({ping_verify, _}) -> ping;
+q2r_ok({ping_verify, _, _, _}) -> ping;
 q2r_ok(ping) -> ping;
 q2r_ok({find, node, _ID}) -> {find, node, dht_eqc:token(), list(dht_eqc:peer())};
 q2r_ok({find, value, _KeyID}) ->
@@ -414,17 +414,18 @@ universe_respond_args(S) ->
         
 universe_respond_pre(S, [E, _]) -> lists:member(E, blocked(S)).
 
-universe_respond_callouts(_S,
-	[{selfcall, #request {timer_ref = TimerRef, query = {ping_verify, VNode, Node, Opts} }},
-	 {response, _, _PeerID, _Q}]) ->
-    ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
-    ?APPLY(dht_time_eqc, cancel_timer, [TimerRef]),
-    ?CALLOUT(dht_state, request_success, [VNode, #{ reachable => true}], ok),
-    ?CALLOUT(dht_state, request_success, [Node, Opts], ok),
-    ?RET(ok);
-universe_respond_callouts(_S, [{Who, _Request}, Response]) ->
-    ?UNBLOCK(Who, Response),
-    ?RET(ok).
+universe_respond_callouts(_S, [{Who, Request}, Response]) ->
+    case {Who, Request} of
+        {selfcall, #request { timer_ref = TimerRef, query = {ping_verify, VNode, Node, Opts}}} ->
+            ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
+            ?APPLY(dht_time_eqc, cancel_timer, [TimerRef]),
+            ?CALLOUT(dht_state, request_success, [VNode, #{ reachable => true}], ok),
+            ?CALLOUT(dht_state, request_success, [Node, Opts], ok),
+            ?RET(ok);
+        _ ->
+            ?UNBLOCK(Who, Response),
+            ?RET(ok)
+    end.
         
 universe_respond_features(_S, [{Who, Request}, _], _R) ->
     Target = case Who of
@@ -490,7 +491,6 @@ postcondition_common(S, Call, Res) ->
 
 weight(_S, renew_token) -> 1;
 weight(_S, node_port) -> 2;
-weight(_S, ping_verify) -> 30;
 weight(_S, _) -> 10.
 
 reset() ->
