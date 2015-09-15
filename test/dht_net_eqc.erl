@@ -49,7 +49,8 @@ api_spec() ->
                 #api_fun { name = node_id, arity = 0, classify = dht_state_eqc },
                 #api_fun { name = closest_to, arity = 1, classify =
                    {dht_state_eqc, closest_to, fun([ID]) -> [ID, 8] end} },
-                #api_fun { name = request_success, arity = 2, classify = dht_state_eqc } ] },
+                #api_fun { name = request_success, arity = 2, classify = dht_state_eqc },
+                #api_fun { name = request_timeout, arity = 1, classify = dht_state_eqc }  ] },
           #api_module {
             name = dht_store,
             functions = [
@@ -335,6 +336,10 @@ request_timeout_args(S) ->
 request_timeout_pre(S, [Timeout]) ->
     lists:member(Timeout, timeouts(S)).
 
+request_timeout_callouts(_S, [{TRef, selfcall, Key}]) ->
+    ?APPLY(dht_time_eqc, trigger, [TRef]),
+    %% TODO: apply some code which can run the timeout here
+    ?RET(ok);
 request_timeout_callouts(_S, [{TRef, Pid, _Key}]) ->
     ?APPLY(dht_time_eqc, trigger, [TRef]),
     ?UNBLOCK(Pid, {error, timeout}),
@@ -409,8 +414,14 @@ universe_respond_args(S) ->
         
 universe_respond_pre(S, [E, _]) -> lists:member(E, blocked(S)).
 
-universe_respond_callouts(_S, [{selfcall, _Request}, Response]) ->
-    ?FAIL(cannot_hit);
+universe_respond_callouts(_S,
+	[{selfcall, #request {timer_ref = TimerRef, query = {ping_verify, VNode, Node, Opts} }},
+	 {response, _, _PeerID, _Q}]) ->
+    ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
+    ?APPLY(dht_time_eqc, cancel_timer, [TimerRef]),
+    ?CALLOUT(dht_state, request_success, [VNode, #{ reachable => true}], ok),
+    ?CALLOUT(dht_state, request_success, [Node, Opts], ok),
+    ?RET(ok);
 universe_respond_callouts(_S, [{Who, _Request}, Response]) ->
     ?UNBLOCK(Who, Response),
     ?RET(ok).
@@ -418,7 +429,7 @@ universe_respond_callouts(_S, [{Who, _Request}, Response]) ->
 universe_respond_features(_S, [{Who, Request}, _], _R) ->
     Target = case Who of
         selfcall -> [self_call];
-        P -> [blocked_response]
+        _P -> [blocked_response]
     end,    
     Target ++ [{dht_net, {universe_respond, canonicalize(Request)}}].
 
