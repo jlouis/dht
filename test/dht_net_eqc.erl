@@ -268,7 +268,7 @@ peer_request_ty(S, Peer) ->
 
 
 filter_caller(PeerIP, PeerPort, Ns) ->
-    [N || N = {_, IP, Port} <- Ns, IP /= PeerIP andalso Port /= PeerPort].
+    [N || N = {_, IP, Port} <- Ns, (IP /= PeerIP) orelse (Port /= PeerPort)].
 
 peer_request_pre(S) -> initialized(S).
 peer_request_args(S) ->
