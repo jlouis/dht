@@ -251,7 +251,7 @@ handle_info({request_timeout, Key}, State) ->
     HandledState = handle_request_timeout(Key, State),
     {noreply, HandledState};
 handle_info(renew_token, State) ->
-    dht_time:send_after(?TOKEN_LIFETIME, self(), renew_token),
+    dht_time:send_after(?TOKEN_LIFETIME, ?MODULE, renew_token),
     {noreply, handle_recycle_token(State)};
 handle_info({udp_passive, Socket}, #state { socket = Socket } = State) ->
 	ok = inet:setopts(Socket, [{active, ?UDP_MAILBOX_SZ}]),
@@ -382,7 +382,7 @@ send_query({IP, Port} = Peer, Query, From, #state { outstanding = Active, socket
 
     case dht_socket:send(Socket, IP, Port, Packet) of
         ok ->
-            TRef = dht_time:send_after(?QUERY_TIMEOUT, dht_net, {request_timeout, {Peer, MsgID}}),
+            TRef = dht_time:send_after(?QUERY_TIMEOUT, ?MODULE, {request_timeout, {Peer, MsgID}}),
 
             Key = {Peer, MsgID},
             Value = {From, TRef},
