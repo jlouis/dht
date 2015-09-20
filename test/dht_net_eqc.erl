@@ -419,7 +419,7 @@ universe_respond_callouts(_S, [{Who, Request}, Response]) ->
         {selfcall, #request { timer_ref = TimerRef, query = {ping_verify, VNode, Node, Opts}}} ->
             ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
             ?APPLY(dht_time_eqc, cancel_timer, [TimerRef]),
-            ?APPLY(del_blocked, [Who]),
+            ?APPLY(del_blocked, [Who, Request]),
             #response { ip = RIP, port = RPort, packet = {response, RTag, RPeerID, _}} = Response,
             RNode = {RPeerID, RIP, RPort},
             case RNode of
@@ -492,6 +492,8 @@ cycle_token_next(#state { tokens = Tokens } = S, _, [Token]) ->
 add_blocked_next(#state { blocked = Bs } = S, _V, [Pid, Op]) ->
     S#state { blocked = Bs ++ [{Pid, Op}] }.
     
+del_blocked_next(#state { blocked = Bs } = S, _V, [Pid, Op]) ->
+    S#state { blocked = Bs -- [{Pid, Op}] };
 del_blocked_next(#state { blocked = Bs } = S, _V, [Pid]) ->
     S#state { blocked = lists:keydelete(Pid, 1, Bs) }.
 
