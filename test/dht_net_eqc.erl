@@ -419,9 +419,20 @@ universe_respond_callouts(_S, [{Who, Request}, Response]) ->
         {selfcall, #request { timer_ref = TimerRef, query = {ping_verify, VNode, Node, Opts}}} ->
             ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
             ?APPLY(dht_time_eqc, cancel_timer, [TimerRef]),
-            ?CALLOUT(dht_state, request_success, [VNode, #{ reachable => true}], ok),
-            ?CALLOUT(dht_state, request_success, [Node, Opts], ok),
-            ?RET(ok);
+            ?APPLY(del_blocked, [Who]),
+            #response { ip = RIP, port = RPort, packet = {response, RTag, RPeerID, _}} = Response,
+            RNode = {RPeerID, RIP, RPort},
+            case RNode of
+                VNode ->
+                    ?CALLOUT(dht_state, request_success, [VNode, #{ reachable => true}], ok),
+                    ?CALLOUT(dht_state, request_success, [Node, Opts], ok),
+                    ?RET(ok);
+                _ ->
+                    ?CALLOUT(dht_state, request_success, [RNode, #{ reachable => true}], ok),
+                    ?CALLOUT(dht_state, request_timeout, [VNode], ok),
+                    ?CALLOUT(dht_state, request_success, [Node, Opts], ok),
+                    ?RET(ok)
+            end;
         _ ->
             ?UNBLOCK(Who, Response),
             ?RET(ok)
@@ -439,12 +450,15 @@ canonicalize({query, _, _, {find, value, _}}) -> {query, find_value};
 canonicalize({query, _, _, {find, node, _}}) -> {query, find_node};
 canonicalize({query, _, _, ping}) -> {query, ping};
 canonicalize(#request { query = Q }) ->
-    case Q of
+    Req = case Q of
         ping -> ping;
+        {ping_verify, _, _, _} -> ping_verify;
         {find, node, _ID} -> find_node;
         {find, value, _Val} -> find_value;
         {store, _Token, _KeyID, _Port} -> store
-    end.
+    end,
+    {request, Req}.
+
 
 %% RENEWING THE TOKEN
 %% -----------------------------------------

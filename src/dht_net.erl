@@ -281,20 +281,24 @@ handle_request_timeout(Key, #state { outstanding = Outstanding } = State) ->
     case maps:get(Key, Outstanding, not_found) of
         not_found -> State;
         {Client, _Timeout} ->
-            reply(Client, {error, timeout}),
+            reply(Client, undefined, {error, timeout}),
             State#state { outstanding = maps:remove(Key, Outstanding) }
     end.
 
 %% reply/2 handles correlated responses for processes using the `dht_net' framework.
-reply({ping_verify, VNode, Node, Opts}, {error, timeout}) ->
+reply({ping_verify, VNode, Node, Opts}, undefined, {error, timeout}) ->
     dht_state:request_timeout(VNode),
     dht_state:request_success(Node, Opts),
     ok;
-reply({ping_verify, _VNode, Node, Opts}, {response, _, _, ping}) ->
+reply({ping_verify, VNode, Node, Opts}, VNode, {response, _, _, ping}) ->
     dht_state:request_success(Node, Opts),
     ok;
-reply(_Client, {query, _, _, _} = M) -> exit({message_to_ourselves, M});
-reply({P, T} = From, M) when is_pid(P), is_reference(T) ->
+reply({ping_verify, VNode, Node, Opts}, _VNodeX, {response, _, _, ping}) ->
+    dht_state:request_timeout(VNode),
+    dht_state:request_success(Node, Opts),
+    ok;
+reply(_Client, _, {query, _, _, _} = M) -> exit({message_to_ourselves, M});
+reply({P, T} = From, _, M) when is_pid(P), is_reference(T) ->
     gen_server:reply(From, M).
 
 %%
@@ -315,13 +319,14 @@ handle_packet({IP, Port} = Peer, Packet,
         invalid_decode ->
             State;
         {valid_decode, PeerID, Tag, M} ->
+            Node = {PeerID, IP, Port},
             Key = {Peer, Tag},
             case maps:get(Key, Outstanding, not_found) of
               not_found ->
                 case M of
                     {query, Tag, PeerID, Query} ->
                       %% Incoming request
-                      dht_state:request_success({PeerID, IP, Port}, #{ reachable => false }),
+                      dht_state:request_success(Node, #{ reachable => false }),
                       spawn_link(fun() -> ?MODULE:handle_query(Query, Peer, Tag, Self, Tokens) end),
                       State;
                     _ ->
@@ -330,8 +335,8 @@ handle_packet({IP, Port} = Peer, Packet,
               {Client, TRef} ->
                 %% Handle blocked client process
                 dht_time:cancel_timer(TRef),
-                dht_state:request_success({PeerID, IP, Port}, #{ reachable => true }),
-                reply(Client, M),
+                dht_state:request_success(Node, #{ reachable => true }),
+                reply(Client, Node, M),
                 State#state { outstanding = maps:remove(Key, Outstanding) }
             end
     end.
