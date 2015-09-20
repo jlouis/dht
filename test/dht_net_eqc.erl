@@ -89,6 +89,8 @@ unique_id(S, Peer) ->
     ?SUCHTHAT(N, choose(1, 16#FFFF),
         not has_id(Peer, N, blocked(S))).
 
+id_is_unique_pre(S, [ID, Peer]) -> not has_id(Peer, ID, blocked(S)).
+    
 has_id(_P, _N, []) -> false;
 has_id(P, N, [{_, #request { target = P, tag = N}}|_Bs]) -> true;
 has_id(P, N, [_ | Bs]) -> has_id(P, N, Bs).
@@ -353,7 +355,9 @@ request_timeout_features(_S, _A, _R) -> [{dht_net, request_timeout}].
 %% All queries initiated by our side follows the pattern given here in the request:
 request_callouts(S, [{IP, Port} = Target, Q, Self]) ->
     ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
-    ?MATCH(Tag, ?CALLOUT(dht_rand, uniform, [16#FFFF], unique_id(S, {IP, Port}))),
+    ?MATCH_GEN(UniqueID, unique_id(S, Target)),
+    ?APPLY(id_is_unique, [UniqueID, Target]),
+    ?MATCH(Tag, ?CALLOUT(dht_rand, uniform, [16#FFFF], UniqueID)),
     ?MATCH(SocketResponse,
         ?CALLOUT(dht_socket, send, ['SOCKET_REF', IP, Port, ?WILDCARD], socket_response_send())),
     case SocketResponse of
