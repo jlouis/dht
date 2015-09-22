@@ -219,8 +219,7 @@ request_success_callouts(_S, [Node, Opts]) ->
         not_inserted -> ?RET(not_inserted);
         {error, Reason} -> ?RET({error, Reason});
         {verify, QNode} ->
-            ?CALLOUT(dht_net, ping_verify, [Node, QNode, Opts], ok),
-            ?RET(ok)
+            ?RET({verify, QNode})
     end.
     
 request_success_gs_callouts(_S, [Node, Opts]) ->

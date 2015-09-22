@@ -136,8 +136,7 @@ request_success(Node, Opts) ->
             cast({request_success, Node, Opts}),
             already_member;
         {error, Reason} -> {error, Reason};
-        {verify, QNode} ->
-            dht_net:ping_verify(Node, QNode, Opts)
+        {verify, QNode} -> {verify, QNode}
     end.
 
 request_timeout(Node) ->
