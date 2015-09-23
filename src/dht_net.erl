@@ -326,18 +326,18 @@ handle_packet({IP, Port} = Peer, Packet,
                 case M of
                     {query, Tag, PeerID, Query} ->
                       %% Incoming request
-                      dht_state:request_success(Node, #{ reachable => false }),
+                      RState = request_success(Node, #{ reachable => false }, State),
                       spawn_link(fun() -> ?MODULE:handle_query(Query, Peer, Tag, Self, Tokens) end),
-                      State;
+                      RState;
                     _ ->
                       State %% No recipient
                 end;
               {Client, TRef} ->
                 %% Handle blocked client process
                 dht_time:cancel_timer(TRef),
-                dht_state:request_success(Node, #{ reachable => true }),
+                RState = request_success(Node, #{ reachable => true }, State),
                 reply(Client, Node, M),
-                State#state { outstanding = maps:remove(Key, Outstanding) }
+                RState#state { outstanding = maps:remove(Key, Outstanding) }
             end
     end.
 
@@ -374,6 +374,17 @@ unique_message_id(Peer, Active, K) when K > 0 ->
 %
 random_token() ->
     dht_rand:crypto_rand_bytes(16).
+
+request_success(Node, Opts, State) ->
+    case dht_state:request_success(Node, Opts) of
+        ok -> State;
+        not_inserted -> State;
+        already_member -> State;
+        {verify, {_, QIP, QPort} = QNode} ->
+            case send_query({QIP, QPort}, ping, {ping_verify, QNode, Node, Opts}, State) of
+                {ok, S} -> S
+            end
+    end.
 
 send_query({IP, Port} = Peer, Query, From, #state { outstanding = Active, socket = Socket } = State) ->
     Self = dht_state:node_id(), %% @todo cache this locally. It can't change.
