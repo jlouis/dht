@@ -6,7 +6,9 @@ The code is highly rewritten by now. There are few traces left of the original c
 
 # State of the code
 
-The code is currently early alpha state, and things may not work yet. In particular, many parts of the system has not been thoroughly tested and as such they may contain grave bugs. While each subsystem has been tested in isolation, it still remains to build QuickCheck models which assembles all those subsystems. This will probably turn up errors.
+The code is currently early alpha state, and things may not work yet. In particular, many parts of the system has not been thoroughly tested and as such they may contain grave bugs.
+
+The QuickCheck model currently exercises every part of the system, but avoids the `search` and `refresh` code for the time being.
 
 Check the issues at github. They may contain current problems.
 
@@ -125,6 +127,11 @@ The store keeps a table mapping an ID to a IP/Port pair for other nodes are kept
 ## dht_track.erl
 
 The tracker is the natural dual counterpart to the store. It keeps mappings present in the DHT for a node by periodically refreshing them every 45 minutes. Thus, users of the DHT doesn't have to worry about refreshing nodes.
+
+## dht_refresh.erl
+
+The refresher module handles refreshing work of nodes and ranges. This has to be handled "one level up" from the two work-horse modules: state and net. To avoid deadlocking the two processes running state and net, we spawn
+helper functions which blocks and calls into the two underlying systems.
 
 ## Top level: dht.erl, dht_search.erl
 
