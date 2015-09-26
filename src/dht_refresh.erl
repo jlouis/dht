@@ -26,8 +26,12 @@ range({ID, IP, Port}) ->
   ok.
 
 -spec verify(dht:peer(), dht:peer(), map()) -> pid().
-verify({_, QIP, QPort}, Node, Opts) ->
+verify({QID, QIP, QPort} = QNode, Node, Opts) ->
     spawn_link(fun() ->
-        dht_net:ping(QIP, QPort),
+        case dht_net:ping(QIP, QPort) of
+            {error, timeout} -> dht_state:request_timeout(QNode);
+            {ok, QID} -> ok;
+            {ok, _Other} -> dht_state:request_timeout(QNode)
+        end,
         dht_state:request_success(Node, Opts)
     end).

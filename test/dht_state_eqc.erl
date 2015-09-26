@@ -86,8 +86,7 @@ api_spec() ->
 		  		name = dht_net,
 		  		functions = [
 		  			#api_fun { name = find_node, arity = 2, classify = dht_net_eqc },
-		  			#api_fun { name = ping, arity = 1, classify = dht_net_eqc },
-		  			#api_fun { name = ping_verify, arity = 3, classify = dht_net_eqc }
+		  			#api_fun { name = ping, arity = 1, classify = dht_net_eqc }
 		  		]
 		  	}
 		  ]

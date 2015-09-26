@@ -150,7 +150,7 @@ store_pre(S) -> initialized(S).
 store_args(_S) -> [{dht_eqc:ip(), dht_eqc:port()}, dht_eqc:token(), dht_eqc:id(), dht_eqc:port()].
 
 store_callouts(_S, [{IP, Port}, Token, KeyID, MPort]) ->
-    ?MATCH(R, ?APPLY(request, [{IP, Port}, {store, Token, KeyID, MPort}, ?SELF])),
+    ?MATCH(R, ?APPLY(request, [{IP, Port}, {store, Token, KeyID, MPort}])),
     case R of
         {error, Reason} -> ?RET({error, Reason});
         {response, _, ID, _} -> ?RET({ok, ID})
@@ -169,7 +169,7 @@ find_node_callers() ->
 find_node_pre(S) -> initialized(S).
 find_node_args(_S) -> [{dht_eqc:ip(), dht_eqc:port()}, dht_eqc:id()].
 find_node_callouts(_S, [{IP, Port}, ID]) ->
-    ?MATCH(R, ?APPLY(request, [{IP, Port}, {find, node, ID}, ?SELF])),
+    ?MATCH(R, ?APPLY(request, [{IP, Port}, {find, node, ID}])),
     case R of
         {error, Reason} -> ?RET({error, Reason});
         {response, _, _, {find, node, Token, Nodes}} ->
@@ -186,7 +186,7 @@ find_value(Peer, KeyID) ->
 find_value_pre(S) -> initialized(S).
 find_value_args(_S) -> [{dht_eqc:ip(), dht_eqc:port()}, dht_eqc:id()].
 find_value_callouts(_S, [{IP, Port}, KeyID]) ->
-    ?MATCH(R, ?APPLY(request, [{IP, Port}, {find, value, KeyID}, ?SELF])),
+    ?MATCH(R, ?APPLY(request, [{IP, Port}, {find, value, KeyID}])),
     case R of
         {error, Reason} -> ?RET({error, Reason});
         {response, _, ID, {find, node, Token, Nodes}} ->
@@ -209,7 +209,7 @@ ping_args(_S) ->
     [{dht_eqc:ip(), dht_eqc:port()}].
     
 ping_callouts(_S, [Target]) ->
-    ?MATCH(R, ?APPLY(request, [Target, ping, ?SELF])),
+    ?MATCH(R, ?APPLY(request, [Target, ping])),
     case R of
         {error, eagain} ->
             ?APPLY(ping, [Target]);
@@ -219,37 +219,13 @@ ping_callouts(_S, [Target]) ->
 
 ping_features(_S, _A, _R) -> [{dht_net, ping}].
 
-
-%% PING VERIFY
-%% ----------------------
-
-ping_verify(Node, VNode, Opts) ->
-    dht_net:ping_verify(Node, VNode, Opts),
-    timer:sleep(10).
-
-ping_verify_callers() ->
-	[dht_state_eqc].
-
-ping_verify_pre(S) -> initialized(S).
-ping_verify_args(_S) ->
-	[dht_eqc:peer(), dht_eqc:peer(), #{ reachable => bool() }].
-	
-ping_verify_callouts(_S, [Node, {_ID, IP, Port} = VNode, Opts]) ->
-    ?MATCH(R, ?APPLY(request, [{IP, Port}, {ping_verify, VNode, Node, Opts}, selfcall])),
-    case R of
-        ok -> ?RET(ok);
-        {error, _} -> ?RET(ok)
-    end.
-    
-ping_verify_features(_S, _A, _R) -> [{dht_net, ping_verify}].
-
 %% INCOMING REQUESTS
 %% ------------------------------
 
 peer_request(Socket, IP, Port, Packet) ->
     inject(Socket, IP, Port, Packet),
-    timer:sleep(5), %% Ugly wait, to make stuff catch up
-    timer:sleep(10).
+    timer:sleep(5),
+    dht_net:sync().
     
 valid_token(#state { tokens = Tokens }, Peer) ->
     elements([token_value(Peer, T) || T <- Tokens]).
@@ -335,13 +311,9 @@ request_timeout_pre(S) ->
 request_timeout_args(S) ->
     [elements(timeouts(S))].
 
-request_timeout_pre(S, [{_, selfcall, _}]) -> false;
 request_timeout_pre(S, [Timeout]) ->
     lists:member(Timeout, timeouts(S)).
 
-request_timeout_callouts(_S, [{TRef, selfcall, Key}]) ->
-    ?APPLY(dht_time_eqc, trigger, [TRef]),
-    ?FAIL(cannot_happen);
 request_timeout_callouts(_S, [{TRef, Pid, _Key}]) ->
     ?APPLY(dht_time_eqc, trigger, [TRef]),
     ?UNBLOCK(Pid, {error, timeout}),
@@ -353,7 +325,7 @@ request_timeout_features(_S, _A, _R) -> [{dht_net, request_timeout}].
 %% --------------
 
 %% All queries initiated by our side follows the pattern given here in the request:
-request_callouts(S, [{IP, Port} = Target, Q, Self]) ->
+request_callouts(S, [{IP, Port} = Target, Q]) ->
     ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
     ?MATCH_GEN(UniqueID, unique_id(S, Target)),
     ?APPLY(id_is_unique, [UniqueID, Target]),
@@ -367,22 +339,17 @@ request_callouts(S, [{IP, Port} = Target, Q, Self]) ->
           ?MATCH(TimerRef,
               ?APPLY(dht_time_eqc, send_after, [?QUERY_TIMEOUT, dht_net, {request_timeout, Key}])),
           ?APPLY(add_blocked,
-              [Self, #request { timer_ref = TimerRef, target = Target, tag = Tag, query = Q }]),
-          case Self of
-              selfcall ->
-                  ?RET(ok);
-              _ ->
-                  ?MATCH(Response, ?BLOCK(Self)),
-                  ?APPLY(del_blocked, [Self]),
-                  case Response of
-                      {error, timeout} ->
-                          ?RET({error, timeout});
-                      #response { packet = {response, _Tag, PeerID, _} = Resp } ->
-                          ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
-                          ?APPLY(dht_time_eqc, cancel_timer, [TimerRef]),
-                          ?CALLOUT(dht_state, request_success, [{PeerID, IP, Port}, #{ reachable => true }], ok),
-                          ?RET(Resp)
-                  end
+              [?SELF, #request { timer_ref = TimerRef, target = Target, tag = Tag, query = Q }]),
+          ?MATCH(Response, ?BLOCK),
+          ?APPLY(del_blocked, [?SELF]),
+          case Response of
+              {error, timeout} ->
+                  ?RET({error, timeout});
+              #response { packet = {response, _Tag, PeerID, _} = Resp } ->
+                  ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
+                  ?APPLY(dht_time_eqc, cancel_timer, [TimerRef]),
+                  ?CALLOUT(dht_state, request_success, [{PeerID, IP, Port}, #{ reachable => true }], ok),
+                  ?RET(Resp)
           end
     end.
 
@@ -400,7 +367,6 @@ response_to({_Pid, #request { target = {IP, Port}, tag = Tag, query = Query }}) 
 q2r(Q) ->
    q2r_ok(Q).
    
-q2r_ok({ping_verify, _, _, _}) -> ping;
 q2r_ok(ping) -> ping;
 q2r_ok({find, node, _ID}) -> {find, node, dht_eqc:token(), list(dht_eqc:peer())};
 q2r_ok({find, value, _KeyID}) ->
@@ -418,36 +384,12 @@ universe_respond_args(S) ->
         
 universe_respond_pre(S, [E, _]) -> lists:member(E, blocked(S)).
 
-universe_respond_callouts(_S, [{Who, Request}, Response]) ->
-    case {Who, Request} of
-        {selfcall, #request { timer_ref = TimerRef, query = {ping_verify, VNode, Node, Opts}}} ->
-            ?CALLOUT(dht_state, node_id, [], dht_eqc:id()),
-            ?APPLY(dht_time_eqc, cancel_timer, [TimerRef]),
-            ?APPLY(del_blocked, [Who, Request]),
-            #response { ip = RIP, port = RPort, packet = {response, RTag, RPeerID, _}} = Response,
-            RNode = {RPeerID, RIP, RPort},
-            case RNode of
-                VNode ->
-                    ?CALLOUT(dht_state, request_success, [VNode, #{ reachable => true}], ok),
-                    ?CALLOUT(dht_state, request_success, [Node, Opts], ok),
-                    ?RET(ok);
-                _ ->
-                    ?CALLOUT(dht_state, request_success, [RNode, #{ reachable => true}], ok),
-                    ?CALLOUT(dht_state, request_timeout, [VNode], ok),
-                    ?CALLOUT(dht_state, request_success, [Node, Opts], ok),
-                    ?RET(ok)
-            end;
-        _ ->
-            ?UNBLOCK(Who, Response),
-            ?RET(ok)
-    end.
+universe_respond_callouts(_S, [{Who, _}, Response]) ->
+    ?UNBLOCK(Who, Response),
+    ?RET(ok).
         
-universe_respond_features(_S, [{Who, Request}, _], _R) ->
-    Target = case Who of
-        selfcall -> [self_call];
-        _P -> [blocked_response]
-    end,    
-    Target ++ [{dht_net, {universe_respond, canonicalize(Request)}}].
+universe_respond_features(_S, [{_Who, Request}, _], _R) ->
+    [{dht_net, {universe_respond, canonicalize(Request)}}].
 
 canonicalize({query, _, _, {store, _, _, _}}) -> {query, store};
 canonicalize({query, _, _, {find, value, _}}) -> {query, find_value};
@@ -456,7 +398,6 @@ canonicalize({query, _, _, ping}) -> {query, ping};
 canonicalize(#request { query = Q }) ->
     Req = case Q of
         ping -> ping;
-        {ping_verify, _, _, _} -> ping_verify;
         {find, node, _ID} -> find_node;
         {find, value, _Val} -> find_value;
         {store, _Token, _KeyID, _Port} -> store
@@ -469,7 +410,7 @@ canonicalize(#request { query = Q }) ->
 
 renew_token() ->
     dht_net ! renew_token,
-    timer:sleep(10).
+    dht_net:sync().
     
 renew_token_pre(S) -> initialized(S).
 
@@ -536,7 +477,7 @@ timeouts(#state { blocked = Bs }) ->
 inject(Socket, IP, Port, Packet) ->
     Enc = iolist_to_binary(dht_proto:encode(Packet)),
     dht_net ! {udp, Socket, IP, Port, Enc},
-    timer:sleep(10).
+    dht_net:sync().
 
 encode(Data) -> dht_proto:encode(Data).
 
