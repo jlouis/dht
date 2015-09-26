@@ -51,7 +51,8 @@ api_spec() ->
 		  		name = dht_refresh,
 		  		functions = [
 		  			#api_fun { name = insert_nodes, arity = 1 },
-		  			#api_fun { name = range, arity = 1 }
+		  			#api_fun { name = range, arity = 1 },
+		  			#api_fun { name = verify, arity = 3 }
 		  		]
 		  	},
 		  	#api_module {
@@ -227,7 +228,8 @@ request_success_callouts(_S, [Node, Opts]) ->
         not_inserted -> ?RET(not_inserted);
         {error, Reason} -> ?RET({error, Reason});
         {verify, QNode} ->
-            ?RET({verify, QNode})
+            ?CALLOUT(dht_refresh, verify, [QNode, Node, Opts], ok),
+            ?RET(ok)
     end.
     
 request_success_gs_callouts(_S, [Node, Opts]) ->

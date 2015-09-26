@@ -128,7 +128,9 @@ request_success(Node, Opts) ->
             cast({request_success, Node, Opts}),
             already_member;
         {error, Reason} -> {error, Reason};
-        {verify, QNode} -> {verify, QNode}
+        {verify, QNode} ->
+            dht_refresh:verify(QNode, Node, Opts),
+            ok
     end.
 
 request_timeout(Node) ->

@@ -2,7 +2,7 @@
 %%% @end
 %%% @private
 -module(dht_refresh).
--export([insert_nodes/1, range/1]).
+-export([insert_nodes/1, range/1, verify/3]).
 
 %% @doc insert_nodes/1 inserts a list of nodes into the routing table asynchronously
 %% @end
@@ -25,3 +25,9 @@ range({ID, IP, Port}) ->
   end),
   ok.
 
+-spec verify(dht:peer(), dht:peer(), map()) -> pid().
+verify({_, QIP, QPort}, Node, Opts) ->
+    spawn_link(fun() ->
+        dht_net:ping(QIP, QPort),
+        dht_state:request_success(Node, Opts)
+    end).
