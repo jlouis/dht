@@ -199,6 +199,7 @@ node_id_features(_S, _A, _R) -> [{state, node_id}].
 request_success(Node, Opts) ->
     Res = dht_state:request_success(Node, Opts),
     dht_state:sync(),
+    timer:sleep(5),
     Res.
     
 request_success_callers() ->

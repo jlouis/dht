@@ -225,7 +225,7 @@ ping_features(_S, _A, _R) -> [{dht_net, ping}].
 
 ping_verify(Node, VNode, Opts) ->
     dht_net:ping_verify(Node, VNode, Opts),
-    dht_net:sync().
+    timer:sleep(10).
 
 ping_verify_callers() ->
 	[dht_state_eqc].
@@ -249,7 +249,7 @@ ping_verify_features(_S, _A, _R) -> [{dht_net, ping_verify}].
 peer_request(Socket, IP, Port, Packet) ->
     inject(Socket, IP, Port, Packet),
     timer:sleep(5), %% Ugly wait, to make stuff catch up
-    dht_net:sync().
+    timer:sleep(10).
     
 valid_token(#state { tokens = Tokens }, Peer) ->
     elements([token_value(Peer, T) || T <- Tokens]).
@@ -327,7 +327,7 @@ send_msg_callouts(_S, [IP, Port, Msg]) ->
 
 request_timeout({_Ref, _Pid, Key}) ->
     dht_net ! {request_timeout, Key},
-    dht_net:sync().
+    timer:sleep(10).
     
 request_timeout_pre(S) ->
     initialized(S) andalso blocked(S) /= [].
@@ -469,7 +469,7 @@ canonicalize(#request { query = Q }) ->
 
 renew_token() ->
     dht_net ! renew_token,
-    dht_net:sync().
+    timer:sleep(10).
     
 renew_token_pre(S) -> initialized(S).
 
@@ -536,7 +536,7 @@ timeouts(#state { blocked = Bs }) ->
 inject(Socket, IP, Port, Packet) ->
     Enc = iolist_to_binary(dht_proto:encode(Packet)),
     dht_net ! {udp, Socket, IP, Port, Enc},
-    dht_net:sync().
+    timer:sleep(10).
 
 encode(Data) -> dht_proto:encode(Data).
 

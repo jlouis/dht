@@ -5,8 +5,7 @@
 %% @todo Document all exported functions.
 %%
 %% This module implements the higher-level logic of the DHT
-%% routing table. The idea is to split the routing table code over
-%% 3 modules:
+%% routing table. The routing table itself is split over 3 modules:
 %%
 %%  * The routing table itself - In dht_routing_table
 %%  * The set of timer meta-data for node/range refreshes - In dht_routing_meta
@@ -54,11 +53,6 @@
 %% Information
 -export([
 	info/0
-]).
-
-%% Internal API
--export([
-	refresh_range/1
 ]).
 
 -export([init/1,
@@ -146,15 +140,6 @@ request_timeout(Node) ->
 %% -------------------------------------------------------------------
 
 %% @private
-%% @doc insert_nodes/1 inserts a list of nodes into the routing table asynchronously
-%% TODO: Hook the insert_node calls into a supervisor worker structure?
-%% @end
--spec insert_nodes([dht:node_t()]) -> ok.
-insert_nodes(NodeInfos) ->
-    [spawn_link(?MODULE, request_success, [Node, #{ reachable => true }]) || Node <- NodeInfos],
-    ok.
-
-%% @private
 %% Sync is used internally to send an event into the dht_state engine and block the caller.
 %% The caller will be unblocked if the event sets and eventually removes monitors.
 sync(Msg, Timeout) ->
@@ -162,17 +147,6 @@ sync(Msg, Timeout) ->
 
 sync() ->
     gen_server:call(?MODULE, sync).
-
-%% @doc refresh_range/1 refreshes a range for the system based on its ID
-%% @end
--spec refresh_range(dht:peer()) -> ok.
-refresh_range({ID, IP, Port}) ->
-    case dht_net:find_node({IP, Port}, ID) of
-        {error, timeout} -> ok;
-        {nodes, _, _Token, Nodes} ->
-            [request_success(N, #{ reachable => false }) || N <- Nodes],
-            ok
-    end.
 
 %% CALLBACKS
 %% -------------------------------------------------------------------
@@ -188,7 +162,7 @@ init([RequestedNodeID, StateFile, BootstrapNodes]) ->
     RoutingTbl = load_state(RequestedNodeID, StateFile),
     
     %% @todo, consider just folding over these as well rather than a background insert.
-    insert_nodes(BootstrapNodes),
+    dht_refresh:insert_nodes(BootstrapNodes),
     
     {ok, ID, Routing} = dht_routing_meta:new(RoutingTbl),
     {ok, #state { node_id = ID, routing = Routing}}.
@@ -222,7 +196,6 @@ handle_call(info, _From, #state { routing = Routing } = State) ->
     {reply, Routing, State};
 handle_call(sync, _From, State) ->
     {reply, ok, State}.
-
 
 %% @private
 handle_cast({request_timeout, Node}, #state{ routing = Routing } = State) ->
@@ -270,7 +243,7 @@ handle_info({inactive_range, Range}, #state{ routing = Routing, monitors = Ms } 
             R = dht_routing_meta:reset_range_timer(Range, #{ force => true }, Routing),
             %% Create a monitor on the process, so we can handle the state of our
             %% background worker.
-            {_, MRef} = spawn_monitor(?MODULE, refresh_range, [Member]),
+            MRef = dht_refresh:range(Member),
             {noreply, State#state { routing = R, monitors = [MRef | Ms] }}
     end;
 handle_info({stop, Caller}, #state{} = State) ->
