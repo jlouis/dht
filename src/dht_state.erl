@@ -34,7 +34,7 @@
 	dump_state/0, dump_state/1,
 	start_link/2,
 	start_link/3,
-	sync/0, sync/2
+	sync/0
 ]).
 
 %% Query
@@ -65,8 +65,6 @@
 -record(state, {
     node_id :: dht:node_id(), % ID of this node
     routing = dht_routing_meta:empty(), % Routing table and timing structure
-    monitors = [] :: [reference()],
-    syncers = [] :: [{pid(), reference()}],
     state_file="/tmp/dht_state" :: string() % Path to persistent state
 }).
 
@@ -140,11 +138,8 @@ request_timeout(Node) ->
 %% -------------------------------------------------------------------
 
 %% @private
-%% Sync is used internally to send an event into the dht_state engine and block the caller.
-%% The caller will be unblocked if the event sets and eventually removes monitors.
-sync(Msg, Timeout) ->
-    gen_server:call(?MODULE, {sync, Msg}, Timeout).
-
+%% sync/0 is used to make sure all async processing in the state process has been done.
+%% Its only intended use is when we are testing the code in the process.
 sync() ->
     gen_server:call(?MODULE, sync).
 
@@ -162,7 +157,7 @@ init([RequestedNodeID, StateFile, BootstrapNodes]) ->
     RoutingTbl = load_state(RequestedNodeID, StateFile),
     
     %% @todo, consider just folding over these as well rather than a background insert.
-    dht_refresh:insert_nodes(BootstrapNodes),
+    ok = dht_refresh:insert_nodes(BootstrapNodes),
     
     {ok, ID, Routing} = dht_routing_meta:new(RoutingTbl),
     {ok, #state { node_id = ID, routing = Routing}}.
@@ -189,9 +184,6 @@ handle_call(node_list, _From, #state { routing = Routing } = State) ->
     {reply, dht_routing_meta:node_list(Routing), State};
 handle_call(node_id, _From, #state{ node_id = Self } = State) ->
     {reply, Self, State};
-handle_call({sync, Msg}, From, #state { syncers = Ss } = State) ->
-    self() ! Msg,
-    {noreply, State#state { syncers = [From | Ss]}};
 handle_call(info, _From, #state { routing = Routing } = State) ->
     {reply, Routing, State};
 handle_call(sync, _From, State) ->
@@ -221,30 +213,22 @@ handle_cast(_, State) ->
 
 %% @private
 %% The timer {inactive_range, Range} is set by the dht_routing module
-handle_info({'DOWN', Ref, process, _, normal}, #state { monitors = Ms, syncers = Ss} = State) ->
-    case Ms -- [Ref] of
-        [] ->
-            [gen_server:reply(From, ok) || From <- Ss],
-            {noreply, State#state { monitors = [], syncers = [] }};
-        NewMons ->
-            {noreply, State#state { monitors = NewMons }}
-    end;
-handle_info({inactive_range, Range}, #state{ routing = Routing, monitors = Ms } = State) ->
+handle_info({inactive_range, Range}, #state{ routing = Routing } = State) ->
     case dht_routing_meta:range_state(Range, Routing) of
         {error, not_member} ->
-            {noreply, wakeup(State)};
+            {noreply, State};
         ok ->
             R = dht_routing_meta:reset_range_timer(Range, #{ force => false}, Routing),
-            {noreply, wakeup(State#state { routing = R })};
+            {noreply, State#state { routing = R }};
         empty ->
             R = dht_routing_meta:reset_range_timer(Range, #{ force => true}, Routing),
-            {noreply, wakeup(State#state { routing = R })};
+            {noreply, State#state { routing = R }};
         {needs_refresh, Member} ->
             R = dht_routing_meta:reset_range_timer(Range, #{ force => true }, Routing),
             %% Create a monitor on the process, so we can handle the state of our
             %% background worker.
-            MRef = dht_refresh:range(Member),
-            {noreply, State#state { routing = R, monitors = [MRef | Ms] }}
+            ok = dht_refresh:range(Member),
+            {noreply, State#state { routing = R  }}
     end;
 handle_info({stop, Caller}, #state{} = State) ->
 	Caller ! stopped,
@@ -327,11 +311,6 @@ load_state(RequestedNodeID, Filename) ->
         {error, enoent} ->
             dht_routing_table:new(RequestedNodeID)
     end.
-
-wakeup(#state { monitors = [], syncers = Ss } = State) ->
-    [gen_server:reply(From, ok) || From <- Ss],
-    State#state { syncers = [] };
-wakeup(State) -> State.
 
 insert_node_internal(Node, R) ->
     case dht_routing_meta:member_state(Node, R) of

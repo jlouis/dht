@@ -8,14 +8,14 @@
 %% @end
 -spec insert_nodes([dht:node_t()]) -> ok.
 insert_nodes(NodeInfos) ->
-    [spawn_link(?MODULE, request_success, [Node, #{ reachable => true }]) || Node <- NodeInfos],
+    [spawn_link(dht_net, ping, [{IP, Port}]) || {_, IP, Port} <- NodeInfos],
     ok.
 
 %% @doc refresh_range/1 refreshes a range for the system based on its ID
 %% @end
 -spec range(dht:peer()) -> reference().
 range({ID, IP, Port}) ->
-  {_, MRef} = spawn_monitor(fun() ->
+  spawn_link(fun() ->
     case dht_net:find_node({IP, Port}, ID) of
         {error, timeout} -> ok;
         {nodes, _, _Token, Nodes} ->
@@ -23,5 +23,5 @@ range({ID, IP, Port}) ->
             ok
     end
   end),
-  MRef.
+  ok.
 

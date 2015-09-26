@@ -48,6 +48,13 @@ api_spec() ->
 		modules =
 		  [
 		  	#api_module {
+		  		name = dht_refresh,
+		  		functions = [
+		  			#api_fun { name = insert_nodes, arity = 1 },
+		  			#api_fun { name = range, arity = 1 }
+		  		]
+		  	},
+		  	#api_module {
 		  		name = dht_routing_table,
 		  		functions = [
 		  			#api_fun { name = new, arity = 3, classify = dht_routing_table_eqc }
@@ -118,8 +125,8 @@ start_link_args(#state { id = ID }) ->
 %% Starting the routing state tracker amounts to initializing the routing meta-data layer
 start_link_callouts(#state { id = ID }, [ID, Nodes]) ->
     ?MATCH(Tbl, ?CALLOUT(dht_routing_table, new, [ID, ?ID_MIN, ?ID_MAX], 'ROUTING_TABLE')),
+    ?CALLOUT(dht_refresh, insert_nodes, [Nodes], ok),
     ?CALLOUT(dht_routing_meta, new, [Tbl], {ok, ID, 'META'}),
-    ?SEQ([?APPLY(request_success, [N, #{ reachable => false}]) || N <- Nodes]),
     ?RET(true).
 
 %% Once started, we can't start the State system again.
@@ -296,7 +303,8 @@ ping_features(_S, _A, {ok, _}) -> [{state, {ping, ok}}].
 %%		in this case (by a forced set), since we use the timer for progress.
 
 inactive_range(Msg) ->
-    dht_state:sync(Msg, 500).
+    dht_state ! Msg,
+    dht_state:sync().
 
 inactive_range_pre(S) -> initialized(S).
 
@@ -313,9 +321,9 @@ inactive_range_callouts(_S, [{inactive_range, Range}]) ->
             ?CALLOUT(dht_routing_meta, reset_range_timer, [Range, #{ force => false }, 'META'], 'META');
         empty ->
             ?CALLOUT(dht_routing_meta, reset_range_timer, [Range, #{ force => true }, 'META'], 'META');
-        {needs_refresh, ID} ->
+        {needs_refresh, Peer} ->
             ?CALLOUT(dht_routing_meta, reset_range_timer, [Range, #{ force => true }, 'META'], 'META'),
-            ?APPLY(refresh_range, [ID])
+            ?APPLY(refresh_range, [Peer])
     end,
     ?RET(ok).
 
@@ -325,15 +333,8 @@ inactive_range_features(_S, _A, _R) -> [{state, inactive_range}].
 
 %% This encodes the invariant that once we have found nodes close to the refreshing, they are
 %% used as a basis for insertion.
-refresh_range_callouts(_S, [ID]) ->
-    ?MATCH(FNRes, ?CALLOUT(dht_net, find_node, [ID],
-        oneof([{error, timeout}, {dummy, list(dht_eqc:peer())}]))),
-    case FNRes of
-        {error, timeout} -> ?EMPTY;
-        {_, Near} ->
-            ?SEQ([?APPLY(request_success, [N, #{ reachable => false}])
-                  || N <- Near])
-    end.
+refresh_range_callouts(_S, [Peer]) ->
+    ?CALLOUT(dht_refresh, range, [Peer], ok).
     
 refresh_range_features(_S, _A, _R) -> [{state, refresh_range}].
 
