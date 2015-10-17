@@ -6,6 +6,9 @@ compile:
 dialyzer:
 	$(REBAR) dialyzer | sed -e 's|_build/default/lib/dht/||g'
 
+rel release:
+	$(REBAR) release
+
 shell:
 	$(REBAR) shell
 
