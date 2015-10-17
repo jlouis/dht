@@ -11,7 +11,7 @@
 	{mod, {dht_app, []}},
 	{env, [
 	  %% Port to use
-	  {port, 3723},
+	  {port, 3739},
 	  
 	  %% The file in which to store the current DHT application state
 	  {state_file, "dht_state.bin"},
