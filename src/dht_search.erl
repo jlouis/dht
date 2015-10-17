@@ -118,7 +118,7 @@ accum_peers(find_value, Acc, Results) ->
     New ++ Acc.
 
 accum_results([]) -> [];
-accum_results([ {Node, {error, timeout}} | Rs ]) ->
+accum_results([ {_Node, {error, timeout}} | Rs ]) ->
     %% Skip if the node timed out
     accum_results(Rs);
 accum_results([ {Node, {values, _, Token, Vs}} | Rs ]) ->
