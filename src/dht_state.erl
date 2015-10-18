@@ -64,8 +64,7 @@
 
 -record(state, {
     node_id :: dht:node_id(), % ID of this node
-    routing = dht_routing_meta:empty(), % Routing table and timing structure
-    state_file="/tmp/dht_state" :: string() % Path to persistent state
+    routing = dht_routing_meta:empty() % Routing table and timing structure
 }).
 
 %% LIFETIME MAINTENANCE
@@ -171,8 +170,8 @@ handle_call({insert_node, Node, _Opts}, _From, #state { routing = R } = State) -
 handle_call({closest_to, ID, NumNodes}, _From, #state{routing = Routing } = State) ->
     Neighbors = dht_routing_meta:neighbors(ID, NumNodes, Routing),
     {reply, Neighbors, State};
-handle_call(dump_state, From, #state{ state_file = StateFile } = State) ->
-    handle_call({dump_state, StateFile}, From, State);
+handle_call(dump_state, From, State) ->
+    handle_call({dump_state, get_current_statefile()}, From, State);
 handle_call({dump_state, StateFile}, _From, #state{ routing = Routing } = State) ->
     try
         Tbl = dht_routing_meta:export(Routing),
@@ -237,7 +236,7 @@ handle_info({stop, Caller}, #state{} = State) ->
 	{stop, normal, State}.
 
 %% @private
-terminate(_Reason, #state{ routing = _Routing, state_file=_StateFile}) ->
+terminate(_Reason, #state{ routing = _Routing }) ->
 	%%error_logger:error_report({exiting, Reason}),
 	%%dump_state(StateFile, dht_routing_meta:export(Routing))
 	ok.
@@ -249,6 +248,10 @@ code_change(_, State, _) ->
 %%
 %% INTERNAL FUNCTIONS
 %%
+
+get_current_statefile() ->
+    {ok, SF} = application:get_env(dht, state_file),
+    SF.
 
 %% adjoin/2 attempts to add a new `Node' to the `Routing'-table.
 %% It either succeeds in doing so, or fails due to one of the many reasons
