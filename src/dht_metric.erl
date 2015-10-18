@@ -28,10 +28,10 @@ d(ID1, ID2) -> ID1 bxor ID2.
 %% @doc neighborhood/3 finds known nodes close to an ID
 %% neighborhood(ID, Nodes, Limit) searches for Limit nodes in the neighborhood of ID. Nodes is the list of known nodes.
 %% @end
--spec neighborhood(ID, Nodes, Limit) -> [dht:node_t()]
+-spec neighborhood(ID, Nodes, Limit) -> [dht:peer()]
   when
     ID :: dht:id(),
-    Nodes :: [dht:node_t()],
+    Nodes :: [dht:peer()],
     Limit :: non_neg_integer().
 
 neighborhood(ID, Nodes, Limit) ->

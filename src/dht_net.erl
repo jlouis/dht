@@ -86,7 +86,7 @@ request(Target, Q) ->
 sync() ->
     gen_server:call(?MODULE, sync).
 
-%% @doc ping/2 sends a ping to a node
+%% @doc ping/1 sends a ping to a node
 %% Calling `ping(IP, Port)' will send a ping message to the IP/Port pair
 %% and wait for a result to come back. Used to check if the node in the
 %% other end is up and running.
@@ -95,7 +95,7 @@ sync() ->
 %% timeout the peer here. We do that in dht_state.
 %% @end
 -spec ping({inet:ip_address(), inet:port_number()}) ->
-      pang | {ok, dht:node_id()} | {error, Reason}
+      pang | {ok, dht:id()} | {error, Reason}
   when Reason :: term().
 ping(Peer) ->
     case request(Peer, ping) of
@@ -112,13 +112,14 @@ ping(Peer) ->
 %% @doc find_node/3 searches in the DHT for a given target NodeID
 %% Search at the target IP/Port pair for the NodeID given by `Target'. May time out.
 %% @end
--spec find_node({IP, Port}, Target) -> {ID, Nodes} | {error, Reason}
+-spec find_node({IP, Port}, Target) -> {nodes, ID, Token, Nodes} | {error, Reason}
   when
-    IP :: dht:ip_address(),
-    Port :: dht:port(),
-    Target :: dht:node_id(),
-    ID :: dht:node_id(),
-    Nodes :: [dht:node_t()],
+    IP :: inet:ip_address(),
+    Port :: inet:port_number(),
+    Target :: dht:id(),
+    ID :: dht:id(),
+    Token :: dht:token(),
+    Nodes :: [dht:peer()],
     Reason :: any().
 
 find_node({IP, Port}, N)  ->
@@ -135,9 +136,9 @@ find_node({IP, Port}, N)  ->
 	when
 	  Peer :: {inet:ip_address(), inet:port_number()},
 	  ID :: dht:id(),
-	  Node :: dht:node_t(),
+	  Node :: dht:peer(),
 	  Token :: dht:token(),
-	  Value :: dht:node_t(),
+	  Value :: dht:peer(),
 	  Reason :: any().
 	    
 find_value(Peer, IDKey)  ->
@@ -149,7 +150,7 @@ find_value(Peer, IDKey)  ->
             {values, ID, Token, Values}
     end.
 
--spec store(Peer, Token, ID, Port) -> {error, timeout} | dht:node_id()
+-spec store(Peer, Token, ID, Port) -> {error, timeout} | dht:id()
   when
     Peer :: {inet:ip_address(), inet:port_number()},
     ID :: dht:id(),
@@ -313,7 +314,7 @@ handle_packet({IP, Port} = Peer, Packet,
                 end;
               {Client, TRef} ->
                 %% Handle blocked client process
-                dht_time:cancel_timer(TRef),
+                _ = dht_time:cancel_timer(TRef),
                 RState = request_success(Node, #{ reachable => true }, State),
                 reply(Client, M),
                 RState#state { outstanding = maps:remove(Key, Outstanding) }

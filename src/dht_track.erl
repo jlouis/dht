@@ -85,7 +85,7 @@ handle_info({refresh, ID, Location}, #state { tbl = T } = State) ->
             %% TODO: When refresh fails, we should track what failed here and then report it
             %% back to the process for which we store the entries. But this is for a later extension
             %% of the system.
-            refresh(ID, Location),
+            ok = refresh(ID, Location),
             dht_time:send_after(?REFRESH_TIME, ?MODULE, {refresh, ID, Location}),
             {noreply, State}
     end;
@@ -106,9 +106,8 @@ refresh(ID, Location) ->
     Stores = pick(?STORE_COUNT, ID, StoreCandidates),
     store_at_peers(Stores, ID, Location).
 
-store_at_peers([], _ID, _Location) -> [];
-store_at_peers([{{_ID, IP, Port}, Token} | Sts], ID, Location) ->
-    _ = [dht_net:store({IP, Port}, Token, ID, Location) | store_at_peers(Sts, ID, Location)],
+store_at_peers(STS, ID, Location) ->
+    _ = [dht_net:store({IP, Port}, Token, ID, Location) || {{_ID, IP, Port}, Token} <- STS],
     ok.
 
 pick(K, ID, Candidates) ->

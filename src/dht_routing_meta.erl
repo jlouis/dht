@@ -346,12 +346,11 @@ mk_timer(Start, Interval, Msg) ->
     
 %% @doc timer_state/2 returns the state of a timer, based on BitTorrent Enhancement Proposal 5
 %% @end
--spec timer_state({node, N} | {range, R}, Timers) ->
+-spec timer_state({node, N}, Timers) ->
     good | {questionable, non_neg_integer()} | bad
 	when
 	  N :: dht:peer(),
-	  R :: dht:range(),
-	  Timers :: maps:map().
+	  Timers :: #{ atom() => any() }.
     
 timer_state({node, N}, NTs) ->
     case maps:get(N, NTs, undefined) of

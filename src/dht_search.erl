@@ -21,9 +21,9 @@
 %% SEARCH API
 %% ---------------------------------------------------
 
--spec run(find_node | find_value, dht:node_id()) -> FindNodeRes | FindValueRes
+-spec run(find_node | find_value, dht:id()) -> FindNodeRes | FindValueRes
   when
-      FindNodeRes :: list ( dht:node_t() ),
+      FindNodeRes :: list ( dht:peer() ),
       FindValueRes :: #{ atom() => [term()] }.
 run(Type, ID) ->
     search_iterate(Type, ID, ?SEARCH_WIDTH, dht_state:closest_to(ID, ?SEARCH_WIDTH)).

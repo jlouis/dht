@@ -63,7 +63,7 @@
 	 code_change/3]).
 
 -record(state, {
-    node_id :: dht:node_id(), % ID of this node
+    node_id :: dht:id(), % ID of this node
     routing = dht_routing_meta:empty() % Routing table and timing structure
 }).
 
@@ -102,18 +102,18 @@ cast(X) -> gen_server:cast(?MODULE, X).
 %% -----------
 
 %% @equiv closest_to(NodeID, 8)
--spec closest_to(dht:node_id()) -> list(dht:node_t()).
+-spec closest_to(dht:id()) -> list(dht:peer()).
 closest_to(NodeID) -> closest_to(NodeID, ?MAX_RANGE_SZ).
 
 %% @doc closest_to/2 returns the neighborhood around an ID known to the routing table
 %% @end
--spec closest_to(dht:node_id(), pos_integer()) -> list(dht:node_t()).
+-spec closest_to(dht:id(), pos_integer()) -> list(dht:peer()).
 closest_to(NodeID, NumNodes) ->
     call({closest_to, NodeID, NumNodes}).
 
 %% @doc Return this node id as an integer.
 %% Node ids are generated in a random manner.
--spec node_id() -> dht:node_id().
+-spec node_id() -> dht:id().
 node_id() ->
     gen_server:call(?MODULE, node_id).
 
