@@ -95,7 +95,7 @@ sync() ->
 %% timeout the peer here. We do that in dht_state.
 %% @end
 -spec ping({inet:ip_address(), inet:port_number()}) ->
-      pang | {ok, dht:node_id(), benc:t()} | {error, Reason}
+      pang | {ok, dht:node_id()} | {error, Reason}
   when Reason :: term().
 ping(Peer) ->
     case request(Peer, ping) of

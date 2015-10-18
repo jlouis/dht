@@ -52,8 +52,11 @@ dht_iter_search(NodeID, Target, Width, Retries, Todo, #search_state{ query_type 
     Call = fun({_, IP, Port} = N) ->
         {N, apply(dht_net, QType, [{IP, Port}, Target])}
     end,
-    Results = dht_par:pmap(Call, Todo),
+    CallRes = dht_par:pmap(Call, Todo),
 
+    %% Assert there are no errors, since workers are not to die here
+    {Results, [] = _Errors} = dht_par:partition(CallRes),
+    
     %% Maintain invariants for the next round by updating the necessary data structures:
     #{ new := New, next := NextState } = track_state(Results, Todo, State),
     
