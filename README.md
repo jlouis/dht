@@ -81,6 +81,14 @@ Finally, other nodes can find the association by executing a lookup routine:
 	
 where IP is the IP address the node is using to send UDP packets.
 
+### The internal state of the system
+
+I believe a lot in the concepts of *transparency* and *discoverability* in which the system will be try to be transparent in what is happening inside it, so you can verify the internal state for correctness. You can obtain information about the internal state by the command:
+
+	dht:info().
+	
+which will tell you what the internal state of everything is currently. This is useful if you suspect something is wrong as it gives a top-level glance of the internal state as a snapshot.
+
 # Code layout and how the DHT works
 
 In general, we follow the [Kademlia](http://pdos.csail.mit.edu/~petar/papers/maymounkov-kademlia-lncs.pdf) hash table implementation. But the implementation details of this code is down below. The key take-away is that in order to implement Kademlia in Erlang, you have to come up with a working process model.
