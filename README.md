@@ -18,6 +18,24 @@ Since we are at an early alpha, changes will be made which are not backwards com
 
 * 2015-08-15: Increased the size of the token from 4 to 8 bytes. Protocol format has changed as a result. The old clients will fail to handle this correctly. Also, started using the Versions more correctly in the protocol.
 
+# Building
+
+The code relies on no additional modules but the standard Erlang/OTP implementation in order to ease its portability to other systems and injection into existing code bases. The code does require at least Erlang/OTP release 18 as it makes heavy use of the new time API. To handle older Erlang releases, some work is needed in the module `dht_time` to provide backporting capabilities.
+
+To build the code:
+
+	make
+	
+This uses `erlang.mk` currently, but you can also execute:
+
+	rebar compile
+	
+or
+
+	rebar3 compile
+	
+which will also work on the project.
+
 # What is a DHT?
 
 A distributed hash table is a mapping from *identities* which are 256 bit numbers to a list of pairs, `[{IP, Port}]` on which the identity has been registered. The table is *distributed* by having a large number of nodes store small parts of the mapping each. Also, each node keeps a partial routing table in order to be able to find values.
@@ -179,9 +197,3 @@ The "research project" which is being done in this project is to provide a full 
 Hence, the modeling work continues. It is slowly moving, because you often need to do successive refinement on the knowledge you have as you go along. On the other hand, the parts which have been checked are likely to be formally correct. Far more than any other project.
 
 The current effort is centered around the construction of the top level binding code, that makes everything fit together. This code has not been handled by a QuickCheck model yet, however. What *has* been handled already though, is all the low-level parts: network code, routing stable state code and so on.
-
-# TODO List:
-
-* Cover the remaining parts of the code base
-* Consider the construction of a false “universe” so we can simulate what the rest of the world is storing at a given point in time.
-* Simple tests on a 1-node network should behave as expected
