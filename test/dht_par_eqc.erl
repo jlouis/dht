@@ -16,11 +16,11 @@ pmap(F, Params) ->
     dht_par:pmap(F, Params).
 
 crasher() ->
-    ?LET(F, function1(int()),
-        fun
-          (0) -> exit(err);
-          (X) -> F(X)
-        end).
+   ?LET(F, function1(int()),
+     fun
+       (0) -> exit(err);
+       (X) -> F(X)
+     end).
 
 pmap_args(_S) ->
     [crasher(),
@@ -37,21 +37,18 @@ postcondition_common(S, Call, Res) ->
 
 prop_component_correct() ->
     ?FORALL(Cmds, commands(?MODULE),
-    ?PULSE(HSR={_,_,R},
-        run_commands(?MODULE, Cmds),
-        pretty_commands(?MODULE, Cmds, HSR, R == ok))).
+      ?PULSE(HSR = {_,_,R}, run_commands(?MODULE, Cmds),
+        begin
+          pretty_commands(?MODULE, Cmds, HSR, R == ok)
+        end)).
 
 pulse_instrument() ->
   [ pulse_instrument(File) || File <- filelib:wildcard("../src/dht_par.erl") ++ filelib:wildcard("../test/dht_par_eqc.erl") ],
   ok.
 
 pulse_instrument(File) ->
-    EffectFul = [],
     io:format("Compiling: ~p~n", [File]),
-    {ok, Mod} = compile:file(File, [{d, 'PULSE', true}, {d, 'WITH_PULSE', true},
-                                    {d, 'EQC_TESTING', true},
-                                    {parse_transform, pulse_instrument},
-                                    {pulse_side_effect, EffectFul}]),
+    {ok, Mod} = compile:file(File, [{d, 'PULSE', true}, {parse_transform, pulse_instrument}]),
   code:purge(Mod),
-  code:load_file(Mod),
+  {module, Mod} = code:load_file(Mod),
   Mod.
