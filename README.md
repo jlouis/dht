@@ -50,7 +50,7 @@ The implemented DHT has the following properties:
 * Protocol agnostic, you are encouraged to do your own protocol, security checking and blacklisting of peers.
 * Insertion is fast, but deletion can take up to one hour because it is based on timeouts. If a node disappears, it can take up to one hour before its entries are removed as well.
 * Scalability is in millions of nodes.
-* Storage is *probalistic*. An entry is stored at 8 nodes, and if all 8 nodes disappear, that entry will be lost for up to 45 hours, before it is reinserted in a refresh.
+* Storage is *probabilistic*. An entry is stored at 8 nodes, and if all 8 nodes disappear, that entry will be lost for up to 45 hours, before it is reinserted in a refresh.
 
 # Using the implementation:
 
