@@ -5,10 +5,6 @@
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("pulse/include/pulse.hrl").
 
-
-pmap(F, Params) ->
-    dht_par:pmap(F, Params).
-
 crasher() ->
    ?LET(F, function1(int()),
      fun
