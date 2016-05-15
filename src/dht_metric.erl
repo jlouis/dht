@@ -17,7 +17,7 @@
 %% @end
 -spec mk() ->  dht:id().
 mk() ->
-	<<ID:160>> = crypto:rand_bytes(20),
+	<<ID:160>> = dht_rand:crypto_rand_bytes(20),
 	ID.
 
 %% @doc dist/2 calculates the distance between two random IDs
