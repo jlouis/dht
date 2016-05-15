@@ -20,3 +20,10 @@ prop_op_sym() ->
 prop_op_triangle_ineq() ->
     ?FORALL({X, Y, Z}, {dht_eqc:id(), dht_eqc:id(), dht_eqc:id()},
         dht_metric:d(X, Y) + dht_metric:d(Y, Z) >= dht_metric:d(X, Z)).
+
+%% Verify we can generate elements closer to a target in the metric.
+prop_closer() ->
+    ?FORALL({X, T}, {dht_eqc:id(), dht_eqc:id()},
+      ?IMPLIES(X /= T,
+        ?FORALL(Z, dht_eqc:closer(X, T),
+           dht_metric:d(X, T) >= dht_metric:d(Z, T)))).

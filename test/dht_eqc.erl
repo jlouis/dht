@@ -44,3 +44,29 @@ range() -> ?LET([X, Y], unique_id_pair(), list_to_tuple(lists:sort([X,Y]))).
 token() -> binary(8).
 
 node_eq({X, _, _}, {Y, _, _}) -> X =:= Y.
+
+%% closer/2 generates IDs which are closer to a target
+%% Generate elements which are closer to the target T than the
+%% value X.
+closer(X, T) ->
+    ?LET(Prefix, bit_prefix(<<X:?BITS>>, <<T:?BITS>>),
+      ?LET(BS, bitstring(?BITS - bit_size(Prefix)),
+        begin
+          <<R:?BITS>> = <<Prefix/bitstring, BS/bitstring>>,
+          R
+        end)).
+
+%% bit_prefix/2 finds the prefix of two numbers
+%% Given bit_prefix(X, Tgt), find the common prefix amongst
+%% the two and extend it with one bit from Tgt.
+bit_prefix(<<>>, <<>>) -> <<>>;
+bit_prefix(<<0:1, Xs/bitstring>>, <<0:1, Ys/bitstring>>) ->
+    Rest = bit_prefix(Xs, Ys),
+    <<0:1, Rest/bitstring>>;
+bit_prefix(<<1:1, Xs/bitstring>>, <<1:1, Ys/bitstring>>) ->
+    Rest = bit_prefix(Xs, Ys),
+    <<1:1, Rest/bitstring>>;
+bit_prefix(_Xs, <<Bit:1, _/bitstring>>) ->
+    <<Bit:1>>.
+
+
