@@ -102,27 +102,26 @@ delete(ID) ->
 enter(ID, Port) ->
     dht_track:store(ID, Port).
 
-%% @doc lookup/1 searches the DHT for nodes which can give you an `ID' back
+%% @equiv lookup(ID, [local, remote])
+lookup(ID) -> lookup(ID, [local, remote]).
+
+%% @doc lookup/2 queries the swarm for a ID mapping
 %%
-%% Perform a lookup operation. It returns a list of pairs {IP, Port} pairs
-%% which the DHT knows about that given ID.
-%%
-%% Assumptions:
-%%
-%% <ul>
-%% <li>We are never looking up keys which we have locally stored at the service.</li>
-%% <li>Before querying the network, we look into our own store. If we have entries
-%%   locally, we pick those.</li>
-%% <li>If we don't have entries ourselves, we look up in the swarm.</li>
-%% </ul>
+%% Called as `lookup(ID, [local | remote])' the system will perform a series of lookups
+%% either locally or remotely and then join the answer before handing it to the caller.
+%% The system will return a list of `{IP, Port}' pairs which is the image of ID in the DHT
+%% mapping.
 %% @end
-lookup(ID) ->
-    case dht_store:find(ID) of
-        [] ->
-            #{ found := Fs } = dht_search:run(find_value, ID),
-            Fs;
-        Peers -> Peers
-    end.
+lookup(ID, X) -> lookup(ID, X, []).
+
+lookup(_ID, [], Acc) ->
+    lists:usort(lists:append(Acc));
+lookup(ID, [local | Xs], Acc) ->
+    Peers = dht_store:find(ID),
+    lookup(ID, Xs, [Peers | Acc]);
+lookup(ID, [remote | Xs], Acc) ->
+    #{ found := Fs } = dht_search:run(find_value, ID),
+    lookup(ID, Xs, [Fs | Acc]).
 
 %% Informative API functions
 
